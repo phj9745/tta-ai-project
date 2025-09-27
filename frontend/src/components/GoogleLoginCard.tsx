@@ -5,6 +5,7 @@ type AuthStatus = 'success' | 'error' | null
 const DEFAULT_BACKEND_URL = 'http://localhost:8000'
 
 const SCOPES = [
+  'Google 프로필 기본 정보 (이름, 이메일)',
   'Google Drive 전체 읽기 및 쓰기 권한',
   '사용자가 만든 파일 관리 (생성/수정/삭제)',
 ]
@@ -21,7 +22,7 @@ export function GoogleLoginCard() {
 
     if (authStatus === 'success') {
       setStatus('success')
-      setMessage('Google Drive 권한이 성공적으로 연결되었습니다.')
+      setMessage(statusMessage ?? 'Google Drive 권한이 성공적으로 연결되었습니다.')
     } else if (authStatus === 'error') {
       setStatus('error')
       setMessage(statusMessage ?? 'Google 인증이 취소되었습니다.')
@@ -34,9 +35,9 @@ export function GoogleLoginCard() {
 
   const handleLogin = () => {
     const backendUrl = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? DEFAULT_BACKEND_URL
-    const loginUrl = `${backendUrl.replace(/\/$/, '')}/auth/google/login`
+    const loginUrl = new URL(`${backendUrl.replace(/\/$/, '')}/auth/google/login`)
     setIsRedirecting(true)
-    window.location.href = loginUrl
+    window.location.href = loginUrl.toString()
   }
 
   return (
@@ -67,7 +68,9 @@ export function GoogleLoginCard() {
       </div>
 
       {status === null && !isRedirecting && (
-        <p className="google-card__helper">로그인 버튼을 누르면 Google 인증 화면으로 이동합니다.</p>
+        <p className="google-card__helper">
+          로그인 버튼을 누르면 Google 인증 화면으로 이동하며, 완료 후에는 계정 이름과 함께 토큰이 안전하게 저장됩니다.
+        </p>
       )}
 
       {status !== null && (
