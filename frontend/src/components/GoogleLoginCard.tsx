@@ -1,150 +1,82 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
-interface GoogleCredentialResponse {
-  credential: string
-  select_by: string
-}
+type AuthStatus = 'success' | 'error' | null
 
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: {
-            client_id: string
-            callback: (response: GoogleCredentialResponse) => void
-            ux_mode?: 'popup' | 'redirect'
-            auto_select?: boolean
-          }) => void
-          renderButton: (
-            parent: HTMLElement,
-            options: Record<string, unknown>,
-          ) => void
-          prompt: () => void
-        }
-      }
-    }
-  }
-}
+const DEFAULT_BACKEND_URL = 'http://localhost:8000'
 
-const GOOGLE_SCRIPT_ID = 'google-identity-services'
+const SCOPES = [
+  'Google Drive 전체 읽기 및 쓰기 권한',
+  '사용자가 만든 파일 관리 (생성/수정/삭제)',
+]
 
 export function GoogleLoginCard() {
-  const buttonRef = useRef<HTMLDivElement | null>(null)
-  const [credential, setCredential] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [isReady, setIsReady] = useState(false)
+  const [status, setStatus] = useState<AuthStatus>(null)
+  const [message, setMessage] = useState<string>('')
+  const [isRedirecting, setIsRedirecting] = useState(false)
 
   useEffect(() => {
-    const buttonElement = buttonRef.current
-    if (!buttonElement) return
+    const params = new URLSearchParams(window.location.search)
+    const authStatus = params.get('auth')
+    const statusMessage = params.get('message')
 
-    let isCancelled = false
-    let scriptElement: HTMLScriptElement | null = document.getElementById(
-      GOOGLE_SCRIPT_ID,
-    ) as HTMLScriptElement | null
-
-    const initializeGoogleButton = () => {
-      if (isCancelled || !buttonRef.current) {
-        return
-      }
-
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
-      if (!clientId) {
-        setError(
-          'Google OAuth 클라이언트 ID가 설정되어 있지 않습니다. .env 파일에 VITE_GOOGLE_CLIENT_ID를 추가하세요.',
-        )
-        return
-      }
-
-      if (!window.google?.accounts?.id) {
-        setError('Google Identity Services를 불러오지 못했습니다. 잠시 후 다시 시도하세요.')
-        return
-      }
-
-      buttonRef.current.innerHTML = ''
-
-      window.google.accounts.id.initialize({
-        client_id: clientId,
-        callback: (response: GoogleCredentialResponse) => {
-          setCredential(response.credential)
-          setError(null)
-        },
-      })
-
-      window.google.accounts.id.renderButton(buttonRef.current, {
-        type: 'standard',
-        theme: 'filled_blue',
-        text: 'signin_with',
-        shape: 'pill',
-        width: 320,
-        locale: 'ko',
-      })
-
-      window.google.accounts.id.prompt()
-      setIsReady(true)
+    if (authStatus === 'success') {
+      setStatus('success')
+      setMessage('Google Drive 권한이 성공적으로 연결되었습니다.')
+    } else if (authStatus === 'error') {
+      setStatus('error')
+      setMessage(statusMessage ?? 'Google 인증이 취소되었습니다.')
     }
 
-    const handleScriptError = () => {
-      if (!isCancelled) {
-        setError('Google 로그인 스크립트를 불러오는 데 실패했습니다.')
-      }
-    }
-
-    if (scriptElement) {
-      if (window.google?.accounts?.id) {
-        initializeGoogleButton()
-      } else {
-        scriptElement.addEventListener('load', initializeGoogleButton)
-        scriptElement.addEventListener('error', handleScriptError)
-      }
-    } else {
-      scriptElement = document.createElement('script')
-      scriptElement.id = GOOGLE_SCRIPT_ID
-      scriptElement.src = 'https://accounts.google.com/gsi/client'
-      scriptElement.async = true
-      scriptElement.defer = true
-      scriptElement.addEventListener('load', initializeGoogleButton)
-      scriptElement.addEventListener('error', handleScriptError)
-      document.head.appendChild(scriptElement)
-    }
-
-    return () => {
-      isCancelled = true
-      if (scriptElement) {
-        scriptElement.removeEventListener('load', initializeGoogleButton)
-        scriptElement.removeEventListener('error', handleScriptError)
-      }
+    if (authStatus) {
+      window.history.replaceState({}, '', window.location.pathname)
     }
   }, [])
+
+  const handleLogin = () => {
+    const backendUrl = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? DEFAULT_BACKEND_URL
+    const loginUrl = `${backendUrl.replace(/\/$/, '')}/auth/google/login`
+    setIsRedirecting(true)
+    window.location.href = loginUrl
+  }
 
   return (
     <section className="google-card">
       <div className="google-card__content">
         <h2 className="google-card__title">Google 로그인</h2>
         <p className="google-card__description">
-          Google 계정으로 로그인하면 프로젝트가 Google Drive API 접근 권한을 요청할 수 있습니다.
-          로그인 후 발급된 토큰은 안전하게 저장하세요.
+          Google 계정을 인증하면 프로젝트가 아래의 Drive 권한을 요청하여 파일을 읽고, 생성하고,
+          수정하거나 삭제할 수 있습니다. 승인된 액세스/리프레시 토큰은 안전하게 백엔드에 저장됩니다.
         </p>
+
+        <ul className="google-card__scopes">
+          {SCOPES.map((scope) => (
+            <li key={scope}>{scope}</li>
+          ))}
+        </ul>
       </div>
 
-      <div className="google-card__button" ref={buttonRef} aria-live="polite" />
+      <div className="google-card__button">
+        <button
+          type="button"
+          className="google-card__signin"
+          onClick={handleLogin}
+          disabled={isRedirecting}
+        >
+          {isRedirecting ? 'Google으로 이동 중…' : 'Google 계정으로 로그인'}
+        </button>
+      </div>
 
-      {!isReady && !error && (
-        <p className="google-card__helper">Google 로그인 버튼을 불러오는 중입니다…</p>
+      {status === null && !isRedirecting && (
+        <p className="google-card__helper">로그인 버튼을 누르면 Google 인증 화면으로 이동합니다.</p>
       )}
 
-      {credential && !error && (
-        <div className="google-card__status" role="status">
-          <strong>인증 완료!</strong>
-          <span>발급된 토큰은 다음 단계에서 사용할 수 있습니다.</span>
-        </div>
-      )}
-
-      {error && (
-        <div className="google-card__status google-card__status--error" role="alert">
-          <strong>문제가 발생했습니다.</strong>
-          <span>{error}</span>
+      {status !== null && (
+        <div
+          className={`google-card__status${status === 'error' ? ' google-card__status--error' : ''}`}
+          role="status"
+        >
+          <strong>{status === 'success' ? '인증 완료!' : '인증에 실패했습니다.'}</strong>
+          <span>{message}</span>
         </div>
       )}
     </section>
