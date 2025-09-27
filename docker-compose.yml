@@ -4,8 +4,8 @@ services:
   backend:
     build:
       context: ./backend
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    env_file:
+      - ./backend/.env
     ports:
       - "8000:8000"
     volumes:
