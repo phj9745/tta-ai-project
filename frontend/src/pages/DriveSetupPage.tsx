@@ -24,25 +24,6 @@ interface DriveSetupResponse {
 
 type ViewState = 'loading' | 'ready' | 'error'
 
-function loadAuthMessage(): string | null {
-  try {
-    const raw = sessionStorage.getItem(DRIVE_AUTH_STORAGE_KEY)
-    if (!raw) {
-      return null
-    }
-
-    sessionStorage.removeItem(DRIVE_AUTH_STORAGE_KEY)
-    const parsed = JSON.parse(raw) as { message?: unknown }
-    if (parsed && typeof parsed.message === 'string') {
-      return parsed.message
-    }
-  } catch (error) {
-    console.error('failed to read Drive auth message', error)
-  }
-
-  return null
-}
-
 function formatDateTime(value?: string) {
   if (!value) {
     return null
@@ -64,8 +45,16 @@ export function DriveSetupPage() {
   const [viewState, setViewState] = useState<ViewState>('loading')
   const [errorMessage, setErrorMessage] = useState<string>('')
   const [result, setResult] = useState<DriveSetupResponse | null>(null)
-  const [authMessage] = useState<string | null>(() => loadAuthMessage())
   const [reloadIndex, setReloadIndex] = useState(0)
+
+  // B) 마운트 시점에 세션 키만 조용히 정리
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem(DRIVE_AUTH_STORAGE_KEY)
+    } catch (e) {
+      console.error('failed to clear auth message', e)
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -134,19 +123,9 @@ export function DriveSetupPage() {
   return (
     <div className="page drive-page">
       <header className="page__header">
-        <span className="page__eyebrow">Google Drive 준비</span>
-        <h1 className="page__title">Drive 폴더를 설정하고 있어요</h1>
-        <p className="page__subtitle">
-          '{result?.folderName ?? 'gs'}' 폴더 안에서 프로젝트 파일을 관리합니다. 로그인한 계정의 Drive에
-          폴더가 없으면 자동으로 만들어 드릴게요.
-        </p>
+        <span className="page__eyebrow">Google Drive 프로젝트</span>
+        <h1 className="page__title">프로젝트</h1>
       </header>
-
-      {authMessage && (
-        <div className="drive-page__auth-message" role="status">
-          {authMessage}
-        </div>
-      )}
 
       {result?.account && (
         <div className="drive-page__account" role="note">
