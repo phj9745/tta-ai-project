@@ -1,0 +1,118 @@
+import { useEffect, useState } from 'react'
+
+import { DRIVE_AUTH_STORAGE_KEY, getBackendUrl } from '../config'
+import { navigate } from '../navigation'
+
+type AuthStatus = 'success' | 'error' | null
+
+const SCOPES = [
+  'Google 프로필 기본 정보 (이름, 이메일)',
+  'Google Drive 전체 읽기 및 쓰기 권한',
+  '사용자가 만든 파일 관리 (생성/수정/삭제)',
+]
+
+export function GoogleLoginCard() {
+  const [status, setStatus] = useState<AuthStatus>(null)
+  const [message, setMessage] = useState<string>('')
+  const [isRedirecting, setIsRedirecting] = useState(false)
+  const [initialQuery] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    const authParam = params.get('auth')
+    const authStatus: AuthStatus =
+      authParam === 'success' || authParam === 'error' ? authParam : null
+
+    return {
+      auth: authStatus,
+      message: params.get('message'),
+    }
+  })
+  useEffect(() => {
+    let redirectTimer: number | undefined
+
+    if (initialQuery.auth === 'success') {
+      setStatus('success')
+      const successMessage =
+        initialQuery.message ?? 'Google Drive 권한이 성공적으로 연결되었습니다.'
+      setMessage(successMessage)
+
+      try {
+        const payload = {
+          message: successMessage,
+          savedAt: Date.now(),
+        }
+        sessionStorage.setItem(DRIVE_AUTH_STORAGE_KEY, JSON.stringify(payload))
+      } catch (error) {
+        console.error('failed to persist Drive auth info', error)
+      }
+
+      redirectTimer = window.setTimeout(() => {
+        navigate('/drive', { replace: true })
+      }, 1200)
+    } else if (initialQuery.auth === 'error') {
+      setStatus('error')
+      setMessage(initialQuery.message ?? 'Google 인증이 취소되었습니다.')
+    }
+
+    if (initialQuery.auth) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+
+    return () => {
+      if (redirectTimer) {
+        window.clearTimeout(redirectTimer)
+      }
+    }
+  }, [initialQuery])
+
+  const handleLogin = () => {
+    const backendUrl = getBackendUrl()
+    const loginUrl = `${backendUrl}/auth/google/login`
+    setIsRedirecting(true)
+    window.location.href = loginUrl
+  }
+
+  return (
+    <section className="google-card">
+      <div className="google-card__content">
+        <h2 className="google-card__title">Google 로그인</h2>
+        <p className="google-card__description">
+          Google 계정을 인증하면 프로젝트가 아래의 Drive 권한을 요청하여 파일을 읽고, 생성하고,
+          수정하거나 삭제할 수 있습니다. 승인된 액세스/리프레시 토큰은 안전하게 백엔드에 저장됩니다.
+        </p>
+
+        <ul className="google-card__scopes">
+          {SCOPES.map((scope) => (
+            <li key={scope}>{scope}</li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="google-card__button">
+        <button
+          type="button"
+          className="google-card__signin"
+          onClick={handleLogin}
+          disabled={isRedirecting}
+        >
+          {isRedirecting ? 'Google으로 이동 중…' : 'Google 계정으로 로그인'}
+        </button>
+      </div>
+
+      {status === null && !isRedirecting && (
+        <p className="google-card__helper">
+          로그인 버튼을 누르면 Google 인증 화면으로 이동하며, 완료 후에는 계정 이름과 함께 토큰이 안전하게 저장됩니다.
+        </p>
+      )}
+
+      {status !== null && (
+        <div
+          className={`google-card__status${status === 'error' ? ' google-card__status--error' : ''}`}
+          role="status"
+        >
+          <strong>{status === 'success' ? '인증 완료!' : '인증에 실패했습니다.'}</strong>
+          <span>{message}</span>
+        </div>
+      )}
+    </section>
+  )
+}

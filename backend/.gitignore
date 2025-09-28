@@ -8,3 +8,5 @@ __pycache__/
 
 # 환경변수
 .env
+
+/app/google_tokens.db
