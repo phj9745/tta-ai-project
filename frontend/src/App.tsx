@@ -4,8 +4,7 @@ import { useEffect, useState } from 'react'
 import { listen, navigate } from './navigation'
 import { DriveSetupPage } from './pages/DriveSetupPage'
 import { LoginPage } from './pages/LoginPage'
-
-const KNOWN_PATHS = new Set(['/', '/drive'])
+import { ProjectManagementPage } from './pages/ProjectManagementPage'
 
 function App() {
   const [pathname, setPathname] = useState<string>(() => window.location.pathname || '/')
@@ -18,11 +17,19 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!KNOWN_PATHS.has(pathname)) {
+    const isKnownPath = pathname === '/' || pathname === '/drive' || pathname.startsWith('/projects/')
+
+    if (!isKnownPath) {
       navigate('/', { replace: true })
       setPathname('/')
     }
   }, [pathname])
+
+  const projectMatch = pathname.match(/^\/projects\/([^/]+)$/)
+
+  if (projectMatch) {
+    return <ProjectManagementPage projectId={decodeURIComponent(projectMatch[1])} />
+  }
 
   if (pathname === '/drive') {
     return <DriveSetupPage />
