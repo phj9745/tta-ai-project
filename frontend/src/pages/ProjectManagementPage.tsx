@@ -9,20 +9,6 @@ import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
 type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
-type MenuGroupId = 'defect-group'
-
-type PrimaryMenuEntry =
-  | {
-      type: 'item'
-      itemId: MenuItemId
-    }
-  | {
-      type: 'group'
-      id: MenuGroupId
-      label: string
-      itemIds: MenuItemId[]
-    }
-
 interface MenuItemContent {
   id: MenuItemId
   label: string
@@ -136,11 +122,7 @@ const MENU_ITEMS: MenuItemContent[] = [
 
 const MENU_ITEM_IDS = MENU_ITEMS.map((item) => item.id)
 
-const PRIMARY_MENU: PrimaryMenuEntry[] = [
-  { type: 'item', itemId: 'feature-tc' },
-  { type: 'group', id: 'defect-group', label: '결함리포트 생성', itemIds: ['defect-report', 'security-report'] },
-  { type: 'item', itemId: 'performance-report' },
-]
+const FIRST_MENU_ITEM = MENU_ITEMS[0]?.id ?? 'feature-tc'
 
 interface ProjectManagementPageProps {
   projectId: string
@@ -154,10 +136,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   }, [projectId])
 
   const backendUrl = useMemo(() => getBackendUrl(), [])
-  const [activeItem, setActiveItem] = useState<MenuItemId>('feature-tc')
-  const [openGroups, setOpenGroups] = useState<Record<MenuGroupId, boolean>>({
-    'defect-group': true,
-  })
+  const [activeItem, setActiveItem] = useState<MenuItemId>(FIRST_MENU_ITEM)
   const [itemStates, setItemStates] = useState<Record<MenuItemId, ItemState>>(() => createInitialItemStates())
   const controllersRef = useRef<Record<MenuItemId, AbortController | null>>(
     Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, AbortController | null>,
@@ -368,20 +347,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }
   }, [])
 
-  const handleSelectGroup = (entry: Extract<PrimaryMenuEntry, { type: 'group' }>) => {
-    const wasOpen = !!openGroups[entry.id]
-    const nextOpen = !wasOpen
-
-    setOpenGroups((prev) => ({
-      ...prev,
-      [entry.id]: nextOpen,
-    }))
-
-    if (nextOpen && !entry.itemIds.includes(activeItem)) {
-      setActiveItem(entry.itemIds[0])
-    }
-  }
-
   return (
     <div className="project-management-page">
       <aside className="project-management-sidebar">
@@ -392,98 +357,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
         <nav aria-label="프로젝트 관리 메뉴" className="project-management-menu">
           <ul className="project-management-menu__list">
-            {PRIMARY_MENU.map((entry) => {
-              if (entry.type === 'item') {
-                const item = MENU_ITEMS.find((menuItem) => menuItem.id === entry.itemId)
-                if (!item) {
-                  return null
-                }
-
-                const isActive = activeItem === item.id
-
-                return (
-                  <li
-                    key={item.id}
-                    className={`project-management-menu__item project-management-menu__item--primary${
-                      isActive ? ' project-management-menu__item--active' : ''
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      className="project-management-menu__button"
-                      onClick={() => setActiveItem(item.id)}
-                      aria-current={isActive ? 'page' : undefined}
-                    >
-                      <span className="project-management-menu__button-leading" aria-hidden="true">
-                        <span className="project-management-menu__indicator" />
-                      </span>
-                      <span className="project-management-menu__label">{item.label}</span>
-                    </button>
-                  </li>
-                )
-              }
-
-              const isOpen = openGroups[entry.id]
-              const groupActive = entry.itemIds.includes(activeItem)
+            {MENU_ITEMS.map((item) => {
+              const isActive = activeItem === item.id
 
               return (
                 <li
-                  key={entry.id}
-                  className={`project-management-menu__item project-management-menu__item--primary project-management-menu__item--group${
-                    groupActive ? ' project-management-menu__item--active' : ''
-                  }${isOpen ? ' project-management-menu__item--expanded' : ''}`}
+                  key={item.id}
+                  className={`project-management-menu__item${
+                    isActive ? ' project-management-menu__item--active' : ''
+                  }`}
                 >
                   <button
                     type="button"
-                    className="project-management-menu__button project-management-menu__button--group"
-                    onClick={() => handleSelectGroup(entry)}
-                    aria-expanded={isOpen}
+                    className="project-management-menu__button"
+                    onClick={() => setActiveItem(item.id)}
+                    aria-current={isActive ? 'page' : undefined}
                   >
-                    <span className="project-management-menu__button-leading" aria-hidden="true">
-                      <span className="project-management-menu__indicator" />
-                    </span>
-                    <span className="project-management-menu__label">{entry.label}</span>
-                    <span
-                      className={`project-management-menu__chevron${isOpen ? ' project-management-menu__chevron--open' : ''}`}
-                      aria-hidden="true"
-                    />
+                    <span className="project-management-menu__label">{item.label}</span>
+                    <span className="project-management-menu__helper">{item.eyebrow}</span>
                   </button>
-                  <ul
-                    className={`project-management-menu__sublist${
-                      isOpen ? '' : ' project-management-menu__sublist--collapsed'
-                    }`}
-                    hidden={!isOpen}
-                  >
-                    {entry.itemIds.map((itemId) => {
-                      const item = MENU_ITEMS.find((menuItem) => menuItem.id === itemId)
-                      if (!item) {
-                        return null
-                      }
-
-                      const isActive = activeItem === item.id
-
-                      return (
-                        <li
-                          key={item.id}
-                          className={`project-management-menu__item project-management-menu__item--secondary${
-                            isActive ? ' project-management-menu__item--active' : ''
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            className="project-management-menu__button"
-                            onClick={() => setActiveItem(item.id)}
-                            aria-current={isActive ? 'page' : undefined}
-                          >
-                            <span className="project-management-menu__button-leading" aria-hidden="true">
-                              <span className="project-management-menu__indicator" />
-                            </span>
-                            <span className="project-management-menu__label">{item.label}</span>
-                          </button>
-                        </li>
-                      )
-                    })}
-                  </ul>
                 </li>
               )
             })}
