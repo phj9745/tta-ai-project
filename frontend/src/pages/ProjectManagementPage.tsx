@@ -6,7 +6,7 @@ import {
   type FileType,
 } from '../components/fileUploaderTypes'
 import { getBackendUrl } from '../config'
-import { GOOGLE_DRIVE_HOME_URL } from '../constants'
+import { openGoogleDriveWorkspace } from '../drive'
 import { navigate } from '../navigation'
 
 type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
@@ -176,7 +176,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   }, [])
 
   const handleOpenDrive = useCallback(() => {
-    window.open(GOOGLE_DRIVE_HOME_URL, '_blank', 'noopener,noreferrer')
+    openGoogleDriveWorkspace()
   }, [])
 
   const handleChangeFiles = useCallback(

@@ -12,3 +12,4 @@ export function getBackendUrl(): string {
 }
 
 export const DRIVE_AUTH_STORAGE_KEY = 'tta-ai.driveAuthInfo'
+export const DRIVE_ROOT_FOLDER_STORAGE_KEY = 'tta-ai.driveRootFolderId'
