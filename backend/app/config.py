@@ -19,6 +19,8 @@ class Settings:
     redirect_uri: str
     frontend_redirect_url: str
     tokens_path: Path
+    openai_api_key: str
+    openai_model: str
 
     @property
     def frontend_origin(self) -> str:
@@ -42,4 +44,6 @@ def load_settings() -> Settings:
         redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", ""),
         frontend_redirect_url=os.getenv("FRONTEND_REDIRECT_URL", "http://localhost:5173/"),
         tokens_path=Path(tokens_env) if tokens_env else default_tokens_path,
+        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
     )
