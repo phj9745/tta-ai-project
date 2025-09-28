@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -45,7 +46,19 @@ state_store: Set[str] = set()
 
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DRIVE_FILES_ENDPOINT = "/files"
+DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
+PROJECT_SUBFOLDERS = [
+    "0. 사전 자료",
+    "1. 형상 사진",
+    "2. 기능리스트",
+    "3. 테스트케이스",
+    "4. 성능 시험",
+    "5. 보안성 시험",
+    "6. 결함리포트",
+    "7. 산출물",
+]
 
 
 def _ensure_credentials() -> None:
@@ -246,6 +259,100 @@ async def _create_root_folder(
         )
 
     return data, updated_tokens
+
+
+async def _create_child_folder(
+    tokens: StoredTokens, *, name: str, parent_id: str
+) -> Tuple[Dict[str, Any], StoredTokens]:
+    body = {
+        "name": name,
+        "mimeType": DRIVE_FOLDER_MIME_TYPE,
+        "parents": [parent_id],
+    }
+    params = {"fields": "id,name,parents"}
+
+    data, updated_tokens = await _drive_request(
+        tokens,
+        method="POST",
+        path=DRIVE_FILES_ENDPOINT,
+        params=params,
+        json_body=body,
+    )
+
+    if not isinstance(data, dict) or "id" not in data:
+        logger.error("Google Drive create child folder response missing id: %s", data)
+        raise HTTPException(
+            status_code=502,
+            detail="Google Drive 하위 폴더를 생성하지 못했습니다. 다시 시도해주세요.",
+        )
+
+    return data, updated_tokens
+
+
+async def _upload_file_to_folder(
+    tokens: StoredTokens,
+    *,
+    file_name: str,
+    parent_id: str,
+    content: bytes,
+    content_type: Optional[str] = None,
+) -> Tuple[Dict[str, Any], StoredTokens]:
+    active_tokens = tokens
+
+    for attempt in range(2):
+        headers = {
+            "Authorization": f"Bearer {active_tokens.access_token}",
+        }
+        metadata = {"name": file_name, "parents": [parent_id]}
+        files = {
+            "metadata": (
+                "metadata",
+                json.dumps(metadata),
+                "application/json; charset=UTF-8",
+            ),
+            "file": (
+                file_name,
+                content,
+                content_type or "application/pdf",
+            ),
+        }
+
+        async with httpx.AsyncClient(timeout=30.0, base_url=DRIVE_UPLOAD_BASE) as client:
+            response = await client.post(
+                f"{DRIVE_FILES_ENDPOINT}?uploadType=multipart&fields=id,name,parents",
+                headers=headers,
+                files=files,
+            )
+
+        if response.status_code == 401 and attempt == 0:
+            active_tokens = await _refresh_access_token(active_tokens)
+            continue
+
+        if response.is_error:
+            logger.error(
+                "Google Drive file upload failed for %s: %s",
+                file_name,
+                response.text,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="파일을 Google Drive에 업로드하지 못했습니다. 잠시 후 다시 시도해주세요.",
+            )
+
+        data = response.json()
+        if not isinstance(data, dict) or "id" not in data:
+            logger.error("Google Drive file upload response missing id: %s", data)
+            raise HTTPException(
+                status_code=502,
+                detail="업로드한 파일의 ID를 확인하지 못했습니다. 다시 시도해주세요.",
+            )
+
+        return data, active_tokens
+
+    raise HTTPException(
+        status_code=401,
+        detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.",
+    )
 
 
 async def _list_child_folders(
@@ -502,6 +609,124 @@ async def ensure_gs_folder(
 
     result = await ensure_gs_drive_setup(google_id)
     return JSONResponse(result)
+
+
+@app.post("/drive/projects")
+async def create_drive_project(
+    folder_id: Optional[str] = Form(None),
+    files: List[UploadFile] = File(...),
+    google_id: Optional[str] = Query(
+        None,
+        description="Drive 작업에 사용할 Google 사용자 식별자 (sub)",
+    ),
+) -> Dict[str, Any]:
+    _ensure_credentials()
+
+    if not files:
+        raise HTTPException(status_code=422, detail="최소 한 개의 파일을 업로드해주세요.")
+
+    invalid_files: List[str] = []
+    for upload in files:
+        filename = upload.filename or "업로드된 파일"
+        if not filename.lower().endswith(".pdf"):
+            invalid_files.append(filename)
+
+    if invalid_files:
+        detail = ", ".join(invalid_files)
+        raise HTTPException(status_code=422, detail=f"PDF 파일만 업로드할 수 있습니다: {detail}")
+
+    stored_tokens = _load_tokens_for_drive(google_id)
+    active_tokens = await _ensure_valid_tokens(stored_tokens)
+
+    parent_folder_id = folder_id
+    if not parent_folder_id:
+        folder, active_tokens = await _find_root_folder(active_tokens, folder_name="gs")
+        if folder is None:
+            folder, active_tokens = await _create_root_folder(active_tokens, folder_name="gs")
+        parent_folder_id = str(folder["id"])
+
+    siblings, active_tokens = await _list_child_folders(
+        active_tokens,
+        parent_id=parent_folder_id,
+    )
+    existing_names = {
+        str(item.get("name"))
+        for item in siblings
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+
+    project_name = PROJECT_FOLDER_BASE_NAME
+    suffix = 1
+    while project_name in existing_names:
+        suffix += 1
+        project_name = f"{PROJECT_FOLDER_BASE_NAME} ({suffix})"
+
+    project_folder, active_tokens = await _create_child_folder(
+        active_tokens,
+        name=project_name,
+        parent_id=parent_folder_id,
+    )
+    project_id = str(project_folder["id"])
+
+    created_subfolders: List[Dict[str, Any]] = []
+    upload_target_id: Optional[str] = None
+
+    for index, subfolder_name in enumerate(PROJECT_SUBFOLDERS):
+        subfolder, active_tokens = await _create_child_folder(
+            active_tokens,
+            name=subfolder_name,
+            parent_id=str(project_folder["id"]),
+        )
+        created_subfolders.append(
+            {
+                "id": str(subfolder["id"]),
+                "name": subfolder.get("name", subfolder_name),
+            }
+        )
+        if index == 0:
+            upload_target_id = str(subfolder["id"])
+
+    if upload_target_id is None:
+        upload_target_id = project_id
+
+    uploaded_files: List[Dict[str, Any]] = []
+    for upload in files:
+        file_name = upload.filename or "업로드된 파일.pdf"
+        content = await upload.read()
+        file_info, active_tokens = await _upload_file_to_folder(
+            active_tokens,
+            file_name=file_name,
+            parent_id=upload_target_id,
+            content=content,
+            content_type=upload.content_type,
+        )
+        uploaded_files.append(
+            {
+                "id": file_info.get("id"),
+                "name": file_info.get("name", file_name),
+                "size": len(content),
+                "contentType": upload.content_type or "application/pdf",
+            }
+        )
+        await upload.close()
+
+    logger.info(
+        "Created Drive project '%s' (%s) with %d PDF files",
+        project_name,
+        project_id,
+        len(uploaded_files),
+    )
+
+    return {
+        "message": "새 프로젝트 폴더를 생성했습니다.",
+        "project": {
+            "id": project_id,
+            "name": project_folder.get("name", project_name),
+            "parentId": parent_folder_id,
+            "subfolders": created_subfolders,
+        },
+        "uploadedFiles": uploaded_files,
+    }
 
 
 @app.get("/auth/google/callback/success")
