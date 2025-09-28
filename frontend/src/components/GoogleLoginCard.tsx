@@ -15,16 +15,24 @@ export function GoogleLoginCard() {
   const [status, setStatus] = useState<AuthStatus>(null)
   const [message, setMessage] = useState<string>('')
   const [isRedirecting, setIsRedirecting] = useState(false)
-  useEffect(() => {
+  const [initialQuery] = useState(() => {
     const params = new URLSearchParams(window.location.search)
-    const authStatus = params.get('auth')
-    const statusMessage = params.get('message')
+    const authParam = params.get('auth')
+    const authStatus: AuthStatus =
+      authParam === 'success' || authParam === 'error' ? authParam : null
+
+    return {
+      auth: authStatus,
+      message: params.get('message'),
+    }
+  })
+  useEffect(() => {
     let redirectTimer: number | undefined
 
-    if (authStatus === 'success') {
+    if (initialQuery.auth === 'success') {
       setStatus('success')
       const successMessage =
-        statusMessage ?? 'Google Drive 권한이 성공적으로 연결되었습니다.'
+        initialQuery.message ?? 'Google Drive 권한이 성공적으로 연결되었습니다.'
       setMessage(successMessage)
 
       try {
@@ -40,12 +48,12 @@ export function GoogleLoginCard() {
       redirectTimer = window.setTimeout(() => {
         navigate('/drive', { replace: true })
       }, 1200)
-    } else if (authStatus === 'error') {
+    } else if (initialQuery.auth === 'error') {
       setStatus('error')
-      setMessage(statusMessage ?? 'Google 인증이 취소되었습니다.')
+      setMessage(initialQuery.message ?? 'Google 인증이 취소되었습니다.')
     }
 
-    if (authStatus) {
+    if (initialQuery.auth) {
       window.history.replaceState({}, '', window.location.pathname)
     }
 
@@ -54,7 +62,7 @@ export function GoogleLoginCard() {
         window.clearTimeout(redirectTimer)
       }
     }
-  }, [])
+  }, [initialQuery])
 
   const handleLogin = () => {
     const backendUrl = getBackendUrl()
