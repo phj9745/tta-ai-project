@@ -69,6 +69,10 @@ function App() {
     navigate('/', { replace: true })
   }
 
+  const handleOpenDrive = () => {
+    navigate('/drive')
+  }
+
   const isAuthenticated = authStatus === 'authenticated'
 
   return (
@@ -77,6 +81,9 @@ function App() {
         <div className="app-shell__brand">TTA AI 프로젝트 허브</div>
         {isAuthenticated && (
           <nav aria-label="계정 메뉴" className="app-shell__nav">
+            <button type="button" className="app-shell__drive" onClick={handleOpenDrive}>
+              구글 드라이브
+            </button>
             <button type="button" className="app-shell__logout" onClick={handleLogout}>
               로그아웃
             </button>
