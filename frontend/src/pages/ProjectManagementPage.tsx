@@ -118,11 +118,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }))
   }
 
-  const handleToggleGroup = (groupId: MenuGroupId) => {
+  const handleSelectGroup = (entry: Extract<PrimaryMenuEntry, { type: 'group' }>) => {
+    const wasOpen = !!openGroups[entry.id]
+    const nextOpen = !wasOpen
+
     setOpenGroups((prev) => ({
       ...prev,
-      [groupId]: !prev[groupId],
+      [entry.id]: nextOpen,
     }))
+
+    if (nextOpen && !entry.itemIds.includes(activeItem)) {
+      setActiveItem(entry.itemIds[0])
+    }
   }
 
   return (
@@ -157,7 +164,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                       onClick={() => setActiveItem(item.id)}
                       aria-current={isActive ? 'page' : undefined}
                     >
-                      <span className="project-management-menu__indicator" aria-hidden="true" />
+                      <span className="project-management-menu__button-leading" aria-hidden="true">
+                        <span className="project-management-menu__indicator" />
+                      </span>
                       <span className="project-management-menu__label">{item.label}</span>
                     </button>
                   </li>
@@ -172,14 +181,17 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                   key={entry.id}
                   className={`project-management-menu__item project-management-menu__item--primary project-management-menu__item--group${
                     groupActive ? ' project-management-menu__item--active' : ''
-                  }`}
+                  }${isOpen ? ' project-management-menu__item--expanded' : ''}`}
                 >
                   <button
                     type="button"
-                    className="project-management-menu__group-button"
-                    onClick={() => handleToggleGroup(entry.id)}
+                    className="project-management-menu__button project-management-menu__button--group"
+                    onClick={() => handleSelectGroup(entry)}
                     aria-expanded={isOpen}
                   >
+                    <span className="project-management-menu__button-leading" aria-hidden="true">
+                      <span className="project-management-menu__indicator" />
+                    </span>
                     <span className="project-management-menu__label">{entry.label}</span>
                     <span
                       className={`project-management-menu__chevron${isOpen ? ' project-management-menu__chevron--open' : ''}`}
@@ -213,7 +225,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                             onClick={() => setActiveItem(item.id)}
                             aria-current={isActive ? 'page' : undefined}
                           >
-                            <span className="project-management-menu__indicator" aria-hidden="true" />
+                            <span className="project-management-menu__button-leading" aria-hidden="true">
+                              <span className="project-management-menu__indicator" />
+                            </span>
                             <span className="project-management-menu__label">{item.label}</span>
                           </button>
                         </li>
