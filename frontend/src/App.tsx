@@ -1,21 +1,34 @@
 import './App.css'
-import { GoogleLoginCard } from './components/GoogleLoginCard'
+import { useEffect, useState } from 'react'
+
+import { listen, navigate } from './navigation'
+import { DriveSetupPage } from './pages/DriveSetupPage'
+import { LoginPage } from './pages/LoginPage'
+
+const KNOWN_PATHS = new Set(['/', '/drive'])
 
 function App() {
-  return (
-    <div className="page">
-      <header className="page__header">
-        <span className="page__eyebrow">Google Drive 연결</span>
-        <h1 className="page__title">먼저 구글 계정으로 로그인하세요</h1>
-        <p className="page__subtitle">
-          프로젝트에서 Google Drive 권한을 사용하려면 Google 계정을 통해 인증을 완료해야
-          합니다. 아래 버튼을 눌러 안전하게 로그인하세요.
-        </p>
-      </header>
+  const [pathname, setPathname] = useState<string>(() => window.location.pathname || '/')
 
-      <GoogleLoginCard />
-    </div>
-  )
+  useEffect(() => {
+    const unsubscribe = listen((nextPath) => {
+      setPathname(nextPath)
+    })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    if (!KNOWN_PATHS.has(pathname)) {
+      navigate('/', { replace: true })
+      setPathname('/')
+    }
+  }, [pathname])
+
+  if (pathname === '/drive') {
+    return <DriveSetupPage />
+  }
+
+  return <LoginPage />
 }
 
 export default App
