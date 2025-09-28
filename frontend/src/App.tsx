@@ -40,6 +40,12 @@ function App() {
     }
   }, [authStatus, pathname])
 
+  useEffect(() => {
+    if (authStatus === 'authenticated' && pathname === '/') {
+      navigate('/drive', { replace: true })
+    }
+  }, [authStatus, pathname])
+
   const projectMatch = pathname.match(/^\/projects\/([^/]+)$/)
 
   const pageContent = useMemo(() => {
