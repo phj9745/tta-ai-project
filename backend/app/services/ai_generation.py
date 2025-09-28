@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List
 
 from fastapi import HTTPException, UploadFile
 from openai import APIError, OpenAI
 
 from ..config import Settings
+from .openai_payload import OpenAIMessageBuilder
+from .text_extraction import ExtractedUploadPreview, extract_text_preview
 
 _MAX_PREVIEW_CHARS = 6000
-_BASE64_PREFIX = "(base64 인코딩) "
+
+
+@dataclass
+class BufferedUpload:
+    name: str
+    content: bytes
+    content_type: str | None
 
 
 @dataclass
@@ -68,24 +75,22 @@ class AIGenerationService:
         return self._client
 
     @staticmethod
-    def _preview_from_uploads(uploads: Iterable[Tuple[str, bytes]]) -> str:
+    def _preview_from_uploads(
+        uploads: Iterable[BufferedUpload],
+    ) -> str:
         sections: List[str] = []
-        for name, raw in uploads:
-            text: str
-            prefix = ""
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                try:
-                    text = raw.decode("cp949")
-                except UnicodeDecodeError:
-                    text = base64.b64encode(raw).decode("ascii")
-                    prefix = _BASE64_PREFIX
-
-            if len(text) > _MAX_PREVIEW_CHARS:
-                text = text[:_MAX_PREVIEW_CHARS] + "\n... (이후 내용 생략)"
-
-            sections.append(f"### 파일: {name}\n{prefix}{text}")
+        for upload in uploads:
+            preview: ExtractedUploadPreview = extract_text_preview(
+                filename=upload.name,
+                raw=upload.content,
+                content_type=upload.content_type,
+                max_chars=_MAX_PREVIEW_CHARS,
+            )
+            sections.append(
+                "\n".join(
+                    part for part in (preview.header, preview.body) if part.strip()
+                )
+            )
 
         return "\n\n".join(sections)
 
@@ -105,12 +110,18 @@ class AIGenerationService:
         if not uploads:
             raise HTTPException(status_code=422, detail="업로드된 자료가 없습니다. 파일을 추가해 주세요.")
 
-        buffered: List[Tuple[str, bytes]] = []
+        buffered: List[BufferedUpload] = []
         for upload in uploads:
             try:
                 data = await upload.read()
                 name = upload.filename or "업로드된_파일"
-                buffered.append((name, data))
+                buffered.append(
+                    BufferedUpload(
+                        name=name,
+                        content=data,
+                        content_type=upload.content_type,
+                    )
+                )
             finally:
                 await upload.close()
 
@@ -124,20 +135,16 @@ class AIGenerationService:
         )
 
         client = self._get_client()
+        messages = [
+            OpenAIMessageBuilder.text_message("system", prompt["system"]),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
         try:
             response = await asyncio.to_thread(
                 client.responses.create,
                 model=self._settings.openai_model,
-                input=[
-                    {
-                        "role": "system",
-                        "content": [{"type": "text", "text": prompt["system"]}],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": user_prompt}],
-                    },
-                ],
+                input=messages,
                 temperature=0.2,
                 max_output_tokens=1500,
             )
