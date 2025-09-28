@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 
-type AuthStatus = 'success' | 'error' | null
+import { DRIVE_AUTH_STORAGE_KEY, getBackendUrl } from '../config'
+import { navigate } from '../navigation'
 
-const DEFAULT_BACKEND_URL = 'http://localhost:8000'
+type AuthStatus = 'success' | 'error' | null
 
 const SCOPES = [
   'Google 프로필 기본 정보 (이름, 이메일)',
@@ -14,15 +15,31 @@ export function GoogleLoginCard() {
   const [status, setStatus] = useState<AuthStatus>(null)
   const [message, setMessage] = useState<string>('')
   const [isRedirecting, setIsRedirecting] = useState(false)
-
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const authStatus = params.get('auth')
     const statusMessage = params.get('message')
+    let redirectTimer: number | undefined
 
     if (authStatus === 'success') {
       setStatus('success')
-      setMessage(statusMessage ?? 'Google Drive 권한이 성공적으로 연결되었습니다.')
+      const successMessage =
+        statusMessage ?? 'Google Drive 권한이 성공적으로 연결되었습니다.'
+      setMessage(successMessage)
+
+      try {
+        const payload = {
+          message: successMessage,
+          savedAt: Date.now(),
+        }
+        sessionStorage.setItem(DRIVE_AUTH_STORAGE_KEY, JSON.stringify(payload))
+      } catch (error) {
+        console.error('failed to persist Drive auth info', error)
+      }
+
+      redirectTimer = window.setTimeout(() => {
+        navigate('/drive', { replace: true })
+      }, 1200)
     } else if (authStatus === 'error') {
       setStatus('error')
       setMessage(statusMessage ?? 'Google 인증이 취소되었습니다.')
@@ -31,13 +48,19 @@ export function GoogleLoginCard() {
     if (authStatus) {
       window.history.replaceState({}, '', window.location.pathname)
     }
+
+    return () => {
+      if (redirectTimer) {
+        window.clearTimeout(redirectTimer)
+      }
+    }
   }, [])
 
   const handleLogin = () => {
-    const backendUrl = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? DEFAULT_BACKEND_URL
-    const loginUrl = new URL(`${backendUrl.replace(/\/$/, '')}/auth/google/login`)
+    const backendUrl = getBackendUrl()
+    const loginUrl = `${backendUrl}/auth/google/login`
     setIsRedirecting(true)
-    window.location.href = loginUrl.toString()
+    window.location.href = loginUrl
   }
 
   return (
