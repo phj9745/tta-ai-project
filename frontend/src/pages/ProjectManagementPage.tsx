@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { FileUploader } from '../components/FileUploader'
 import {
   ALL_FILE_TYPES,
   type FileType,
 } from '../components/fileUploaderTypes'
+import { getBackendUrl } from '../config'
 
 type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
 type MenuGroupId = 'defect-group'
@@ -30,6 +31,59 @@ interface MenuItemContent {
   helper: string
   buttonLabel: string
   allowedTypes: FileType[]
+}
+
+type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
+
+interface ItemState {
+  files: File[]
+  status: GenerationStatus
+  errorMessage: string | null
+  downloadUrl: string | null
+  downloadName: string | null
+}
+
+function createItemState(): ItemState {
+  return {
+    files: [],
+    status: 'idle',
+    errorMessage: null,
+    downloadUrl: null,
+    downloadName: null,
+  }
+}
+
+function createInitialItemStates(): Record<MenuItemId, ItemState> {
+  return MENU_ITEM_IDS.reduce((acc, id) => {
+    acc[id as MenuItemId] = createItemState()
+    return acc
+  }, {} as Record<MenuItemId, ItemState>)
+}
+
+function parseFileNameFromDisposition(disposition: string | null): string | null {
+  if (!disposition) {
+    return null
+  }
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const quotedMatch = disposition.match(/filename="?([^";]+)"?/i)
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1]
+  }
+
+  return null
+}
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\\/:*?"<>|]/g, '_')
 }
 
 const MENU_ITEMS: MenuItemContent[] = [
@@ -98,25 +152,216 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     return name ?? projectId
   }, [projectId])
 
+  const backendUrl = useMemo(() => getBackendUrl(), [])
   const [activeItem, setActiveItem] = useState<MenuItemId>('feature-tc')
   const [openGroups, setOpenGroups] = useState<Record<MenuGroupId, boolean>>({
     'defect-group': true,
   })
-  const [filesByItem, setFilesByItem] = useState<Record<MenuItemId, File[]>>(() => {
-    return MENU_ITEM_IDS.reduce((acc, id) => {
-      acc[id as MenuItemId] = []
-      return acc
-    }, {} as Record<MenuItemId, File[]>)
-  })
+  const [itemStates, setItemStates] = useState<Record<MenuItemId, ItemState>>(() => createInitialItemStates())
+  const controllersRef = useRef<Record<MenuItemId, AbortController | null>>(
+    Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, AbortController | null>,
+  )
+  const downloadUrlsRef = useRef<Record<MenuItemId, string | null>>(
+    Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, string | null>,
+  )
 
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
 
-  const handleChangeFiles = (id: MenuItemId, nextFiles: File[]) => {
-    setFilesByItem((prev) => ({
-      ...prev,
-      [id]: nextFiles,
-    }))
-  }
+  const activeState = itemStates[activeContent.id] ?? createItemState()
+
+  const handleChangeFiles = useCallback(
+    (id: MenuItemId, nextFiles: File[]) => {
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        if (current.downloadUrl) {
+          URL.revokeObjectURL(current.downloadUrl)
+          downloadUrlsRef.current[id] = null
+        }
+
+        return {
+          ...prev,
+          [id]: {
+            ...current,
+            files: nextFiles,
+            status: 'idle',
+            errorMessage: null,
+            downloadUrl: null,
+            downloadName: null,
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const handleGenerate = useCallback(
+    async (id: MenuItemId) => {
+      const current = itemStates[id]
+      if (!current || current.status === 'loading') {
+        return
+      }
+
+      if (current.files.length === 0) {
+        setItemStates((prev) => ({
+          ...prev,
+          [id]: {
+            ...prev[id],
+            status: 'error',
+            errorMessage: '업로드된 파일이 없습니다. 파일을 추가해 주세요.',
+          },
+        }))
+        return
+      }
+
+      setItemStates((prev) => ({
+        ...prev,
+        [id]: {
+          ...prev[id],
+          status: 'loading',
+          errorMessage: null,
+        },
+      }))
+
+      controllersRef.current[id]?.abort()
+      const controller = new AbortController()
+      controllersRef.current[id] = controller
+
+      const formData = new FormData()
+      formData.append('menu_id', id)
+      current.files.forEach((file) => {
+        formData.append('files', file)
+      })
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/generate`,
+          {
+            method: 'POST',
+            body: formData,
+            signal: controller.signal,
+          },
+        )
+
+        if (!response.ok) {
+          let detail = '자료를 생성하는 중 오류가 발생했습니다.'
+          try {
+            const payload = (await response.json()) as { detail?: unknown }
+            if (payload && typeof payload.detail === 'string') {
+              detail = payload.detail
+            }
+          } catch {
+            const text = await response.text()
+            if (text) {
+              detail = text
+            }
+          }
+
+          if (!controller.signal.aborted) {
+            setItemStates((prev) => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                status: 'error',
+                errorMessage: detail,
+              },
+            }))
+          }
+          return
+        }
+
+        const blob = await response.blob()
+        if (controller.signal.aborted) {
+          return
+        }
+
+        const disposition = response.headers.get('content-disposition')
+        const parsedName = parseFileNameFromDisposition(disposition)
+        const safeName = sanitizeFileName(parsedName ?? `${id}-result.csv`)
+        const objectUrl = URL.createObjectURL(blob)
+
+        downloadUrlsRef.current[id] = objectUrl
+
+        setItemStates((prev) => {
+          const previous = prev[id]
+          if (previous?.downloadUrl) {
+            URL.revokeObjectURL(previous.downloadUrl)
+          }
+
+          return {
+            ...prev,
+            [id]: {
+              files: [],
+              status: 'success',
+              errorMessage: null,
+              downloadUrl: objectUrl,
+              downloadName: safeName,
+            },
+          }
+        })
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return
+        }
+
+        const fallback =
+          error instanceof Error
+            ? error.message
+            : '자료를 생성하는 중 예기치 않은 오류가 발생했습니다.'
+
+        setItemStates((prev) => ({
+          ...prev,
+          [id]: {
+            ...prev[id],
+            status: 'error',
+            errorMessage: fallback,
+          },
+        }))
+      } finally {
+        if (controllersRef.current[id] === controller) {
+          controllersRef.current[id] = null
+        }
+      }
+    },
+    [backendUrl, itemStates, projectId],
+  )
+
+  const handleReset = useCallback((id: MenuItemId) => {
+    controllersRef.current[id]?.abort()
+    controllersRef.current[id] = null
+
+    setItemStates((prev) => {
+      const current = prev[id]
+      if (current?.downloadUrl) {
+        URL.revokeObjectURL(current.downloadUrl)
+        downloadUrlsRef.current[id] = null
+      }
+
+      return {
+        ...prev,
+        [id]: createItemState(),
+      }
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      MENU_ITEM_IDS.forEach((id) => {
+        const controller = controllersRef.current[id as MenuItemId]
+        controller?.abort()
+        controllersRef.current[id as MenuItemId] = null
+
+        const downloadUrl = downloadUrlsRef.current[id as MenuItemId]
+        if (downloadUrl) {
+          URL.revokeObjectURL(downloadUrl)
+          downloadUrlsRef.current[id as MenuItemId] = null
+        }
+      })
+    }
+  }, [])
 
   const handleSelectGroup = (entry: Extract<PrimaryMenuEntry, { type: 'group' }>) => {
     const wasOpen = !!openGroups[entry.id]
@@ -249,25 +494,74 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             <p className="project-management-content__description">{activeContent.description}</p>
           </div>
 
-          <section aria-labelledby="upload-section" className="project-management-content__section">
-            <h2 id="upload-section" className="project-management-content__section-title">
-              자료 업로드
-            </h2>
-            <p className="project-management-content__helper">{activeContent.helper}</p>
-            <FileUploader
-              allowedTypes={activeContent.allowedTypes}
-              files={filesByItem[activeContent.id]}
-              onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
-            />
-          </section>
+          {activeState.status !== 'success' && (
+            <section aria-labelledby="upload-section" className="project-management-content__section">
+              <h2 id="upload-section" className="project-management-content__section-title">
+                자료 업로드
+              </h2>
+              <p className="project-management-content__helper">{activeContent.helper}</p>
+              <FileUploader
+                allowedTypes={activeContent.allowedTypes}
+                files={activeState.files}
+                onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
+                disabled={activeState.status === 'loading'}
+              />
+            </section>
+          )}
 
           <div className="project-management-content__actions">
-            <button type="button" className="project-management-content__button">
-              {activeContent.buttonLabel}
-            </button>
-            <p className="project-management-content__footnote">
-              업로드된 문서는 프로젝트 드라이브에 안전하게 보관되며, 생성된 결과는 별도의 탭에서 확인할 수 있습니다.
-            </p>
+            {activeState.status !== 'success' && (
+              <>
+                <button
+                  type="button"
+                  className="project-management-content__button"
+                  onClick={() => handleGenerate(activeContent.id)}
+                  disabled={activeState.status === 'loading'}
+                >
+                  {activeState.status === 'loading' ? '생성 중…' : activeContent.buttonLabel}
+                </button>
+                <p className="project-management-content__footnote">
+                  업로드된 문서는 프로젝트 드라이브에 안전하게 보관되며, 생성된 결과는 별도의 탭에서 확인할 수 있습니다.
+                </p>
+              </>
+            )}
+
+            {activeState.status === 'loading' && (
+              <div
+                className="project-management-content__status project-management-content__status--loading"
+                role="status"
+              >
+                업로드한 자료를 기반으로 결과를 준비하고 있습니다…
+              </div>
+            )}
+
+            {activeState.status === 'error' && (
+              <div className="project-management-content__status project-management-content__status--error" role="alert">
+                {activeState.errorMessage}
+              </div>
+            )}
+
+            {activeState.status === 'success' && (
+              <div className="project-management-content__result">
+                <a
+                  href={activeState.downloadUrl ?? undefined}
+                  className="project-management-content__button project-management-content__download"
+                  download={activeState.downloadName ?? undefined}
+                >
+                  CSV 다운로드
+                </a>
+                <button
+                  type="button"
+                  className="project-management-content__secondary"
+                  onClick={() => handleReset(activeContent.id)}
+                >
+                  다시 생성하기
+                </button>
+                <p className="project-management-content__footnote">
+                  생성된 결과는 프로젝트 드라이브에도 저장되며 필요 시 언제든지 다시 다운로드할 수 있습니다.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </main>
