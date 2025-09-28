@@ -4,9 +4,11 @@ import type { AuthStatus } from '../../auth'
 import { navigate } from '../../navigation'
 
 const PROJECT_PATH_PATTERN = /^\/projects\/(.+)$/
+const PROJECTS_ROOT_PATH = '/projects'
+const LEGACY_DRIVE_PATH = '/drive'
 
 function isKnownPathname(pathname: string): boolean {
-  if (pathname === '/' || pathname === '/drive') {
+  if (pathname === '/' || pathname === PROJECTS_ROOT_PATH || pathname === LEGACY_DRIVE_PATH) {
     return true
   }
   return PROJECT_PATH_PATTERN.test(pathname)
@@ -26,8 +28,13 @@ export function useRouteGuards(pathname: string, authStatus: AuthStatus) {
   }, [authStatus, pathname])
 
   useEffect(() => {
+    if (pathname === LEGACY_DRIVE_PATH) {
+      navigate(PROJECTS_ROOT_PATH, { replace: true })
+      return
+    }
+
     if (authStatus === 'authenticated' && pathname === '/') {
-      navigate('/drive', { replace: true })
+      navigate(PROJECTS_ROOT_PATH, { replace: true })
     }
   }, [authStatus, pathname])
 }

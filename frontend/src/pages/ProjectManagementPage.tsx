@@ -171,7 +171,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const activeState = itemStates[activeContent.id] ?? createItemState()
 
   const handleSelectAnotherProject = useCallback(() => {
-    navigate('/drive')
+    navigate('/projects')
   }, [])
 
   const handleChangeFiles = useCallback(
