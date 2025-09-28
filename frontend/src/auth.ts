@@ -83,6 +83,12 @@ export function clearAuthentication() {
 export function subscribeToAuth(listener: (status: AuthStatus) => void): () => void {
   ensureStorageListener()
   subscribers.add(listener)
+
+  try {
+    listener(readAuthStatus())
+  } catch (error) {
+    console.error('auth listener threw an error during subscription', error)
+  }
   return () => {
     subscribers.delete(listener)
   }
