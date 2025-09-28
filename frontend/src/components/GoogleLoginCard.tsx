@@ -49,7 +49,7 @@ export function GoogleLoginCard() {
       }
 
       redirectTimer = window.setTimeout(() => {
-        navigate('/drive', { replace: true })
+        navigate('/projects', { replace: true })
       }, 1200)
     } else if (initialQuery.auth === 'error') {
       setStatus('error')

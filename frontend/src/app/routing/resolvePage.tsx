@@ -6,6 +6,8 @@ import { LoginPage } from '../../pages/LoginPage'
 import { ProjectManagementPage } from '../../pages/ProjectManagementPage'
 
 const PROJECT_PATH_PATTERN = /^\/projects\/([^/]+)$/
+const PROJECTS_ROOT_PATH = '/projects'
+const LEGACY_DRIVE_PATH = '/drive'
 
 interface ResolvePageOptions {
   pathname: string
@@ -17,7 +19,7 @@ export function resolvePage({ pathname, authStatus }: ResolvePageOptions): React
     return <LoginPage />
   }
 
-  if (pathname === '/drive') {
+  if (pathname === PROJECTS_ROOT_PATH || pathname === LEGACY_DRIVE_PATH) {
     return <DriveSetupPage />
   }
 
