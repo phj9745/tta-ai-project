@@ -100,7 +100,7 @@ export function ProjectCreationModal({
       title="새 프로젝트 생성"
       description="PDF를 업로드하면 'GS-X-X-XXXX' 폴더와 필수 하위 폴더가 자동으로 만들어집니다."
     >
-      <form className="modal__form" onSubmit={handleSubmit}>
+      <form className="modal__form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
         <div className="modal__body">
           <p className="modal__helper-text">
             업로드한 파일은 생성되는 프로젝트의 ‘0. 사전 자료’ 폴더에 저장됩니다.
@@ -128,6 +128,13 @@ export function ProjectCreationModal({
             {isSubmitting ? '생성 중…' : '생성'}
           </button>
         </footer>
+
+        {isSubmitting && (
+          <div className="modal__loading-overlay" role="status" aria-live="assertive">
+            <div className="modal__loading-spinner" aria-hidden="true" />
+            <p className="modal__loading-text">프로젝트를 생성하는 중입니다…</p>
+          </div>
+        )}
       </form>
     </Modal>
   )
