@@ -3,17 +3,20 @@ from __future__ import annotations
 from typing import Optional
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from ..container import oauth_service, token_storage
-from ..services.oauth import GOOGLE_AUTH_ENDPOINT, GOOGLE_SCOPES
+from ..dependencies import get_oauth_service, get_token_storage
+from ..services.oauth import GOOGLE_AUTH_ENDPOINT, GOOGLE_SCOPES, GoogleOAuthService
+from ..token_store import TokenStorage
 
 router = APIRouter()
 
 
 @router.get("/auth/google/login")
-def google_login() -> RedirectResponse:
+def google_login(
+    oauth_service: GoogleOAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
     oauth_service.ensure_credentials()
 
     state = oauth_service.create_state()
@@ -33,7 +36,10 @@ def google_login() -> RedirectResponse:
 
 
 @router.get("/auth/google/callback")
-async def google_callback(request: Request) -> RedirectResponse:
+async def google_callback(
+    request: Request,
+    oauth_service: GoogleOAuthService = Depends(get_oauth_service),
+) -> RedirectResponse:
     oauth_service.ensure_credentials()
 
     params = request.query_params
@@ -74,6 +80,8 @@ async def google_callback(request: Request) -> RedirectResponse:
 def read_tokens(
     google_id: Optional[str] = Query(None, description="조회할 Google 사용자 식별자 (sub)"),
     email: Optional[str] = Query(None, description="조회할 Google 계정 이메일"),
+    token_storage: TokenStorage = Depends(get_token_storage),
+    oauth_service: GoogleOAuthService = Depends(get_oauth_service),
 ) -> JSONResponse:
     oauth_service.ensure_credentials()
 
@@ -99,7 +107,10 @@ def read_tokens(
 
 
 @router.get("/auth/google/users")
-def list_users() -> JSONResponse:
+def list_users(
+    token_storage: TokenStorage = Depends(get_token_storage),
+    oauth_service: GoogleOAuthService = Depends(get_oauth_service),
+) -> JSONResponse:
     oauth_service.ensure_credentials()
 
     accounts = [account.to_dict() for account in token_storage.list_accounts()]

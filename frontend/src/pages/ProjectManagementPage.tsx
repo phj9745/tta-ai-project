@@ -6,7 +6,6 @@ import {
   type FileType,
 } from '../components/fileUploaderTypes'
 import { getBackendUrl } from '../config'
-import { openGoogleDriveWorkspace } from '../drive'
 import { navigate } from '../navigation'
 
 type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
@@ -173,10 +172,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/drive')
-  }, [])
-
-  const handleOpenDrive = useCallback(() => {
-    openGoogleDriveWorkspace()
   }, [])
 
   const handleChangeFiles = useCallback(
@@ -505,13 +500,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               onClick={handleSelectAnotherProject}
             >
               다른 프로젝트 선택
-            </button>
-            <button
-              type="button"
-              className="project-management-content__button project-management-content__toolbar-button"
-              onClick={handleOpenDrive}
-            >
-              구글 드라이브 확인
             </button>
           </div>
           <div className="project-management-content__header">
