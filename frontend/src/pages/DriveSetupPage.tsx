@@ -10,7 +10,7 @@ import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
 import { ProjectCreationModal } from '../components/ProjectCreationModal'
 import type { DriveSetupResponse } from '../types/drive'
-import { GOOGLE_DRIVE_HOME_URL } from '../constants'
+import { openGoogleDriveWorkspace, storeDriveRootFolderId } from '../drive'
 
 type ViewState = 'loading' | 'ready' | 'error'
 
@@ -66,6 +66,7 @@ export function DriveSetupPage() {
           return
         }
         setResult(data)
+        storeDriveRootFolderId(data.folderId)
         setViewState('ready')
       } catch (error) {
         if (!isMounted || controller.signal.aborted) {
@@ -108,7 +109,7 @@ export function DriveSetupPage() {
   }
 
   const handleOpenDrive = () => {
-    window.open(GOOGLE_DRIVE_HOME_URL, '_blank', 'noopener,noreferrer')
+    openGoogleDriveWorkspace()
   }
 
   const projects = result?.projects ?? []

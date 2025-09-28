@@ -1,3 +1,5 @@
+import { clearDriveRootFolderId } from './drive'
+
 export type AuthStatus = 'authenticated' | 'unauthenticated'
 
 const AUTH_STATUS_STORAGE_KEY = 'tta-ai.authStatus'
@@ -69,6 +71,11 @@ export function clearAuthentication() {
     } catch (error) {
       console.error('failed to clear auth status', error)
     }
+  }
+  try {
+    clearDriveRootFolderId()
+  } catch (error) {
+    console.error('failed to clear drive folder id', error)
   }
   notify('unauthenticated')
 }

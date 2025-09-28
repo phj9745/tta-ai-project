@@ -6,6 +6,7 @@ import { listen, navigate } from './navigation'
 import { DriveSetupPage } from './pages/DriveSetupPage'
 import { LoginPage } from './pages/LoginPage'
 import { ProjectManagementPage } from './pages/ProjectManagementPage'
+import { openGoogleDriveWorkspace } from './drive'
 
 function App() {
   const [pathname, setPathname] = useState<string>(() => window.location.pathname || '/')
@@ -70,7 +71,7 @@ function App() {
   }
 
   const handleOpenDrive = () => {
-    navigate('/drive')
+    openGoogleDriveWorkspace()
   }
 
   const isAuthenticated = authStatus === 'authenticated'
