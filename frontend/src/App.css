@@ -66,6 +66,34 @@
   color: white;
 }
 
+.app-shell__logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 232, 240, 0.55);
+  background: transparent;
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-shell__logout:hover,
+.app-shell__logout:focus-visible {
+  background: rgba(226, 232, 240, 0.18);
+  color: #ffffff;
+  border-color: rgba(226, 232, 240, 0.85);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
+}
+
+.app-shell__logout:focus-visible {
+  outline: 2px solid rgba(226, 232, 240, 0.9);
+  outline-offset: 2px;
+}
+
 .app-shell__main {
   flex: 1;
   display: flex;
@@ -260,6 +288,14 @@
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
+}
+
+.drive-page__actions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
 }
 
 .drive-page__auth-message {
@@ -1032,6 +1068,18 @@
   display: flex;
   flex-direction: column;
   gap: 2.5rem;
+}
+
+.project-management-content__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+.project-management-content__toolbar .project-management-content__button,
+.project-management-content__toolbar .project-management-content__secondary {
+  align-self: center;
 }
 
 .project-management-content__header {

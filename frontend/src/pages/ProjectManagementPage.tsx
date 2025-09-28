@@ -6,6 +6,8 @@ import {
   type FileType,
 } from '../components/fileUploaderTypes'
 import { getBackendUrl } from '../config'
+import { GOOGLE_DRIVE_HOME_URL } from '../constants'
+import { navigate } from '../navigation'
 
 type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
 type MenuGroupId = 'defect-group'
@@ -168,6 +170,14 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
 
   const activeState = itemStates[activeContent.id] ?? createItemState()
+
+  const handleSelectAnotherProject = useCallback(() => {
+    navigate('/drive')
+  }, [])
+
+  const handleOpenDrive = useCallback(() => {
+    window.open(GOOGLE_DRIVE_HOME_URL, '_blank', 'noopener,noreferrer')
+  }, [])
 
   const handleChangeFiles = useCallback(
     (id: MenuItemId, nextFiles: File[]) => {
@@ -488,6 +498,22 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
       <main className="project-management-content" aria-label="프로젝트 관리 컨텐츠">
         <div className="project-management-content__inner">
+          <div className="project-management-content__toolbar" role="navigation" aria-label="프로젝트 작업 메뉴">
+            <button
+              type="button"
+              className="project-management-content__secondary project-management-content__toolbar-button"
+              onClick={handleSelectAnotherProject}
+            >
+              다른 프로젝트 선택
+            </button>
+            <button
+              type="button"
+              className="project-management-content__button project-management-content__toolbar-button"
+              onClick={handleOpenDrive}
+            >
+              구글 드라이브 확인
+            </button>
+          </div>
           <div className="project-management-content__header">
             <span className="project-management-content__eyebrow">{activeContent.eyebrow}</span>
             <h1 className="project-management-content__title">{activeContent.title}</h1>
