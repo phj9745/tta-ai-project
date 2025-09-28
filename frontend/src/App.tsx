@@ -1,6 +1,7 @@
 import './App.css'
 import { useEffect, useMemo, useState } from 'react'
 
+import { getAuthStatus, subscribeToAuth, clearAuthentication } from './auth'
 import { listen, navigate } from './navigation'
 import { DriveSetupPage } from './pages/DriveSetupPage'
 import { LoginPage } from './pages/LoginPage'
@@ -8,10 +9,18 @@ import { ProjectManagementPage } from './pages/ProjectManagementPage'
 
 function App() {
   const [pathname, setPathname] = useState<string>(() => window.location.pathname || '/')
+  const [authStatus, setAuthStatus] = useState(() => getAuthStatus())
 
   useEffect(() => {
     const unsubscribe = listen((nextPath) => {
       setPathname(nextPath)
+    })
+    return unsubscribe
+  }, [])
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((nextStatus) => {
+      setAuthStatus(nextStatus)
     })
     return unsubscribe
   }, [])
@@ -25,9 +34,19 @@ function App() {
     }
   }, [pathname])
 
+  useEffect(() => {
+    if (authStatus !== 'authenticated' && pathname !== '/') {
+      navigate('/', { replace: true })
+    }
+  }, [authStatus, pathname])
+
   const projectMatch = pathname.match(/^\/projects\/([^/]+)$/)
 
   const pageContent = useMemo(() => {
+    if (authStatus !== 'authenticated') {
+      return <LoginPage />
+    }
+
     if (projectMatch) {
       return <ProjectManagementPage projectId={decodeURIComponent(projectMatch[1])} />
     }
@@ -37,18 +56,26 @@ function App() {
     }
 
     return <LoginPage />
-  }, [pathname, projectMatch])
+  }, [authStatus, pathname, projectMatch])
+
+  const handleLogout = () => {
+    clearAuthentication()
+    navigate('/', { replace: true })
+  }
+
+  const isAuthenticated = authStatus === 'authenticated'
 
   return (
     <div className="app-shell">
       <header className="app-shell__header">
         <div className="app-shell__brand">TTA AI 프로젝트 허브</div>
-        <nav aria-label="주요 메뉴" className="app-shell__nav">
-          <a href="/" className={`app-shell__link${pathname === '/' ? ' app-shell__link--active' : ''}`}>로그인</a>
-          <a href="/drive" className={`app-shell__link${pathname === '/drive' ? ' app-shell__link--active' : ''}`}>
-            Drive 연동
-          </a>
-        </nav>
+        {isAuthenticated && (
+          <nav aria-label="계정 메뉴" className="app-shell__nav">
+            <button type="button" className="app-shell__logout" onClick={handleLogout}>
+              로그아웃
+            </button>
+          </nav>
+        )}
       </header>
 
       <main className="app-shell__main">{pageContent}</main>

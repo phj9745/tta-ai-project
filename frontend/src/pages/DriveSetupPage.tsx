@@ -10,6 +10,7 @@ import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
 import { ProjectCreationModal } from '../components/ProjectCreationModal'
 import type { DriveSetupResponse } from '../types/drive'
+import { GOOGLE_DRIVE_HOME_URL } from '../constants'
 
 type ViewState = 'loading' | 'ready' | 'error'
 
@@ -106,6 +107,10 @@ export function DriveSetupPage() {
     setReloadIndex((index) => index + 1)
   }
 
+  const handleOpenDrive = () => {
+    window.open(GOOGLE_DRIVE_HOME_URL, '_blank', 'noopener,noreferrer')
+  }
+
   const projects = result?.projects ?? []
   const folderName = result?.folderName ?? 'gs'
 
@@ -161,6 +166,10 @@ export function DriveSetupPage() {
             ) : (
               <DriveEmptyState onCreateClick={handleOpenModal} />
             )}
+
+            <div className="drive-page__actions">
+              <DriveActionButton onClick={handleOpenDrive}>구글 드라이브 확인</DriveActionButton>
+            </div>
           </DriveCard>
         )}
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { markAuthenticated, clearAuthentication } from '../auth'
 import { DRIVE_AUTH_STORAGE_KEY, getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -35,6 +36,8 @@ export function GoogleLoginCard() {
         initialQuery.message ?? 'Google Drive 권한이 성공적으로 연결되었습니다.'
       setMessage(successMessage)
 
+      markAuthenticated()
+
       try {
         const payload = {
           message: successMessage,
@@ -51,6 +54,7 @@ export function GoogleLoginCard() {
     } else if (initialQuery.auth === 'error') {
       setStatus('error')
       setMessage(initialQuery.message ?? 'Google 인증이 취소되었습니다.')
+      clearAuthentication()
     }
 
     if (initialQuery.auth) {
