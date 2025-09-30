@@ -120,7 +120,7 @@ const MENU_ITEMS: MenuItemContent[] = [
       { id: 'configuration', label: '형상 이미지', allowedTypes: ['jpg'] },
       {
         id: 'vendor-feature-list',
-        label: '업체 기능리스트',
+        label: '기능리스트',
       },
     ],
   },
@@ -134,15 +134,15 @@ const MENU_ITEMS: MenuItemContent[] = [
     helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 여러 파일을 동시에 첨부할 수 있습니다.',
     buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
-    requiredDocuments: [
-      { id: 'user-manual', label: '사용자 매뉴얼' },
-      { id: 'configuration', label: '형상 이미지', allowedTypes: ['jpg'] },
-      {
-        id: 'vendor-feature-list',
-        label: '업체 기능리스트',
-      },
-    ],
-  },
+      requiredDocuments: [
+        { id: 'user-manual', label: '사용자 매뉴얼' },
+        { id: 'configuration', label: '형상 이미지', allowedTypes: ['jpg'] },
+        {
+          id: 'vendor-feature-list',
+          label: '기능리스트',
+        },
+      ],
+    },
   {
     id: 'defect-report',
     label: '결함 리포트',
