@@ -1,4 +1,12 @@
-export type FileType = 'pdf' | 'txt' | 'jpg' | 'csv' | 'html'
+export type FileType =
+  | 'pdf'
+  | 'docx'
+  | 'xlsx'
+  | 'txt'
+  | 'jpg'
+  | 'png'
+  | 'csv'
+  | 'html'
 
 interface FileTypeInfo {
   label: string
@@ -12,15 +20,36 @@ export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
     accept: ['.pdf', 'application/pdf'],
     extensions: ['pdf'],
   },
+  docx: {
+    label: 'DOCX',
+    accept: [
+      '.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ],
+    extensions: ['docx'],
+  },
+  xlsx: {
+    label: 'XLSX',
+    accept: [
+      '.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    ],
+    extensions: ['xlsx'],
+  },
   txt: {
     label: 'TXT',
     accept: ['.txt', 'text/plain'],
     extensions: ['txt'],
   },
   jpg: {
-    label: 'JPG',
+    label: 'JPG/JPEG',
     accept: ['.jpg', '.jpeg', 'image/jpeg'],
     extensions: ['jpg', 'jpeg'],
+  },
+  png: {
+    label: 'PNG',
+    accept: ['.png', 'image/png'],
+    extensions: ['png'],
   },
   csv: {
     label: 'CSV',

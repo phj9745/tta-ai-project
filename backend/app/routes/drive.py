@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -14,16 +14,46 @@ from ..services.google_drive import GoogleDriveService
 router = APIRouter()
 
 
-_REQUIRED_MENU_DOCUMENTS: Dict[str, List[Dict[str, str]]] = {
+class RequiredDocument(TypedDict, total=False):
+    id: str
+    label: str
+    allowed_extensions: List[str]
+
+
+_REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
     "feature-list": [
-        {"id": "user-manual", "label": "사용자 매뉴얼"},
-        {"id": "configuration", "label": "형상 이미지"},
-        {"id": "vendor-feature-list", "label": "업체 기능리스트"},
+        {
+            "id": "user-manual",
+            "label": "사용자 매뉴얼",
+            "allowed_extensions": ["pdf", "docx", "xlsx"],
+        },
+        {
+            "id": "configuration",
+            "label": "형상 이미지",
+            "allowed_extensions": ["png", "jpg", "jpeg"],
+        },
+        {
+            "id": "vendor-feature-list",
+            "label": "업체 기능리스트",
+            "allowed_extensions": ["pdf", "docx", "xlsx"],
+        },
     ],
     "testcase-generation": [
-        {"id": "user-manual", "label": "사용자 매뉴얼"},
-        {"id": "configuration", "label": "형상 이미지"},
-        {"id": "vendor-feature-list", "label": "기능리스트"},
+        {
+            "id": "user-manual",
+            "label": "사용자 매뉴얼",
+            "allowed_extensions": ["pdf", "docx", "xlsx"],
+        },
+        {
+            "id": "configuration",
+            "label": "형상 이미지",
+            "allowed_extensions": ["png", "jpg", "jpeg"],
+        },
+        {
+            "id": "vendor-feature-list",
+            "label": "기능리스트",
+            "allowed_extensions": ["pdf", "docx", "xlsx"],
+        },
     ],
 }
 
@@ -119,6 +149,37 @@ async def generate_project_asset(
                 status_code=422,
                 detail=f"다음 필수 문서를 업로드해 주세요: {', '.join(missing)}",
             )
+
+        required_docs_by_id = {doc["id"]: doc for doc in required_docs}
+        for upload, entry in zip(uploads, metadata_entries):
+            if entry.get("role") != "required":
+                continue
+
+            doc_id = entry.get("id")
+            if doc_id not in required_docs_by_id:
+                raise HTTPException(status_code=422, detail="알 수 없는 필수 문서 유형입니다.")
+
+            doc_info = required_docs_by_id[doc_id]
+            allowed_extensions = [
+                ext.lower()
+                for ext in doc_info.get("allowed_extensions", [])
+                if isinstance(ext, str) and ext
+            ]
+            if not allowed_extensions:
+                continue
+
+            extension = ""
+            if upload.filename and "." in upload.filename:
+                extension = upload.filename.rsplit(".", 1)[-1].lower()
+
+            if extension not in allowed_extensions:
+                allowed_text = ", ".join(ext.upper() for ext in allowed_extensions)
+                label = doc_info.get("label", doc_id)
+                filename = upload.filename or label
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{label}은(는) {allowed_text} 파일만 업로드할 수 있습니다: {filename}",
+                )
     else:
         for entry in metadata_entries:
             role = entry.get("role")
