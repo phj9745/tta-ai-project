@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
 
 import { FileUploader } from '../components/FileUploader'
-import {
-  ALL_FILE_TYPES,
-  FILE_TYPE_OPTIONS,
-  type FileType,
-} from '../components/fileUploaderTypes'
+import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -20,7 +15,7 @@ type MenuItemId =
 interface RequiredDocument {
   id: string
   label: string
-  description?: string
+  allowedTypes?: FileType[]
 }
 
 interface AdditionalFileEntry {
@@ -121,12 +116,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     buttonLabel: '기능리스트 생성하기',
     allowedTypes: ALL_FILE_TYPES,
     requiredDocuments: [
-      { id: 'user-manual', label: '사용자 매뉴얼', description: '최신 버전의 사용자 매뉴얼을 첨부해 주세요.' },
-      { id: 'configuration', label: '형상 문서', description: '현행 시스템이나 제품 구성 정보를 포함한 문서를 업로드해 주세요.' },
+      { id: 'user-manual', label: '사용자 매뉴얼' },
+      { id: 'configuration', label: '형상 이미지', allowedTypes: ['jpg'] },
       {
         id: 'vendor-feature-list',
         label: '업체 기능리스트',
-        description: '업체로부터 전달받은 기능 목록 자료를 첨부해 주세요.',
       },
     ],
   },
@@ -141,12 +135,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
     requiredDocuments: [
-      { id: 'user-manual', label: '사용자 매뉴얼', description: '최신 버전의 사용자 매뉴얼을 첨부해 주세요.' },
-      { id: 'configuration', label: '형상 문서', description: '현행 시스템이나 제품 구성 정보를 포함한 문서를 업로드해 주세요.' },
+      { id: 'user-manual', label: '사용자 매뉴얼' },
+      { id: 'configuration', label: '형상 이미지', allowedTypes: ['jpg'] },
       {
         id: 'vendor-feature-list',
         label: '업체 기능리스트',
-        description: '업체로부터 전달받은 기능 목록 자료를 첨부해 주세요.',
       },
     ],
   },
@@ -217,7 +210,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }, {} as Record<MenuItemId, MenuItemContent>)
   }, [])
   const additionalIdRef = useRef(0)
-  const additionalFileInputRef = useRef<HTMLInputElement | null>(null)
 
   const releaseDownloadUrl = useCallback((id: MenuItemId, url: string | null) => {
     if (url) {
@@ -230,11 +222,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
   const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
-  const additionalAccept = useMemo(() => {
-    const types = activeContent.allowedTypes.length > 0 ? activeContent.allowedTypes : ALL_FILE_TYPES
-    return types.flatMap((type) => FILE_TYPE_OPTIONS[type].accept).join(',')
-  }, [activeContent])
-
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -399,28 +386,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     },
     [releaseDownloadUrl],
   )
-
-  const handleAdditionalInputChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      if (activeState.status === 'loading') {
-        event.target.value = ''
-        return
-      }
-
-      const selected = Array.from(event.target.files ?? [])
-      handleAddAdditionalFiles(activeContent.id, selected)
-      event.target.value = ''
-    },
-    [activeContent.id, activeState.status, handleAddAdditionalFiles],
-  )
-
-  const handleOpenAdditionalFileDialog = useCallback(() => {
-    if (activeState.status === 'loading') {
-      return
-    }
-
-    additionalFileInputRef.current?.click()
-  }, [activeState.status])
 
   const handleGenerate = useCallback(
     async (id: MenuItemId) => {
@@ -708,9 +673,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     <h2 id="required-upload-section" className="project-management-content__section-title">
                       필수 문서 업로드
                     </h2>
-                    <p className="project-management-content__helper">
-                      사용자 매뉴얼, 형상 문서, 업체 기능리스트를 각각 업로드해 주세요.
-                    </p>
                     <div className="project-management-required__list">
                       {(activeContent.requiredDocuments ?? []).map((doc) => {
                         const requiredFile = activeState.requiredFiles[doc.id] ?? null
@@ -718,14 +680,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
                         return (
                           <div key={doc.id} className="project-management-required__item">
-                            <div className="project-management-required__header">
-                              <span className="project-management-required__label">{doc.label}</span>
-                              {doc.description && (
-                                <p className="project-management-required__description">{doc.description}</p>
-                              )}
-                            </div>
+                            <span className="project-management-required__label">{doc.label}</span>
                             <FileUploader
-                              allowedTypes={activeContent.allowedTypes}
+                              allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
                               files={fileList}
                               onChange={(nextFiles) =>
                                 handleSetRequiredFile(activeContent.id, doc.id, nextFiles[0] ?? null)
@@ -737,70 +694,49 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                         )
                       })}
                     </div>
-                  </section>
 
-                  <section
-                    aria-labelledby="optional-upload-section"
-                    className="project-management-content__section project-management-additional"
-                  >
-                    <h2 id="optional-upload-section" className="project-management-content__section-title">
-                      추가 문서 업로드 (선택)
-                    </h2>
-                    <p className="project-management-content__helper">
-                      필요한 경우 추가 문서를 업로드하고 문서 종류를 입력해 주세요.
-                    </p>
-                    <div className="project-management-additional__controls">
-                      <button
-                        type="button"
-                        className="project-management-additional__add project-management-content__secondary"
-                        onClick={handleOpenAdditionalFileDialog}
-                        disabled={activeState.status === 'loading'}
-                      >
-                        파일 추가
-                      </button>
-                      <input
-                        ref={additionalFileInputRef}
-                        type="file"
-                        className="project-management-additional__input"
-                        accept={additionalAccept}
-                        multiple
-                        onChange={handleAdditionalInputChange}
+                    <div className="project-management-additional project-management-additional--inline">
+                      <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
+                      <FileUploader
+                        allowedTypes={activeContent.allowedTypes}
+                        files={[]}
+                        onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
                         disabled={activeState.status === 'loading'}
                       />
-                    </div>
-                    {activeState.additionalFiles.length > 0 && (
-                      <ul className="project-management-additional__list">
-                        {activeState.additionalFiles.map((entry) => (
-                          <li key={entry.id} className="project-management-additional__item">
-                            <div className="project-management-additional__file">{entry.file.name}</div>
-                            <label className="project-management-additional__description">
-                              <span>문서 종류</span>
-                              <input
-                                type="text"
-                                value={entry.description}
-                                onChange={(event) =>
-                                  handleUpdateAdditionalDescription(
-                                    activeContent.id,
-                                    entry.id,
-                                    event.target.value,
-                                  )
-                                }
-                                placeholder="예: 설계 명세서"
+                      {activeState.additionalFiles.length > 0 && (
+                        <ul className="project-management-additional__list">
+                          {activeState.additionalFiles.map((entry) => (
+                            <li key={entry.id} className="project-management-additional__item">
+                              <div className="project-management-additional__file">{entry.file.name}</div>
+                              <label className="project-management-additional__description">
+                                <span>문서 종류</span>
+                                <input
+                                  type="text"
+                                  value={entry.description}
+                                  onChange={(event) =>
+                                    handleUpdateAdditionalDescription(
+                                      activeContent.id,
+                                      entry.id,
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="예: 테스트 보고서"
+                                  disabled={activeState.status === 'loading'}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="project-management-additional__remove"
+                                onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
                                 disabled={activeState.status === 'loading'}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              className="project-management-additional__remove"
-                              onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
-                              disabled={activeState.status === 'loading'}
-                            >
-                              삭제
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                              >
+                                제거
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </section>
                 </>
               ) : (
