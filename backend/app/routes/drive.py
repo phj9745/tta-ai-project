@@ -17,13 +17,13 @@ router = APIRouter()
 _REQUIRED_MENU_DOCUMENTS: Dict[str, List[Dict[str, str]]] = {
     "feature-list": [
         {"id": "user-manual", "label": "사용자 매뉴얼"},
-        {"id": "configuration", "label": "형상 문서"},
+        {"id": "configuration", "label": "형상 이미지"},
         {"id": "vendor-feature-list", "label": "업체 기능리스트"},
     ],
     "testcase-generation": [
         {"id": "user-manual", "label": "사용자 매뉴얼"},
-        {"id": "configuration", "label": "형상 문서"},
-        {"id": "vendor-feature-list", "label": "업체 기능리스트"},
+        {"id": "configuration", "label": "형상 이미지"},
+        {"id": "vendor-feature-list", "label": "기능리스트"},
     ],
 }
 
@@ -129,7 +129,12 @@ async def generate_project_asset(
             elif role not in {"required", "additional"}:
                 raise HTTPException(status_code=422, detail="파일 메타데이터 형식이 올바르지 않습니다.")
 
-    result = await ai_generation_service.generate_csv(project_id=project_id, menu_id=menu_id, uploads=uploads)
+    result = await ai_generation_service.generate_csv(
+        project_id=project_id,
+        menu_id=menu_id,
+        uploads=uploads,
+        metadata=metadata_entries,
+    )
 
     headers = {
         "Content-Disposition": f'attachment; filename="{result.filename}"',
