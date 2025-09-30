@@ -12,6 +12,7 @@ interface FileUploaderProps {
   files: File[]
   onChange: (files: File[]) => void
   disabled?: boolean
+  multiple?: boolean
 }
 
 function formatBytes(bytes: number): string {
@@ -29,7 +30,13 @@ function createFileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
-export function FileUploader({ allowedTypes, files, onChange, disabled = false }: FileUploaderProps) {
+export function FileUploader({
+  allowedTypes,
+  files,
+  onChange,
+  disabled = false,
+  multiple = true,
+}: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -74,11 +81,13 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
       return
     }
 
+    const normalizedIncoming = multiple ? incoming : incoming.slice(0, 1)
+
     const allowed: File[] = []
     const rejected: string[] = []
-    const existingKeys = new Set(files.map(createFileKey))
+    const existingKeys = multiple ? new Set(files.map(createFileKey)) : null
 
-    incoming.forEach((file) => {
+    normalizedIncoming.forEach((file) => {
       const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
       const matchesType = activeTypes.some((type) => {
         const info = FILE_TYPE_OPTIONS[type]
@@ -90,12 +99,15 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
         return
       }
 
-      const key = createFileKey(file)
-      if (existingKeys.has(key)) {
-        return
+      if (existingKeys) {
+        const key = createFileKey(file)
+        if (existingKeys.has(key)) {
+          return
+        }
+
+        existingKeys.add(key)
       }
 
-      existingKeys.add(key)
       allowed.push(file)
     })
 
@@ -106,7 +118,11 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
     }
 
     if (allowed.length > 0) {
-      onChange([...files, ...allowed])
+      if (multiple) {
+        onChange([...files, ...allowed])
+      } else {
+        onChange([allowed[allowed.length - 1]])
+      }
     }
   }
 
@@ -137,8 +153,12 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
       return
     }
 
-    const nextFiles = files.filter((_, currentIndex) => currentIndex !== index)
-    onChange(nextFiles)
+    if (multiple) {
+      const nextFiles = files.filter((_, currentIndex) => currentIndex !== index)
+      onChange(nextFiles)
+    } else {
+      onChange([])
+    }
   }
 
   return (
@@ -155,7 +175,7 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
           type="file"
           className="file-uploader__input"
           accept={acceptValue}
-          multiple
+          multiple={multiple}
           onChange={handleInputChange}
           disabled={disabled}
         />
