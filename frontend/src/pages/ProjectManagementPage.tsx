@@ -8,7 +8,12 @@ import {
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
-type MenuItemId = 'feature-tc' | 'defect-report' | 'security-report' | 'performance-report'
+type MenuItemId =
+  | 'feature-list'
+  | 'testcase-generation'
+  | 'defect-report'
+  | 'security-report'
+  | 'performance-report'
 interface MenuItemContent {
   id: MenuItemId
   label: string
@@ -75,14 +80,25 @@ function sanitizeFileName(name: string): string {
 
 const MENU_ITEMS: MenuItemContent[] = [
   {
-    id: 'feature-tc',
-    label: '기능 및 TC 생성',
-    eyebrow: '기능 & 테스트',
-    title: '요구사항에서 기능과 테스트 케이스 생성',
+    id: 'feature-list',
+    label: '기능리스트 생성',
+    eyebrow: '기능 정의',
+    title: '요구사항에서 기능 목록 추출',
     description:
-      '요구사항 명세나 기획 문서를 업로드하면 AI가 기능 정의서와 테스트 케이스 초안을 자동으로 제안합니다.',
+      '요구사항 명세나 기획 문서를 업로드하면 AI가 주요 기능과 설명을 정리한 기능 정의서를 제안합니다.',
     helper: 'PDF, TXT, CSV 등 요구사항 관련 문서를 업로드해 주세요. 여러 파일을 동시에 첨부할 수 있습니다.',
-    buttonLabel: '기능 및 TC 생성하기',
+    buttonLabel: '기능리스트 생성하기',
+    allowedTypes: ALL_FILE_TYPES,
+  },
+  {
+    id: 'testcase-generation',
+    label: '테스트케이스 생성',
+    eyebrow: '테스트 설계',
+    title: '요구사항에서 테스트 케이스 생성',
+    description:
+      '업로드된 요구사항을 바탕으로 테스트 시나리오와 기대 결과를 정리한 테스트 케이스 초안을 생성합니다.',
+    helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 여러 파일을 동시에 첨부할 수 있습니다.',
+    buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
   },
   {
@@ -122,7 +138,7 @@ const MENU_ITEMS: MenuItemContent[] = [
 
 const MENU_ITEM_IDS = MENU_ITEMS.map((item) => item.id)
 
-const FIRST_MENU_ITEM = MENU_ITEMS[0]?.id ?? 'feature-tc'
+const FIRST_MENU_ITEM = MENU_ITEMS[0]?.id ?? 'feature-list'
 
 interface ProjectManagementPageProps {
   projectId: string
