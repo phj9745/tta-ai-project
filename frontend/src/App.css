@@ -1,12 +1,149 @@
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, rgba(241, 245, 249, 0.82) 0%, rgba(226, 232, 240, 0.95) 100%);
+}
+
+.app-shell__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem clamp(1.5rem, 4vw, 3.5rem);
+  background: rgba(15, 23, 42, 0.92);
+  color: white;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(12px);
+}
+
+.app-shell__brand {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.app-shell__nav {
+  display: flex;
+  align-items: center;
+  font-size: 0.95rem;
+}
+
+.app-shell__link {
+  position: relative;
+  color: rgba(226, 232, 240, 0.9);
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s ease;
+}
+
+.app-shell__link::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -0.45rem;
+  width: 100%;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.65);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.2s ease;
+}
+
+.app-shell__link:hover {
+  color: white;
+}
+
+.app-shell__link:hover::after,
+.app-shell__link--active::after {
+  transform: scaleX(1);
+}
+
+.app-shell__link--active {
+  color: white;
+}
+
+.app-shell__drive,
+.app-shell__logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.45rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(226, 232, 240, 0.55);
+  background: transparent;
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-shell__drive {
+  margin-right: 0.75rem;
+  border-color: rgba(226, 232, 240, 0.75);
+  background: rgba(59, 130, 246, 0.14);
+  color: #ffffff;
+  backdrop-filter: blur(6px);
+}
+
+.app-shell__drive:hover,
+.app-shell__drive:focus-visible {
+  background: rgba(59, 130, 246, 0.24);
+  border-color: rgba(226, 232, 240, 0.9);
+  color: #ffffff;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
+}
+
+.app-shell__logout:hover,
+.app-shell__logout:focus-visible {
+  background: rgba(226, 232, 240, 0.18);
+  color: #ffffff;
+  border-color: rgba(226, 232, 240, 0.85);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.25);
+}
+
+.app-shell__logout {
+  margin-left: 1.1rem;
+}
+
+.app-shell__drive:focus-visible,
+.app-shell__logout:focus-visible {
+  outline: 2px solid rgba(226, 232, 240, 0.9);
+  outline-offset: 2px;
+}
+
+.app-shell__main {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: clamp(2rem, 4vw, 4rem) clamp(1.5rem, 4vw, 3.5rem);
+}
+
+.app-shell__footer {
+  padding: 1.5rem clamp(1.5rem, 4vw, 3.5rem);
+  text-align: center;
+  font-size: 0.9rem;
+  color: rgba(15, 23, 42, 0.72);
+  border-top: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16px);
+}
+
 .page {
-  width: min(480px, 100%);
-  padding: 3.5rem 3rem;
+  width: min(960px, 100%);
+  margin: 0 auto;
+  padding: clamp(2.5rem, 4vw, 4rem) clamp(1.75rem, 3vw, 3.5rem);
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(12px);
   box-shadow:
-    0 25px 45px rgba(15, 23, 42, 0.15),
-    0 2px 10px rgba(15, 23, 42, 0.08);
+    0 25px 45px rgba(15, 23, 42, 0.12),
+    0 2px 12px rgba(15, 23, 42, 0.08);
   display: flex;
   flex-direction: column;
   gap: 2.5rem;
@@ -15,27 +152,26 @@
 .page__header {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-  text-align: center;
+  gap: 0.85rem;
 }
 
 .page__eyebrow {
   display: inline-flex;
-  align-self: center;
+  align-self: flex-start;
   padding: 0.35rem 0.9rem;
   border-radius: 999px;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #0f172a;
-  background: rgba(148, 163, 184, 0.2);
+  background: rgba(59, 130, 246, 0.12);
 }
 
 .page__title {
   margin: 0;
-  font-size: clamp(2rem, 2.5vw + 1.5rem, 2.6rem);
-  line-height: 1.25;
+  font-size: clamp(2.1rem, 3vw + 1.2rem, 3rem);
+  line-height: 1.2;
   font-weight: 700;
   color: #0f172a;
 }
@@ -174,6 +310,14 @@
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
+}
+
+.drive-page__actions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: flex-end;
 }
 
 .drive-page__auth-message {
@@ -535,6 +679,14 @@
   background: rgba(219, 234, 254, 0.4);
 }
 
+.file-uploader__dropzone--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  border-color: rgba(148, 163, 184, 0.5);
+  background: rgba(248, 250, 252, 0.6);
+  box-shadow: none;
+}
+
 .file-uploader__input {
   position: absolute;
   inset: 0;
@@ -607,6 +759,13 @@
 .file-uploader__remove:hover {
   background: rgba(239, 68, 68, 0.2);
   transform: translateY(-1px);
+}
+
+.file-uploader__remove:disabled {
+  background: rgba(148, 163, 184, 0.15);
+  color: rgba(100, 116, 139, 0.95);
+  cursor: not-allowed;
+  transform: none;
 }
 
 .drive-projects__list {
@@ -712,6 +871,356 @@
 }
 
 @keyframes drive-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.project-management-page {
+  width: min(1100px, 100%);
+  min-height: 70vh;
+  display: flex;
+  background: #ffffff;
+  border-radius: 24px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.project-management-sidebar {
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  padding: 2rem 1.75rem;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.project-management-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.project-management-overview__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.project-management-overview__name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: #ffffff;
+  word-break: keep-all;
+}
+
+.project-management-menu {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-management-menu__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.project-management-menu__item {
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.project-management-menu__button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: rgba(226, 232, 240, 0.75);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.project-management-menu__button:hover,
+.project-management-menu__button:focus-visible {
+  outline: none;
+  background: rgba(148, 163, 184, 0.18);
+  color: #ffffff;
+  transform: translateX(4px);
+}
+
+.project-management-menu__item--active .project-management-menu__button {
+  background: rgba(59, 130, 246, 0.32);
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(148, 197, 255, 0.35);
+  transform: none;
+}
+
+.project-management-menu__label {
+  font-weight: 600;
+}
+
+.project-management-menu__helper {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.project-management-menu__item--active .project-management-menu__helper {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.project-management-content {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  background: #f8fafc;
+  padding: 2.5rem;
+}
+
+.project-management-content__inner {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+  padding: 2.25rem;
+}
+
+.project-management-content__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.project-management-content__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 640px;
+}
+
+.project-management-content__eyebrow {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-management-content__title {
+  margin: 0;
+  font-size: clamp(1.9rem, 2vw + 1.4rem, 2.6rem);
+  line-height: 1.25;
+  color: #0f172a;
+}
+
+.project-management-content__description {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: #475569;
+}
+
+.project-management-content__section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.project-management-content__section-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.project-management-content__helper {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #475569;
+}
+
+.project-management-content__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.project-management-content__button {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 210px;
+  padding: 0.85rem 2.25rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.project-management-content__button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 16px 32px rgba(37, 99, 235, 0.3);
+}
+
+.project-management-content__button:active {
+  transform: translateY(0);
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.24);
+}
+
+.project-management-content__button:disabled,
+.project-management-content__button[aria-disabled='true'] {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+.project-management-content__footnote {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #64748b;
+}
+
+.project-management-content__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.project-management-content__status--loading {
+  color: #2563eb;
+}
+
+.project-management-content__status--loading::before {
+  content: '';
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  border: 2px solid rgba(37, 99, 235, 0.25);
+  border-top-color: #2563eb;
+  animation: project-management-spin 0.75s linear infinite;
+}
+
+.project-management-content__status--error {
+  color: #b91c1c;
+}
+
+.project-management-content__status--error::before {
+  content: '⚠️';
+  font-size: 1rem;
+}
+
+.project-management-content__result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.project-management-content__download {
+  text-decoration: none;
+}
+
+.project-management-content__secondary {
+  align-self: flex-start;
+  padding: 0.6rem 1.5rem;
+  border-radius: 999px;
+  border: 1px solid #cbd5f5;
+  background: #ffffff;
+  color: #1d4ed8;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.project-management-content__secondary:hover {
+  color: #1e40af;
+  border-color: #94a3b8;
+  box-shadow: 0 10px 20px rgba(148, 163, 184, 0.24);
+}
+
+@media (max-width: 1024px) {
+  .project-management-page {
+    flex-direction: column;
+  }
+
+  .project-management-sidebar {
+    flex: none;
+    width: 100%;
+    padding: 1.75rem 1.5rem;
+    border-right: none;
+    border-bottom: 1px solid rgba(226, 232, 240, 0.2);
+  }
+
+  .project-management-content {
+    padding: 1.75rem;
+  }
+}
+
+@media (max-width: 720px) {
+  .project-management-page {
+    border-radius: 20px;
+  }
+
+  .project-management-sidebar {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .project-management-menu__button {
+    padding: 0.75rem 0.85rem;
+  }
+
+  .project-management-content {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .project-management-content__inner {
+    padding: 1.75rem;
+    border-radius: 16px;
+  }
+}
+
+@keyframes project-management-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
   to {
     transform: rotate(360deg);
   }

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import io
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..container import drive_service
+from ..dependencies import get_ai_generation_service, get_drive_service
+from ..services.ai_generation import AIGenerationService
+from ..services.google_drive import GoogleDriveService
 
 router = APIRouter()
 
@@ -13,6 +16,7 @@ router = APIRouter()
 @router.post("/drive/gs/setup")
 async def ensure_gs_folder(
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> JSONResponse:
     result = await drive_service.ensure_drive_setup(google_id)
     return JSONResponse(result)
@@ -23,6 +27,7 @@ async def create_drive_project(
     folder_id: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> Dict[str, Any]:
     if not files:
         raise HTTPException(status_code=422, detail="최소 한 개의 파일을 업로드해주세요.")
@@ -42,3 +47,21 @@ async def create_drive_project(
         files=files,
         google_id=google_id,
     )
+
+
+@router.post("/drive/projects/{project_id}/generate")
+async def generate_project_asset(
+    project_id: str,
+    menu_id: str = Form(..., description="생성할 메뉴 ID"),
+    files: Optional[List[UploadFile]] = File(None),
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> StreamingResponse:
+    uploads = files or []
+    result = await ai_generation_service.generate_csv(project_id=project_id, menu_id=menu_id, uploads=uploads)
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{result.filename}"',
+        "Cache-Control": "no-store",
+    }
+
+    return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)

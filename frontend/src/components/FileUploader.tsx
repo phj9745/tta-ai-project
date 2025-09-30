@@ -1,48 +1,17 @@
 import { useMemo, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 
-export type FileType = 'pdf' | 'txt' | 'jpg' | 'csv' | 'html'
-
-interface FileTypeInfo {
-  label: string
-  accept: string[]
-  extensions: string[]
-}
-
-export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
-  pdf: {
-    label: 'PDF',
-    accept: ['.pdf', 'application/pdf'],
-    extensions: ['pdf'],
-  },
-  txt: {
-    label: 'TXT',
-    accept: ['.txt', 'text/plain'],
-    extensions: ['txt'],
-  },
-  jpg: {
-    label: 'JPG',
-    accept: ['.jpg', '.jpeg', 'image/jpeg'],
-    extensions: ['jpg', 'jpeg'],
-  },
-  csv: {
-    label: 'CSV',
-    accept: ['.csv', 'text/csv'],
-    extensions: ['csv'],
-  },
-  html: {
-    label: 'HTML',
-    accept: ['.html', '.htm', 'text/html'],
-    extensions: ['html', 'htm'],
-  },
-}
-
-export const ALL_FILE_TYPES = Object.keys(FILE_TYPE_OPTIONS) as FileType[]
+import {
+  ALL_FILE_TYPES,
+  FILE_TYPE_OPTIONS,
+  type FileType,
+} from './fileUploaderTypes'
 
 interface FileUploaderProps {
   allowedTypes: FileType[]
   files: File[]
   onChange: (files: File[]) => void
+  disabled?: boolean
 }
 
 function formatBytes(bytes: number): string {
@@ -60,7 +29,7 @@ function createFileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
-export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProps) {
+export function FileUploader({ allowedTypes, files, onChange, disabled = false }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -75,6 +44,10 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   }, [activeTypes])
 
   const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
+    if (disabled) {
+      return
+    }
+
     event.preventDefault()
     if (!isDragging) {
       setIsDragging(true)
@@ -82,6 +55,10 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   }
 
   const handleDragLeave = (event: DragEvent<HTMLLabelElement>) => {
+    if (disabled) {
+      return
+    }
+
     event.preventDefault()
     if (isDragging) {
       setIsDragging(false)
@@ -89,6 +66,10 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   }
 
   const addFiles = (incoming: File[]) => {
+    if (disabled) {
+      return
+    }
+
     if (incoming.length === 0) {
       return
     }
@@ -130,6 +111,10 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   }
 
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
+    if (disabled) {
+      return
+    }
+
     event.preventDefault()
     setIsDragging(false)
     const droppedFiles = Array.from(event.dataTransfer?.files ?? [])
@@ -137,12 +122,21 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (disabled) {
+      event.target.value = ''
+      return
+    }
+
     const selected = Array.from(event.target.files ?? [])
     addFiles(selected)
     event.target.value = ''
   }
 
   const handleRemove = (index: number) => {
+    if (disabled) {
+      return
+    }
+
     const nextFiles = files.filter((_, currentIndex) => currentIndex !== index)
     onChange(nextFiles)
   }
@@ -150,7 +144,9 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
   return (
     <div className="file-uploader">
       <label
-        className={`file-uploader__dropzone${isDragging ? ' file-uploader__dropzone--active' : ''}`}
+        className={`file-uploader__dropzone${
+          isDragging ? ' file-uploader__dropzone--active' : ''
+        }${disabled ? ' file-uploader__dropzone--disabled' : ''}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -161,6 +157,7 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
           accept={acceptValue}
           multiple
           onChange={handleInputChange}
+          disabled={disabled}
         />
         <div className="file-uploader__prompt">
           <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
@@ -183,6 +180,7 @@ export function FileUploader({ allowedTypes, files, onChange }: FileUploaderProp
                 className="file-uploader__remove"
                 onClick={() => handleRemove(index)}
                 aria-label={`${file.name} 삭제`}
+                disabled={disabled}
               >
                 삭제
               </button>

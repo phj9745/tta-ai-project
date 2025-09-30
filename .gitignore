@@ -1,0 +1,40 @@
+# General
+.DS_Store
+*.log
+*.tmp
+*.local
+*.lock
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+.env
+.env.*
+.eggs/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# FastAPI/Backend
+backend/app/google_tokens.db
+backend/app/google_tokens.json
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+coverage/
+.vite/
+
+# IDEs and tooling
+.idea/
+.vscode/
+*.swp

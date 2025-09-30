@@ -10,6 +10,7 @@ import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
 import { ProjectCreationModal } from '../components/ProjectCreationModal'
 import type { DriveSetupResponse } from '../types/drive'
+import { storeDriveRootFolderId } from '../drive'
 
 type ViewState = 'loading' | 'ready' | 'error'
 
@@ -65,6 +66,7 @@ export function DriveSetupPage() {
           return
         }
         setResult(data)
+        storeDriveRootFolderId(data.folderId)
         setViewState('ready')
       } catch (error) {
         if (!isMounted || controller.signal.aborted) {
@@ -161,6 +163,8 @@ export function DriveSetupPage() {
             ) : (
               <DriveEmptyState onCreateClick={handleOpenModal} />
             )}
+
+            <div className="drive-page__actions" aria-hidden="true" />
           </DriveCard>
         )}
       </div>

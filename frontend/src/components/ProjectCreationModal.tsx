@@ -4,7 +4,7 @@ import type { FormEvent } from 'react'
 import { getBackendUrl } from '../config'
 import { Modal } from './Modal'
 import { FileUploader } from './FileUploader'
-import type { FileType } from './FileUploader'
+import type { FileType } from './fileUploaderTypes'
 
 interface ProjectCreationModalProps {
   open: boolean
