@@ -23,6 +23,8 @@ interface MenuItemContent {
   helper: string
   buttonLabel: string
   allowedTypes: FileType[]
+  uploaderVariant?: 'list' | 'grid'
+  maxFiles?: number
 }
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -427,6 +429,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 files={activeState.files}
                 onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
                 disabled={activeState.status === 'loading'}
+                variant={activeContent.uploaderVariant}
+                maxFiles={activeContent.maxFiles}
               />
             </section>
           )}

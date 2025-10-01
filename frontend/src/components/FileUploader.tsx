@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 
 import {
@@ -12,6 +12,9 @@ interface FileUploaderProps {
   files: File[]
   onChange: (files: File[]) => void
   disabled?: boolean
+  maxFiles?: number
+  variant?: 'list' | 'grid'
+  hideDropzoneWhenFilled?: boolean
 }
 
 function formatBytes(bytes: number): string {
@@ -29,11 +32,35 @@ function createFileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
-export function FileUploader({ allowedTypes, files, onChange, disabled = false }: FileUploaderProps) {
+function isPreviewableImage(file: File): boolean {
+  if (file.type.startsWith('image/')) {
+    return true
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
+  return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic', 'heif'].includes(extension)
+}
+
+export function FileUploader({
+  allowedTypes,
+  files,
+  onChange,
+  disabled = false,
+  maxFiles,
+  variant = 'list',
+  hideDropzoneWhenFilled = false,
+}: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const activeTypes = allowedTypes.length > 0 ? allowedTypes : ALL_FILE_TYPES
+
+  const maxFileCount = Number.isFinite(maxFiles) && maxFiles !== undefined ? Math.max(0, Math.floor(maxFiles)) : undefined
+  const shouldHideForFilled = hideDropzoneWhenFilled && files.length > 0
+  const atCapacity = maxFileCount !== undefined && files.length >= maxFileCount
+  const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
+  const shouldRenderDropzone = !atCapacity && !shouldHideForFilled
+  const isGridVariant = variant === 'grid'
 
   const acceptValue = useMemo(() => {
     return activeTypes.flatMap((type) => FILE_TYPE_OPTIONS[type].accept).join(',')
@@ -43,8 +70,35 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
     return activeTypes.map((type) => FILE_TYPE_OPTIONS[type].label).join(', ')
   }, [activeTypes])
 
+  const previewItems = useMemo(() => {
+    return files.map((file) => ({
+      key: createFileKey(file),
+      url: isPreviewableImage(file) ? URL.createObjectURL(file) : null,
+    }))
+  }, [files])
+
+  const previewMap = useMemo(() => {
+    const map = new Map<string, string>()
+    previewItems.forEach((item) => {
+      if (item.url) {
+        map.set(item.key, item.url)
+      }
+    })
+    return map
+  }, [previewItems])
+
+  useEffect(() => {
+    return () => {
+      previewItems.forEach((item) => {
+        if (item.url) {
+          URL.revokeObjectURL(item.url)
+        }
+      })
+    }
+  }, [previewItems])
+
   const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -55,7 +109,7 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
   }
 
   const handleDragLeave = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -70,6 +124,11 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
       return
     }
 
+    if (atCapacity) {
+      setError('업로드 가능한 파일 수를 모두 채웠습니다.')
+      return
+    }
+
     if (incoming.length === 0) {
       return
     }
@@ -77,8 +136,13 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
     const allowed: File[] = []
     const rejected: string[] = []
     const existingKeys = new Set(files.map(createFileKey))
+    let remaining = maxFileCount !== undefined ? maxFileCount - files.length : Number.POSITIVE_INFINITY
 
     incoming.forEach((file) => {
+      if (remaining <= 0) {
+        return
+      }
+
       const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
       const matchesType = activeTypes.some((type) => {
         const info = FILE_TYPE_OPTIONS[type]
@@ -97,6 +161,7 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
 
       existingKeys.add(key)
       allowed.push(file)
+      remaining -= 1
     })
 
     if (rejected.length > 0) {
@@ -111,7 +176,7 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
   }
 
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -122,7 +187,7 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
   }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       event.target.value = ''
       return
     }
@@ -139,54 +204,121 @@ export function FileUploader({ allowedTypes, files, onChange, disabled = false }
 
     const nextFiles = files.filter((_, currentIndex) => currentIndex !== index)
     onChange(nextFiles)
+    setError(null)
   }
 
-  return (
-    <div className="file-uploader">
-      <label
-        className={`file-uploader__dropzone${
-          isDragging ? ' file-uploader__dropzone--active' : ''
-        }${disabled ? ' file-uploader__dropzone--disabled' : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <input
-          type="file"
-          className="file-uploader__input"
-          accept={acceptValue}
-          multiple
-          onChange={handleInputChange}
-          disabled={disabled}
-        />
-        <div className="file-uploader__prompt">
-          <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
+  const dropzone = shouldRenderDropzone ? (
+    <label
+      className={`file-uploader__dropzone${
+        isDragging ? ' file-uploader__dropzone--active' : ''
+      }${dropzoneDisabled ? ' file-uploader__dropzone--disabled' : ''}${
+        isGridVariant ? ' file-uploader__dropzone--grid' : ''
+      }`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <input
+        type="file"
+        className="file-uploader__input"
+        accept={acceptValue}
+        multiple
+        onChange={handleInputChange}
+        disabled={dropzoneDisabled}
+      />
+      {isGridVariant ? (
+        <div className="file-uploader__dropzone-grid">
+          <span aria-hidden="true" className="file-uploader__dropzone-icon">
+            +
+          </span>
+          <span className="file-uploader__dropzone-text">이미지를 추가하세요</span>
+          <span className="file-uploader__dropzone-subtext">허용된 형식: {allowedLabels}</span>
+          {maxFileCount !== undefined && (
+            <span className="file-uploader__dropzone-counter">
+              {files.length}/{maxFileCount}
+            </span>
+          )}
         </div>
-        <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
-      </label>
+      ) : (
+        <>
+          <div className="file-uploader__prompt">
+            <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
+          </div>
+          <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+        </>
+      )}
+    </label>
+  ) : null
 
-      {error && <p className="file-uploader__error" role="alert">{error}</p>}
-
-      {files.length > 0 && (
-        <ul className="file-uploader__files">
-          {files.map((file, index) => (
-            <li key={createFileKey(file)} className="file-uploader__file">
-              <div>
-                <span className="file-uploader__file-name">{file.name}</span>
-                <span className="file-uploader__file-size">{formatBytes(file.size)}</span>
+  return (
+    <div className={`file-uploader${isGridVariant ? ' file-uploader--grid' : ''}`}>
+      {isGridVariant ? (
+        <div className="file-uploader__grid">
+          {files.map((file, index) => {
+            const key = createFileKey(file)
+            const previewUrl = previewMap.get(key)
+            return (
+              <div key={key} className="file-uploader__grid-item">
+                {previewUrl ? (
+                  <img src={previewUrl} alt="업로드된 이미지 미리보기" className="file-uploader__grid-preview" />
+                ) : (
+                  <div className="file-uploader__grid-fallback">
+                    <span className="file-uploader__grid-fallback-icon" aria-hidden="true">
+                      📄
+                    </span>
+                    <span className="file-uploader__grid-fallback-label">{formatBytes(file.size)}</span>
+                  </div>
+                )}
+                <span className="file-uploader__grid-name" title={file.name}>
+                  {file.name}
+                </span>
+                <button
+                  type="button"
+                  className="file-uploader__grid-remove"
+                  onClick={() => handleRemove(index)}
+                  aria-label={`${file.name} 삭제`}
+                  disabled={disabled}
+                >
+                  삭제
+                </button>
               </div>
-              <button
-                type="button"
-                className="file-uploader__remove"
-                onClick={() => handleRemove(index)}
-                aria-label={`${file.name} 삭제`}
-                disabled={disabled}
-              >
-                삭제
-              </button>
-            </li>
-          ))}
-        </ul>
+            )
+          })}
+          {dropzone}
+        </div>
+      ) : (
+        <>
+          {dropzone}
+          {error && <p className="file-uploader__error" role="alert">{error}</p>}
+          {files.length > 0 && (
+            <ul className="file-uploader__files">
+              {files.map((file, index) => (
+                <li key={createFileKey(file)} className="file-uploader__file">
+                  <div>
+                    <span className="file-uploader__file-name">{file.name}</span>
+                    <span className="file-uploader__file-size">{formatBytes(file.size)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="file-uploader__remove"
+                    onClick={() => handleRemove(index)}
+                    aria-label={`${file.name} 삭제`}
+                    disabled={disabled}
+                  >
+                    삭제
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+      {isGridVariant && error && <p className="file-uploader__error" role="alert">{error}</p>}
+      {isGridVariant && !shouldRenderDropzone && maxFileCount !== undefined && (
+        <p className="file-uploader__grid-helper">최대 {maxFileCount}개의 이미지를 업로드할 수 있습니다.</p>
+      )}
+      {isGridVariant && shouldRenderDropzone && (
+        <p className="file-uploader__grid-helper">허용된 형식: {allowedLabels}</p>
       )}
     </div>
   )
