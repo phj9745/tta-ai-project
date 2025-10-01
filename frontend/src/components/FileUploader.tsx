@@ -55,8 +55,10 @@ export function FileUploader({
 
   const activeTypes = allowedTypes.length > 0 ? allowedTypes : ALL_FILE_TYPES
 
-  const maxFileCount = Number.isFinite(maxFiles) && maxFiles !== undefined ? Math.max(0, Math.floor(maxFiles)) : undefined
-  const shouldHideForFilled = hideDropzoneWhenFilled && files.length > 0
+  const maxFileCount =
+    Number.isFinite(maxFiles) && maxFiles !== undefined ? Math.max(0, Math.floor(maxFiles)) : undefined
+  const shouldHideForFilled =
+    hideDropzoneWhenFilled && (maxFileCount !== undefined ? files.length >= maxFileCount : files.length > 0)
   const atCapacity = maxFileCount !== undefined && files.length >= maxFileCount
   const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
   const shouldRenderDropzone = !atCapacity && !shouldHideForFilled
@@ -222,7 +224,7 @@ export function FileUploader({
         type="file"
         className="file-uploader__input"
         accept={acceptValue}
-        multiple
+        multiple={maxFileCount === undefined || maxFileCount > 1}
         onChange={handleInputChange}
         disabled={dropzoneDisabled}
       />
