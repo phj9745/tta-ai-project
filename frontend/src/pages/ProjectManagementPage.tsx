@@ -23,6 +23,9 @@ interface MenuItemContent {
   helper: string
   buttonLabel: string
   allowedTypes: FileType[]
+  uploaderVariant?: 'list' | 'grid'
+  maxFiles?: number
+  hideDropzoneWhenFilled?: boolean
 }
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -86,9 +89,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     title: '요구사항에서 기능 목록 추출',
     description:
       '요구사항 명세나 기획 문서를 업로드하면 AI가 주요 기능과 설명을 정리한 기능 정의서를 제안합니다.',
-    helper: 'PDF, TXT, CSV 등 요구사항 관련 문서를 업로드해 주세요. 여러 파일을 동시에 첨부할 수 있습니다.',
+    helper: 'PDF, TXT, CSV 등 요구사항 관련 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '기능리스트 생성하기',
     allowedTypes: ALL_FILE_TYPES,
+    maxFiles: 1,
+    hideDropzoneWhenFilled: true,
   },
   {
     id: 'testcase-generation',
@@ -97,9 +102,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     title: '요구사항에서 테스트 케이스 생성',
     description:
       '업로드된 요구사항을 바탕으로 테스트 시나리오와 기대 결과를 정리한 테스트 케이스 초안을 생성합니다.',
-    helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 여러 파일을 동시에 첨부할 수 있습니다.',
+    helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
+    maxFiles: 1,
+    hideDropzoneWhenFilled: true,
   },
   {
     id: 'defect-report',
@@ -111,6 +118,9 @@ const MENU_ITEMS: MenuItemContent[] = [
     helper: '테스트 로그, 정리된 표, 스크린샷 등 결함 관련 증적 자료를 첨부해 주세요.',
     buttonLabel: '결함 리포트 생성하기',
     allowedTypes: ['pdf', 'txt', 'csv', 'jpg'],
+    uploaderVariant: 'grid',
+    maxFiles: 12,
+    hideDropzoneWhenFilled: true,
   },
   {
     id: 'security-report',
@@ -119,9 +129,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     title: '보안성 분석 리포트 생성',
     description:
       '보안 점검 결과와 취약점 목록을 업로드하면 AI가 요약과 개선 권고안을 정리합니다.',
-    helper: '취약점 점검표, 분석 보고서, 스크린샷 등을 첨부해 주세요.',
+    helper: '취약점 점검표, 분석 보고서, 스크린샷 등을 첨부해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '보안성 리포트 생성하기',
     allowedTypes: ['pdf', 'txt', 'csv'],
+    maxFiles: 1,
+    hideDropzoneWhenFilled: true,
   },
   {
     id: 'performance-report',
@@ -130,9 +142,11 @@ const MENU_ITEMS: MenuItemContent[] = [
     title: '성능 평가 리포트 완성하기',
     description:
       '벤치마크 결과나 모니터링 데이터를 업로드하면 성능 분석 리포트를 구조화해 드립니다.',
-    helper: '성능 측정 결과 표, CSV 데이터, 스크린샷 등을 업로드해 주세요.',
+    helper: '성능 측정 결과 표, CSV 데이터, 스크린샷 등을 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '성능평가 리포트 생성하기',
     allowedTypes: ['pdf', 'csv', 'txt'],
+    maxFiles: 1,
+    hideDropzoneWhenFilled: true,
   },
 ]
 
@@ -427,6 +441,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 files={activeState.files}
                 onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
                 disabled={activeState.status === 'loading'}
+                variant={activeContent.uploaderVariant}
+                maxFiles={activeContent.maxFiles}
+                hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
               />
             </section>
           )}
