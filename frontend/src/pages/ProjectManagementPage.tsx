@@ -42,9 +42,11 @@ interface MenuItemContent {
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 
+const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
+
 interface ItemState {
   files: File[]
-  requiredFiles: Record<string, File | null>
+  requiredFiles: Record<string, File[]>
   additionalFiles: AdditionalFileEntry[]
   status: GenerationStatus
   errorMessage: string | null
@@ -53,10 +55,10 @@ interface ItemState {
 }
 
 function createItemState(item?: MenuItemContent): ItemState {
-  const requiredFiles: Record<string, File | null> = {}
+  const requiredFiles: Record<string, File[]> = {}
   if (item?.requiredDocuments) {
     item.requiredDocuments.forEach((doc) => {
-      requiredFiles[doc.id] = null
+      requiredFiles[doc.id] = []
     })
   }
 
@@ -272,8 +274,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     [releaseDownloadUrl],
   )
 
-  const handleSetRequiredFile = useCallback(
-    (id: MenuItemId, docId: string, file: File | null) => {
+  const handleSetRequiredFiles = useCallback(
+    (id: MenuItemId, docId: string, nextFiles: File[]) => {
       setItemStates((prev) => {
         const current = prev[id]
         if (!current || current.status === 'loading') {
@@ -294,7 +296,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             ...current,
             requiredFiles: {
               ...current.requiredFiles,
-              [docId]: file,
+              [docId]: nextFiles,
             },
             status: 'idle',
             errorMessage: null,
@@ -418,7 +420,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
       const metadataEntries: FileMetadataEntry[] = []
 
       if (requiredDocs.length > 0) {
-        const missingDocs = requiredDocs.filter((doc) => !current.requiredFiles[doc.id])
+        const missingDocs = requiredDocs.filter(
+          (doc) => (current.requiredFiles[doc.id]?.length ?? 0) === 0,
+        )
         if (missingDocs.length > 0) {
           setItemStates((prev) => ({
             ...prev,
@@ -449,11 +453,11 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
 
         requiredDocs.forEach((doc) => {
-          const file = current.requiredFiles[doc.id]
-          if (file) {
+          const files = current.requiredFiles[doc.id] ?? []
+          files.forEach((file) => {
             uploads.push(file)
             metadataEntries.push({ role: 'required', id: doc.id, label: doc.label })
-          }
+          })
         })
 
         current.additionalFiles.forEach((entry) => {
@@ -693,8 +697,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     </h2>
                     <div className="project-management-required__list">
                       {(activeContent.requiredDocuments ?? []).map((doc) => {
-                        const requiredFile = activeState.requiredFiles[doc.id] ?? null
-                        const fileList = requiredFile ? [requiredFile] : []
+                        const fileList = activeState.requiredFiles[doc.id] ?? []
+                        const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
+                        const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
 
                         return (
                           <div key={doc.id} className="project-management-required__item">
@@ -703,10 +708,11 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                               allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
                               files={fileList}
                               onChange={(nextFiles) =>
-                                handleSetRequiredFile(activeContent.id, doc.id, nextFiles[0] ?? null)
+                                handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
                               }
                               disabled={activeState.status === 'loading'}
-                              multiple={false}
+                              multiple={allowMultiple}
+                              hideDropzoneWhenFilled
                             />
                           </div>
                         )
