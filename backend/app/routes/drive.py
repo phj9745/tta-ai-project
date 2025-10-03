@@ -80,12 +80,12 @@ async def create_drive_project(
     invalid_files: List[str] = []
     for upload in files:
         filename = upload.filename or "업로드된 파일"
-        if not filename.lower().endswith(".pdf"):
+        if not filename.lower().endswith(".docx"):
             invalid_files.append(filename)
 
     if invalid_files:
         detail = ", ".join(invalid_files)
-        raise HTTPException(status_code=422, detail=f"PDF 파일만 업로드할 수 있습니다: {detail}")
+        raise HTTPException(status_code=422, detail=f"DOCX 파일만 업로드할 수 있습니다: {detail}")
 
     return await drive_service.create_project(
         folder_id=folder_id,
