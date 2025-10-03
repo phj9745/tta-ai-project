@@ -7,13 +7,13 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Literal
 
 from fastapi import HTTPException, UploadFile
 from openai import APIError, OpenAI
 
 from ..config import Settings
-from .openai_payload import OpenAIMessageBuilder
+from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 
 
 @dataclass
@@ -132,6 +132,28 @@ class AIGenerationService:
             extension = subtype.upper()
         mapping = {"JPEG": "JPG"}
         return mapping.get(extension, extension)
+
+    @staticmethod
+    def _attachment_kind(upload: BufferedUpload) -> Literal["file", "image"]:
+        content_type = (upload.content_type or "").split(";")[0].strip().lower()
+        if content_type.startswith("image/"):
+            return "image"
+
+        extension = os.path.splitext(upload.name)[1].lower()
+        if extension in {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".tiff",
+            ".tif",
+            ".heic",
+        }:
+            return "image"
+
+        return "file"
 
     @staticmethod
     def _closing_note(menu_id: str, contexts: List[PromptContextPreview]) -> str | None:
@@ -268,6 +290,7 @@ class AIGenerationService:
 
         client = self._get_client()
         uploaded_file_ids: List[str] = []
+        uploaded_attachments: List[AttachmentMetadata] = []
 
         try:
             context_previews = self._build_context_previews(contexts)
@@ -283,13 +306,16 @@ class AIGenerationService:
             for context in contexts:
                 file_id = await self._upload_openai_file(client, context)
                 uploaded_file_ids.append(file_id)
+                uploaded_attachments.append(
+                    {"file_id": file_id, "kind": self._attachment_kind(context.upload)}
+                )
 
             user_prompt_parts = [
                 prompt["instruction"],
                 (
                     "다음 첨부 파일을 참고하여 요구사항을 분석하고 지침에 맞는 CSV를 작성하세요."
                 ),
-                "각 파일은 업로드된 순서대로 input_file 파트로 첨부되어 있습니다.",
+                "각 파일은 업로드된 순서대로 첨부되어 있습니다.",
             ]
             if descriptor_section:
                 user_prompt_parts.append("첨부 파일 목록:")
@@ -305,7 +331,7 @@ class AIGenerationService:
                 OpenAIMessageBuilder.text_message(
                     "user",
                     user_prompt,
-                    file_ids=list(uploaded_file_ids),
+                    attachments=uploaded_attachments,
                 ),
             ]
 
