@@ -12,6 +12,9 @@ Role = Literal["system", "user", "assistant", "tool"]
 
 _TextContentType = Literal["input_text", "output_text", "summary_text"]
 _FileContentType = Literal["input_file"]
+_ImageContentType = Literal["input_image"]
+
+_AttachmentKind = Literal["file", "image"]
 
 
 class InputFileContent(TypedDict):
@@ -21,6 +24,13 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
+class InputImageContent(TypedDict):
+    """Response API image reference content."""
+
+    type: _ImageContentType
+    image_id: str
+
+
 class TextContent(TypedDict):
     """Response API text 기반 콘텐츠."""
 
@@ -28,7 +38,14 @@ class TextContent(TypedDict):
     text: str
 
 
-ContentPart = TextContent | InputFileContent
+ContentPart = TextContent | InputFileContent | InputImageContent
+
+
+class AttachmentMetadata(TypedDict):
+    """Metadata describing how an uploaded asset should be attached."""
+
+    file_id: str
+    kind: _AttachmentKind
 
 
 class Message(TypedDict):
@@ -56,6 +73,7 @@ class OpenAIMessageBuilder:
         *,
         content_type: _TextContentType | None = None,
         file_ids: Iterable[str] | None = None,
+        attachments: Iterable[AttachmentMetadata] | None = None,
     ) -> Message:
         """주어진 역할과 텍스트로 단일 파트 메시지를 생성합니다."""
 
@@ -67,11 +85,41 @@ class OpenAIMessageBuilder:
             }
         ]
 
+        normalized_attachments: List[AttachmentMetadata] = []
+        if attachments:
+            for attachment in attachments:
+                if not isinstance(attachment, MutableMapping):
+                    raise ValueError("attachment 항목은 매핑이어야 합니다.")
+                file_id = attachment.get("file_id")
+                kind = attachment.get("kind")
+                if not isinstance(file_id, str) or not file_id.strip():
+                    raise ValueError("attachment file_id는 공백이 아닌 문자열이어야 합니다.")
+                if kind not in {"file", "image"}:
+                    raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
+                normalized_attachments.append(
+                    {"file_id": file_id, "kind": kind}  # type: ignore[typeddict-item]
+                )
+
         if file_ids:
             for file_id in file_ids:
                 if not isinstance(file_id, str) or not file_id.strip():
                     raise ValueError("file_id는 공백이 아닌 문자열이어야 합니다.")
+                normalized_attachments.append(
+                    {"file_id": file_id, "kind": "file"}  # type: ignore[typeddict-item]
+                )
+
+        for attachment in normalized_attachments:
+            file_id = attachment["file_id"]
+            if not isinstance(file_id, str) or not file_id.strip():
+                raise ValueError("attachment file_id는 공백이 아닌 문자열이어야 합니다.")
+
+            kind = attachment["kind"]
+            if kind == "file":
                 parts.append({"type": "input_file", "file_id": file_id})
+            elif kind == "image":
+                parts.append({"type": "input_image", "image_id": file_id})
+            else:  # pragma: no cover - typing guard
+                raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
 
         return {
             "role": role,
@@ -135,6 +183,16 @@ class OpenAIMessageBuilder:
                                 "file_id": file_id,
                             }
                         )
+                    elif part_type == "input_image":
+                        image_id = item.get("image_id")
+                        if not isinstance(image_id, str) or not image_id.strip():
+                            raise ValueError("input_image 항목에는 유효한 image_id가 필요합니다.")
+                        normalized_contents.append(
+                            {
+                                "type": "input_image",
+                                "image_id": image_id,
+                            }
+                        )
                     else:
                         raise ValueError(f"지원하지 않는 content type입니다: {part_type!r}")
 
@@ -144,3 +202,22 @@ class OpenAIMessageBuilder:
             normalized.append({"role": role, "content": normalized_contents})
 
         return normalized
+
+    @staticmethod
+    def attachments_to_chat_completions(
+        attachments: Iterable[AttachmentMetadata],
+    ) -> List[MutableMapping[str, object]]:
+        """Responses 첨부 정보를 Chat Completions 포맷으로 변환합니다."""
+
+        completion_parts: List[MutableMapping[str, object]] = []
+        for attachment in attachments:
+            kind = attachment["kind"]
+            file_id = attachment["file_id"]
+            if kind == "image":
+                completion_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"openai://file/{file_id}"},
+                    }
+                )
+        return completion_parts

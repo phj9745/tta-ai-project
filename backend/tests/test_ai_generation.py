@@ -111,8 +111,15 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     messages = stub_client.responses.calls[0]["input"]
     assert isinstance(messages, list)
     user_message = messages[1]
-    file_parts = [part for part in user_message["content"] if part["type"] == "input_file"]
-    assert [part["file_id"] for part in file_parts] == ["file-1", "file-2"]
+    file_parts = [
+        part
+        for part in user_message["content"]
+        if part["type"] in {"input_file", "input_image"}
+    ]
+    assert file_parts == [
+        {"type": "input_file", "file_id": "file-1"},
+        {"type": "input_image", "image_id": "file-2"},
+    ]
 
     # The text portions should not include the raw upload bodies.
     text_parts = [part["text"] for part in user_message["content"] if part["type"] == "input_text"]

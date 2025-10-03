@@ -28,6 +28,27 @@ def test_text_message_appends_file_parts() -> None:
     ]
 
 
+def test_text_message_appends_image_parts() -> None:
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "see this",
+        attachments=[{"file_id": "img-1", "kind": "image"}],
+    )
+
+    assert message["role"] == "user"
+    assert message["content"][1:] == [{"type": "input_image", "image_id": "img-1"}]
+
+
+def test_attachments_to_chat_completions_converts_images() -> None:
+    attachments = [{"file_id": "img-2", "kind": "image"}]
+
+    completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
+
+    assert completion_parts == [
+        {"type": "image_url", "image_url": {"url": "openai://file/img-2"}}
+    ]
+
+
 def test_normalize_messages_allows_input_file_parts() -> None:
     raw_messages = [
         {
