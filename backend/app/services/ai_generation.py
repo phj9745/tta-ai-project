@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
+import io
 import logging
 import os
 import re
@@ -14,10 +14,6 @@ from openai import APIError, OpenAI
 
 from ..config import Settings
 from .openai_payload import OpenAIMessageBuilder
-from .text_extraction import ExtractedUploadPreview, extract_text_preview
-
-_MAX_PREVIEW_CHARS = 0
-_PROMPT_CHUNK_SIZE = 3500
 
 
 @dataclass
@@ -44,13 +40,6 @@ class UploadContext:
 class PromptContextPreview:
     descriptor: str
     doc_id: str | None
-
-
-@dataclass
-class PromptPreview:
-    text: str
-    contexts: List[PromptContextPreview]
-
 
 _PROMPT_TEMPLATES: Dict[str, Dict[str, str]] = {
     "feature-list": {
@@ -108,43 +97,6 @@ class AIGenerationService:
         return self._client
 
     @staticmethod
-    def _preview_from_uploads(
-        contexts: Iterable[UploadContext],
-    ) -> PromptPreview:
-        sections: List[str] = []
-        descriptors: List[PromptContextPreview] = []
-
-        for context in contexts:
-            descriptor, doc_id = AIGenerationService._descriptor_from_context(context)
-            body = AIGenerationService._build_body_for_context(context)
-
-            cleaned_descriptor = descriptor.strip() or context.upload.name
-            cleaned_body = body.strip()
-
-            chunks = AIGenerationService._chunk_body(cleaned_body, _PROMPT_CHUNK_SIZE)
-            if not chunks:
-                sections.append(f"### {cleaned_descriptor}")
-            else:
-                total = len(chunks)
-                for index, chunk in enumerate(chunks, start=1):
-                    if total == 1:
-                        title = cleaned_descriptor
-                    else:
-                        title = f"{cleaned_descriptor} (부분 {index}/{total})"
-                    chunk_text = chunk.strip()
-                    if chunk_text:
-                        sections.append(f"### {title}\n{chunk_text}")
-                    else:
-                        sections.append(f"### {title}")
-
-            descriptors.append(
-                PromptContextPreview(descriptor=cleaned_descriptor, doc_id=doc_id)
-            )
-
-        joined = "\n\n".join(section for section in sections if section.strip())
-        return PromptPreview(text=joined, contexts=descriptors)
-
-    @staticmethod
     def _descriptor_from_context(context: UploadContext) -> tuple[str, str | None]:
         metadata = context.metadata or {}
         role = str(metadata.get("role") or "").strip()
@@ -182,119 +134,6 @@ class AIGenerationService:
         return mapping.get(extension, extension)
 
     @staticmethod
-    def _is_image(upload: BufferedUpload) -> bool:
-        if upload.content_type and upload.content_type.startswith("image/"):
-            return True
-        extension = os.path.splitext(upload.name)[1].lower()
-        return extension in {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-
-    @staticmethod
-    def _build_body_for_context(context: UploadContext) -> str:
-        upload = context.upload
-        metadata = context.metadata or {}
-        doc_id = metadata.get("id") if metadata.get("role") == "required" else None
-        label = str(metadata.get("label") or "").strip()
-        description = str(metadata.get("description") or "").strip()
-
-        if AIGenerationService._is_image(upload):
-            mime = upload.content_type or "image/jpeg"
-            encoded = base64.b64encode(upload.content).decode("ascii")
-
-            if doc_id == "configuration":
-                context_name = label or "형상 이미지"
-                prefix = (
-                    f"첨부된 이미지는 {context_name}이며 제품의 형상을 전체적으로 보여줍니다."
-                )
-            else:
-                prefix = "첨부된 이미지 파일의 전체 원본 데이터를 Base64로 제공합니다."
-
-            return (
-                f"{prefix}\n"
-                f"Base64: data:{mime};base64,{encoded}"
-            )
-
-        preview: ExtractedUploadPreview = extract_text_preview(
-            filename=upload.name,
-            raw=upload.content,
-            content_type=upload.content_type,
-            max_chars=_MAX_PREVIEW_CHARS,
-        )
-
-        extension = AIGenerationService._extension(upload)
-
-        if doc_id == "user-manual":
-            context_name = label or "사용자 매뉴얼"
-            intro = f"아래는 {context_name}에서 추출한 주요 내용입니다."
-        elif doc_id == "configuration":
-            context_name = label or "형상 이미지"
-            intro = f"{context_name}와 관련된 문서에서 텍스트 정보를 추출한 결과입니다."
-        elif doc_id == "vendor-feature-list":
-            context_name = label or "기능리스트"
-            intro = f"아래는 {context_name} 자료에서 추출한 표 형식의 내용입니다."
-        elif metadata.get("role") == "additional":
-            if description:
-                intro = f"아래는 추가로 업로드된 문서({description})에서 발췌한 내용입니다."
-            else:
-                intro = "추가로 업로드된 문서에서 발췌한 내용입니다."
-        elif extension == "XLSX":
-            intro = "업로드된 스프레드시트 파일을 텍스트로 전개한 내용입니다."
-        else:
-            intro = "업로드된 문서에서 추출한 내용입니다."
-
-        if extension == "XLSX":
-            suffix = "각 행은 '|' 문자로 셀을 구분합니다."
-            body = f"{intro}\n{suffix}\n{preview.body}" if preview.body else intro
-        else:
-            body = f"{intro}\n{preview.body}" if preview.body else intro
-
-        return body.strip()
-
-    @staticmethod
-    def _chunk_body(body: str, chunk_size: int) -> List[str]:
-        normalized = body.strip()
-        if not normalized:
-            return []
-
-        if chunk_size <= 0 or len(normalized) <= chunk_size:
-            return [normalized]
-
-        parts: List[str] = []
-        current: List[str] = []
-        current_len = 0
-
-        def flush() -> None:
-            nonlocal current, current_len
-            if current:
-                parts.append("\n\n".join(current))
-                current = []
-                current_len = 0
-
-        for paragraph in re.split(r"\n{2,}", normalized):
-            paragraph = paragraph.strip()
-            if not paragraph:
-                continue
-
-            if current and current_len + 2 + len(paragraph) > chunk_size:
-                flush()
-
-            if len(paragraph) > chunk_size:
-                flush()
-                for start in range(0, len(paragraph), chunk_size):
-                    parts.append(paragraph[start : start + chunk_size])
-                continue
-
-            if not current:
-                current = [paragraph]
-                current_len = len(paragraph)
-            else:
-                current.append(paragraph)
-                current_len += 2 + len(paragraph)
-
-        flush()
-
-        return parts if parts else [normalized]
-
-    @staticmethod
     def _closing_note(menu_id: str, contexts: List[PromptContextPreview]) -> str | None:
         if not contexts:
             return None
@@ -325,6 +164,64 @@ class AIGenerationService:
             )
 
         return None
+
+    @staticmethod
+    def _build_context_previews(
+        contexts: Iterable[UploadContext],
+    ) -> List[PromptContextPreview]:
+        previews: List[PromptContextPreview] = []
+        for context in contexts:
+            descriptor, doc_id = AIGenerationService._descriptor_from_context(context)
+            cleaned = descriptor.strip() or context.upload.name
+            previews.append(PromptContextPreview(descriptor=cleaned, doc_id=doc_id))
+        return previews
+
+    async def _upload_openai_file(self, client: OpenAI, context: UploadContext) -> str:
+        upload = context.upload
+        stream = io.BytesIO(upload.content)
+        try:
+            created = await asyncio.to_thread(
+                client.files.create,
+                file=(upload.name, stream),
+                purpose="assistants",
+            )
+        except APIError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 파일 업로드 중 오류가 발생했습니다: {exc}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 파일 업로드 중 예기치 않은 오류가 발생했습니다.",
+            ) from exc
+
+        file_id = getattr(created, "id", None)
+        if not file_id and hasattr(created, "get"):
+            try:
+                file_id = created.get("id")  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - dict-like guard
+                file_id = None
+
+        if not isinstance(file_id, str) or not file_id:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 파일 업로드 응답에 file_id가 없습니다.",
+            )
+
+        return file_id
+
+    async def _cleanup_openai_files(
+        self, client: OpenAI, file_ids: Iterable[str]
+    ) -> None:
+        for file_id in file_ids:
+            try:
+                await asyncio.to_thread(client.files.delete, file_id=file_id)
+            except Exception as exc:  # pragma: no cover - 로그 목적
+                logger.warning(
+                    "Failed to delete temporary OpenAI file",
+                    extra={"file_id": file_id, "error": str(exc)},
+                )
 
     @staticmethod
     def _sanitize_csv(text: str) -> str:
@@ -369,64 +266,86 @@ class AIGenerationService:
             entry = metadata[index] if index < len(metadata) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
-        preview_bundle = self._preview_from_uploads(contexts)
-        closing_note = self._closing_note(menu_id, preview_bundle.contexts)
-
-        user_prompt_parts = [
-            prompt["instruction"],
-            (
-                "다음은 업로드된 모든 자료의 전체 원문과 이미지 데이터입니다. "
-                "자료의 용도와 형식을 참고하여 누락 없이 활용하세요."
-            ),
-            "각 문서는 필요에 따라 여러 부분으로 나뉘어 제공되며 순서는 업로드 순서를 따릅니다.",
-            preview_bundle.text,
-        ]
-        if closing_note:
-            user_prompt_parts.append(closing_note)
-        user_prompt_parts.append("CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.")
-
-        user_prompt = "\n\n".join(part for part in user_prompt_parts if part.strip())
-
         client = self._get_client()
-        messages = [
-            OpenAIMessageBuilder.text_message("system", prompt["system"]),
-            OpenAIMessageBuilder.text_message("user", user_prompt),
-        ]
-
-        logger.info(
-            "AI generation prompt assembled",
-            extra={
-                "project_id": project_id,
-                "menu_id": menu_id,
-                "system_prompt": prompt["system"],
-                "user_prompt": user_prompt,
-            },
-        )
+        uploaded_file_ids: List[str] = []
 
         try:
-            response = await asyncio.to_thread(
-                client.responses.create,
-                model=self._settings.openai_model,
-                input=messages,
-                temperature=0.2,
-                max_output_tokens=1500,
+            context_previews = self._build_context_previews(contexts)
+            closing_note = self._closing_note(menu_id, context_previews)
+
+            descriptor_lines = [
+                f"{index}. {preview.descriptor}"
+                for index, preview in enumerate(context_previews, start=1)
+                if preview.descriptor.strip()
+            ]
+            descriptor_section = "\n".join(descriptor_lines)
+
+            for context in contexts:
+                file_id = await self._upload_openai_file(client, context)
+                uploaded_file_ids.append(file_id)
+
+            user_prompt_parts = [
+                prompt["instruction"],
+                (
+                    "다음 첨부 파일을 참고하여 요구사항을 분석하고 지침에 맞는 CSV를 작성하세요."
+                ),
+                "각 파일은 업로드된 순서대로 input_file 파트로 첨부되어 있습니다.",
+            ]
+            if descriptor_section:
+                user_prompt_parts.append("첨부 파일 목록:")
+                user_prompt_parts.append(descriptor_section)
+            if closing_note:
+                user_prompt_parts.append(closing_note)
+            user_prompt_parts.append("CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.")
+
+            user_prompt = "\n\n".join(part for part in user_prompt_parts if part.strip())
+
+            messages = [
+                OpenAIMessageBuilder.text_message("system", prompt["system"]),
+                OpenAIMessageBuilder.text_message(
+                    "user",
+                    user_prompt,
+                    file_ids=list(uploaded_file_ids),
+                ),
+            ]
+
+            logger.info(
+                "AI generation prompt assembled",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": menu_id,
+                    "system_prompt": prompt["system"],
+                    "user_prompt": user_prompt,
+                },
             )
-        except APIError as exc:
-            raise HTTPException(status_code=502, detail=f"OpenAI 호출 중 오류가 발생했습니다: {exc}") from exc
-        except Exception as exc:  # pragma: no cover - 안전망
-            raise HTTPException(status_code=502, detail="OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다.") from exc
 
-        csv_text = getattr(response, "output_text", None)
-        if not csv_text:
-            raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+            try:
+                response = await asyncio.to_thread(
+                    client.responses.create,
+                    model=self._settings.openai_model,
+                    input=messages,
+                    temperature=0.2,
+                    max_output_tokens=1500,
+                )
+            except APIError as exc:
+                raise HTTPException(status_code=502, detail=f"OpenAI 호출 중 오류가 발생했습니다: {exc}") from exc
+            except Exception as exc:  # pragma: no cover - 안전망
+                raise HTTPException(status_code=502, detail="OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다.") from exc
 
-        sanitized = self._sanitize_csv(csv_text)
-        if not sanitized:
-            raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
+            csv_text = getattr(response, "output_text", None)
+            if not csv_text:
+                raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
-        encoded = sanitized.encode("utf-8-sig")
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
-        filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
+            sanitized = self._sanitize_csv(csv_text)
+            if not sanitized:
+                raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 
-        return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
+            encoded = sanitized.encode("utf-8-sig")
+            timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
+            filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
+
+            return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
+        finally:
+            if uploaded_file_ids:
+                await self._cleanup_openai_files(client, uploaded_file_ids)

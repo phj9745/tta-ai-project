@@ -11,6 +11,14 @@ from typing import Iterable, List, Literal, MutableMapping, Sequence, TypedDict
 Role = Literal["system", "user", "assistant", "tool"]
 
 _TextContentType = Literal["input_text", "output_text", "summary_text"]
+_FileContentType = Literal["input_file"]
+
+
+class InputFileContent(TypedDict):
+    """Response API file reference content."""
+
+    type: _FileContentType
+    file_id: str
 
 
 class TextContent(TypedDict):
@@ -20,11 +28,14 @@ class TextContent(TypedDict):
     text: str
 
 
+ContentPart = TextContent | InputFileContent
+
+
 class Message(TypedDict):
     """Responses API 메시지 구조."""
 
     role: Role
-    content: List[TextContent]
+    content: List[ContentPart]
 
 
 class OpenAIMessageBuilder:
@@ -44,18 +55,27 @@ class OpenAIMessageBuilder:
         text: str,
         *,
         content_type: _TextContentType | None = None,
+        file_ids: Iterable[str] | None = None,
     ) -> Message:
         """주어진 역할과 텍스트로 단일 파트 메시지를 생성합니다."""
 
         normalized_type = content_type or cls._ROLE_TEXT_TYPE.get(role, "input_text")
+        parts: List[ContentPart] = [
+            {
+                "type": normalized_type,
+                "text": text,
+            }
+        ]
+
+        if file_ids:
+            for file_id in file_ids:
+                if not isinstance(file_id, str) or not file_id.strip():
+                    raise ValueError("file_id는 공백이 아닌 문자열이어야 합니다.")
+                parts.append({"type": "input_file", "file_id": file_id})
+
         return {
             "role": role,
-            "content": [
-                {
-                    "type": normalized_type,
-                    "text": text,
-                }
-            ],
+            "content": parts,
         }
 
     @classmethod
@@ -76,7 +96,7 @@ class OpenAIMessageBuilder:
             if contents is None:
                 raise ValueError("메시지에 content가 없습니다.")
 
-            normalized_contents: List[TextContent] = []
+            normalized_contents: List[ContentPart] = []
             if isinstance(contents, str):
                 normalized_contents.append(
                     {
@@ -103,6 +123,16 @@ class OpenAIMessageBuilder:
                             {
                                 "type": part_type,
                                 "text": str(item.get("text", "")),
+                            }
+                        )
+                    elif part_type == "input_file":
+                        file_id = item.get("file_id")
+                        if not isinstance(file_id, str) or not file_id.strip():
+                            raise ValueError("input_file 항목에는 유효한 file_id가 필요합니다.")
+                        normalized_contents.append(
+                            {
+                                "type": "input_file",
+                                "file_id": file_id,
                             }
                         )
                     else:
