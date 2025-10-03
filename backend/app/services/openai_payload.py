@@ -24,17 +24,17 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
-class ImageReference(TypedDict):
-    """Reference to an uploaded image asset."""
+class ImageUrl(TypedDict):
+    """Reference URL describing where the image can be loaded."""
 
-    file_id: str
+    url: str
 
 
 class InputImageContent(TypedDict):
     """Response API image reference content."""
 
     type: _ImageContentType
-    image: ImageReference
+    image_url: ImageUrl
 
 
 class TextContent(TypedDict):
@@ -124,7 +124,10 @@ class OpenAIMessageBuilder:
                 parts.append({"type": "input_file", "file_id": file_id})
             elif kind == "image":
                 parts.append(
-                    {"type": "input_image", "image": {"file_id": file_id}}
+                    {
+                        "type": "input_image",
+                        "image_url": {"url": f"openai://file/{file_id}"},
+                    }
                 )
             else:  # pragma: no cover - typing guard
                 raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
@@ -192,29 +195,44 @@ class OpenAIMessageBuilder:
                             }
                         )
                     elif part_type == "input_image":
+                        image_url = item.get("image_url")
                         image: object | None = item.get("image")
                         image_id = item.get("image_id")
 
-                        file_id: object | None = None
-                        if isinstance(image, MutableMapping):
+                        resolved_url: object | None = None
+
+                        if isinstance(image_url, MutableMapping):
+                            resolved_url = image_url.get("url")
+                        elif image_url is not None:
+                            raise ValueError(
+                                "input_image 항목의 image_url 필드는 매핑이어야 합니다."
+                            )
+
+                        if resolved_url is None and isinstance(image, MutableMapping):
                             file_id = image.get("file_id")
-                        elif image is not None:
+                            if isinstance(file_id, str) and file_id.strip():
+                                resolved_url = f"openai://file/{file_id}"
+                            else:
+                                raise ValueError(
+                                    "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
+                                )
+                        elif image is not None and not isinstance(image, MutableMapping):
                             raise ValueError(
                                 "input_image 항목의 image 필드는 매핑이어야 합니다."
                             )
 
-                        if file_id is None:
-                            file_id = image_id
+                        if resolved_url is None and isinstance(image_id, str) and image_id.strip():
+                            resolved_url = f"openai://file/{image_id}"
 
-                        if not isinstance(file_id, str) or not file_id.strip():
+                        if not isinstance(resolved_url, str) or not resolved_url.strip():
                             raise ValueError(
-                                "input_image 항목에는 유효한 image.file_id가 필요합니다."
+                                "input_image 항목에는 유효한 이미지 참조가 필요합니다."
                             )
 
                         normalized_contents.append(
                             {
                                 "type": "input_image",
-                                "image": {"file_id": file_id},
+                                "image_url": {"url": resolved_url},
                             }
                         )
                     else:
