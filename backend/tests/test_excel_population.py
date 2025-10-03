@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+import io
+import sys
+import zipfile
+from pathlib import Path
+from xml.etree import ElementTree as ET
+
+import pytest
+
+# Ensure the backend/app package is importable when running tests from the repository root.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.services.excel_templates import (
+    FEATURE_LIST_EXPECTED_HEADERS,
+    TESTCASE_EXPECTED_HEADERS,
+    populate_feature_list,
+    populate_testcase_list,
+)
+
+_SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+
+
+def _load_sheet(workbook_bytes: bytes) -> ET.Element:
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
+        data = zf.read("xl/worksheets/sheet1.xml")
+    return ET.fromstring(data)
+
+
+def _cell_text(root: ET.Element, ref: str) -> str | None:
+    ns = {"s": _SPREADSHEET_NS}
+    column = "".join(filter(str.isalpha, ref))
+    row_index = "".join(filter(str.isdigit, ref))
+    row = root.find(f"s:sheetData/s:row[@r='{row_index}']", ns)
+    if row is None:
+        return None
+    for cell in row.findall("s:c", ns):
+        if cell.get("r") != ref:
+            continue
+        is_elem = cell.find("s:is", ns)
+        if is_elem is None:
+            return None
+        text_elem = is_elem.find("s:t", ns)
+        return text_elem.text if text_elem is not None else ""
+    return None
+
+
+def test_populate_feature_list_inserts_rows() -> None:
+    template_path = Path("backend/template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_text = "\n".join(
+        [
+            ",".join(FEATURE_LIST_EXPECTED_HEADERS),
+            "대1,중1,소1",
+            "대2,중2,소2",
+        ]
+    )
+
+    updated = populate_feature_list(template_bytes, csv_text)
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "A8") == "대1"
+    assert _cell_text(root, "B8") == "중1"
+    assert _cell_text(root, "C8") == "소1"
+    assert _cell_text(root, "A9") == "대2"
+    assert _cell_text(root, "B9") == "중2"
+    assert _cell_text(root, "C9") == "소2"
+    assert _cell_text(root, "A10") is None
+
+
+def test_populate_testcase_list_maps_columns() -> None:
+    template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_header = ",".join(TESTCASE_EXPECTED_HEADERS)
+    csv_row = ",".join(
+        [
+            "대분류A",
+            "중분류B",
+            "소분류C",
+            "TC-001",
+            "시나리오 설명",
+            "입력 데이터",
+            "기대 결과",
+            "미실행",
+            "",
+            "비고 메모",
+        ]
+    )
+    csv_text = f"{csv_header}\n{csv_row}"
+
+    updated = populate_testcase_list(template_bytes, csv_text)
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "A6") == "대분류A"
+    assert _cell_text(root, "B6") == "중분류B"
+    assert _cell_text(root, "C6") == "소분류C"
+    assert _cell_text(root, "D6") == "TC-001"
+    assert _cell_text(root, "E6") == "시나리오 설명"
+    assert _cell_text(root, "F6") == "입력 데이터"
+    assert _cell_text(root, "G6") == "기대 결과"
+    assert _cell_text(root, "H6") == "미실행"
+    assert _cell_text(root, "I6") is None
+    assert _cell_text(root, "J6") == "비고 메모"
+
+
+def test_populate_testcase_list_validates_headers() -> None:
+    template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_text = "대분류,중분류\nA,B"
+
+    with pytest.raises(ValueError):
+        populate_testcase_list(template_bytes, csv_text)
