@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
+import mimetypes
+import os
+import re
+import zipfile
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import httpx
+from docx import Document
 from fastapi import HTTPException, UploadFile
 
 from ..config import Settings
@@ -19,16 +26,13 @@ DRIVE_FILES_ENDPOINT = "/files"
 DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
-PROJECT_SUBFOLDERS = [
-    "0. 사전 자료",
-    "1. 형상 사진",
-    "2. 기능리스트",
-    "3. 테스트케이스",
-    "4. 성능 시험",
-    "5. 보안성 시험",
-    "6. 결함리포트",
-    "7. 산출물",
-]
+TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "템플릿"
+PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
+    "GS-B-XX-XXXX",
+    "GS-B-2X-XXXX",
+    "GS-X-X-XXXX",
+)
+EXAM_NUMBER_PATTERN = re.compile(r"GS-[A-Z]-\d{2}-\d{4}")
 
 
 class GoogleDriveService:
@@ -43,6 +47,159 @@ class GoogleDriveService:
         self._settings = settings
         self._token_storage = token_storage
         self._oauth_service = oauth_service
+
+    @staticmethod
+    def _normalize_label(value: str) -> str:
+        return re.sub(r"\s+", "", value or "")
+
+    @staticmethod
+    def _extract_project_metadata(file_bytes: bytes) -> Dict[str, str]:
+        try:
+            document = Document(io.BytesIO(file_bytes))
+        except Exception as exc:  # pragma: no cover - library level validation
+            raise HTTPException(status_code=422, detail="시험 합의서 파일을 읽지 못했습니다.") from exc
+
+        exam_number: Optional[str] = None
+        company_name: Optional[str] = None
+        product_name: Optional[str] = None
+
+        def _extract_from_cells(cells: Iterable[str]) -> None:
+            nonlocal exam_number, company_name, product_name
+            cell_iter = iter(cells)
+            for label, value in zip(cell_iter, cell_iter):
+                normalized_label = GoogleDriveService._normalize_label(label)
+                stripped_value = value.strip()
+                if not stripped_value:
+                    continue
+                if normalized_label == "시험신청번호":
+                    match = EXAM_NUMBER_PATTERN.search(stripped_value)
+                    if match:
+                        exam_number = match.group(0)
+                elif normalized_label in {"신청기업(기관)명", "신청기업(기관)명(국문)"}:
+                    company_name = stripped_value.split("\n")[0].strip()
+                elif normalized_label.startswith("제품명및버전"):
+                    product_name = stripped_value.split("\n")[0].strip()
+
+        for table in document.tables:
+            cells: List[str] = []
+            for row in table.rows:
+                if len(row.cells) < 2:
+                    continue
+                cells.append(row.cells[0].text.strip())
+                cells.append(row.cells[1].text.strip())
+            if cells:
+                _extract_from_cells(cells)
+
+        if exam_number is None:
+            combined_text = "\n".join(
+                paragraph.text.strip()
+                for paragraph in document.paragraphs
+                if paragraph.text and paragraph.text.strip()
+            )
+            match = EXAM_NUMBER_PATTERN.search(combined_text)
+            if match:
+                exam_number = match.group(0)
+
+        if not exam_number:
+            raise HTTPException(status_code=422, detail="시험신청 번호를 찾을 수 없습니다.")
+
+        if not company_name:
+            raise HTTPException(status_code=422, detail="신청 기업(기관)명을 찾을 수 없습니다.")
+
+        if not product_name:
+            raise HTTPException(status_code=422, detail="제품명 및 버전을 찾을 수 없습니다.")
+
+        return {
+            "exam_number": exam_number.strip(),
+            "company_name": company_name.strip(),
+            "product_name": product_name.strip(),
+        }
+
+    @staticmethod
+    def _build_project_folder_name(metadata: Dict[str, str]) -> str:
+        parts = [
+            metadata.get("exam_number", "").strip(),
+            metadata.get("company_name", "").strip(),
+            metadata.get("product_name", "").strip(),
+        ]
+        return " ".join(part for part in parts if part)
+
+    @staticmethod
+    def _replace_placeholders(text: str, exam_number: str) -> str:
+        result = text
+        for placeholder in PLACEHOLDER_PATTERNS:
+            result = result.replace(placeholder, exam_number)
+        return result
+
+    @staticmethod
+    def _prepare_template_file_content(path: Path, exam_number: str) -> bytes:
+        raw_bytes = path.read_bytes()
+        extension = path.suffix.lower()
+        if extension in {".docx", ".xlsx", ".pptx"}:
+            raw_bytes = GoogleDriveService._replace_in_office_document(raw_bytes, exam_number)
+        return raw_bytes
+
+    @staticmethod
+    def _replace_in_office_document(data: bytes, exam_number: str) -> bytes:
+        original = io.BytesIO(data)
+        updated = io.BytesIO()
+        with zipfile.ZipFile(original, "r") as source_zip:
+            with zipfile.ZipFile(updated, "w") as target_zip:
+                for item in source_zip.infolist():
+                    content = source_zip.read(item.filename)
+                    try:
+                        decoded = content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        target_zip.writestr(item, content)
+                        continue
+                    replaced = GoogleDriveService._replace_placeholders(decoded, exam_number)
+                    target_zip.writestr(item, replaced.encode("utf-8"))
+        return updated.getvalue()
+
+    @staticmethod
+    def _guess_mime_type(path: Path) -> str:
+        mime_type, _ = mimetypes.guess_type(path.name)
+        return mime_type or "application/octet-stream"
+
+    async def _copy_template_to_drive(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        exam_number: str,
+    ) -> StoredTokens:
+        if not TEMPLATE_ROOT.exists():
+            raise HTTPException(status_code=500, detail="템플릿 폴더를 찾을 수 없습니다.")
+
+        path_to_folder_id: Dict[Path, str] = {TEMPLATE_ROOT: parent_id}
+        for root_dir, dirnames, filenames in os.walk(TEMPLATE_ROOT):
+            current_path = Path(root_dir)
+            drive_parent_id = path_to_folder_id[current_path]
+
+            for dirname in sorted(dirnames):
+                local_dir = current_path / dirname
+                folder_name = self._replace_placeholders(dirname, exam_number)
+                folder, tokens = await self._create_child_folder(
+                    tokens,
+                    name=folder_name,
+                    parent_id=drive_parent_id,
+                )
+                path_to_folder_id[local_dir] = str(folder["id"])
+
+            for filename in sorted(filenames):
+                local_file = current_path / filename
+                target_name = self._replace_placeholders(filename, exam_number)
+                content = self._prepare_template_file_content(local_file, exam_number)
+                mime_type = self._guess_mime_type(local_file)
+                _, tokens = await self._upload_file_to_folder(
+                    tokens,
+                    file_name=target_name,
+                    parent_id=drive_parent_id,
+                    content=content,
+                    content_type=mime_type,
+                )
+
+        return tokens
 
     def _load_tokens(self, google_id: Optional[str]) -> StoredTokens:
         if google_id:
@@ -384,6 +541,16 @@ class GoogleDriveService:
                 folder, active_tokens = await self._create_root_folder(active_tokens, folder_name="gs")
             parent_folder_id = str(folder["id"])
 
+        agreement_file = files[0]
+        if not agreement_file.filename or not agreement_file.filename.lower().endswith(".docx"):
+            raise HTTPException(status_code=422, detail="시험 합의서는 DOCX 파일이어야 합니다.")
+
+        agreement_bytes = await agreement_file.read()
+        metadata = self._extract_project_metadata(agreement_bytes)
+        project_name = self._build_project_folder_name(metadata)
+        if not project_name:
+            raise HTTPException(status_code=422, detail="생성할 프로젝트 이름을 결정할 수 없습니다.")
+
         siblings, active_tokens = await self._list_child_folders(active_tokens, parent_id=parent_folder_id)
         existing_names = {
             str(item.get("name"))
@@ -391,80 +558,86 @@ class GoogleDriveService:
             if isinstance(item, dict) and isinstance(item.get("name"), str)
         }
 
-        project_name = PROJECT_FOLDER_BASE_NAME
+        unique_name = project_name
         suffix = 1
-        while project_name in existing_names:
+        while unique_name in existing_names:
             suffix += 1
-            project_name = f"{PROJECT_FOLDER_BASE_NAME} ({suffix})"
+            unique_name = f"{project_name} ({suffix})"
 
         project_folder, active_tokens = await self._create_child_folder(
             active_tokens,
-            name=project_name,
+            name=unique_name,
             parent_id=parent_folder_id,
         )
         project_id = str(project_folder["id"])
 
-        created_subfolders: List[Dict[str, Any]] = []
-        upload_target_id: Optional[str] = None
-
-        for index, subfolder_name in enumerate(PROJECT_SUBFOLDERS):
-            subfolder, active_tokens = await self._create_child_folder(
-                active_tokens,
-                name=subfolder_name,
-                parent_id=str(project_folder["id"]),
-            )
-            created_subfolders.append(
-                {
-                    "id": str(subfolder["id"]),
-                    "name": subfolder.get("name", subfolder_name),
-                }
-            )
-            if index == 0:
-                upload_target_id = str(subfolder["id"])
-
-        if upload_target_id is None:
-            upload_target_id = project_id
+        active_tokens = await self._copy_template_to_drive(
+            active_tokens,
+            parent_id=project_id,
+            exam_number=metadata["exam_number"],
+        )
 
         uploaded_files: List[Dict[str, Any]] = []
-        for upload in files:
-            file_name = upload.filename or "업로드된 파일.pdf"
+
+        agreement_name = agreement_file.filename or "시험 합의서.docx"
+        agreement_name = self._replace_placeholders(agreement_name, metadata["exam_number"])
+        file_info, active_tokens = await self._upload_file_to_folder(
+            active_tokens,
+            file_name=agreement_name,
+            parent_id=project_id,
+            content=agreement_bytes,
+            content_type=agreement_file.content_type
+            or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        uploaded_files.append(
+            {
+                "id": file_info.get("id"),
+                "name": file_info.get("name", agreement_name),
+                "size": len(agreement_bytes),
+                "contentType": agreement_file.content_type
+                or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            }
+        )
+        await agreement_file.close()
+
+        for upload in files[1:]:
+            filename = upload.filename or "업로드된 파일.docx"
             content = await upload.read()
             file_info, active_tokens = await self._upload_file_to_folder(
                 active_tokens,
-                file_name=file_name,
-                parent_id=upload_target_id,
+                file_name=filename,
+                parent_id=project_id,
                 content=content,
                 content_type=upload.content_type,
             )
             uploaded_files.append(
                 {
                     "id": file_info.get("id"),
-                    "name": file_info.get("name", file_name),
+                    "name": file_info.get("name", filename),
                     "size": len(content),
-                    "contentType": upload.content_type or "application/pdf",
+                    "contentType": upload.content_type or "application/octet-stream",
                 }
             )
             await upload.close()
 
         logger.info(
-            "Created Drive project '%s' (%s) with %d PDF files",
-            project_name,
+            "Created Drive project '%s' (%s) with metadata %s",
+            unique_name,
             project_id,
-            len(uploaded_files),
+            metadata,
         )
 
         return {
             "message": "새 프로젝트 폴더를 생성했습니다.",
             "project": {
                 "id": project_id,
-                "name": project_folder.get("name", project_name),
+                "name": project_folder.get("name", unique_name),
                 "parentId": parent_folder_id,
-                "subfolders": created_subfolders,
+                "metadata": {
+                    "examNumber": metadata["exam_number"],
+                    "companyName": metadata["company_name"],
+                    "productName": metadata["product_name"],
+                },
             },
             "uploadedFiles": uploaded_files,
         }
-
-
-# expose constants for router usage
-GoogleDriveService.PROJECT_FOLDER_BASE_NAME = PROJECT_FOLDER_BASE_NAME
-GoogleDriveService.PROJECT_SUBFOLDERS = PROJECT_SUBFOLDERS
