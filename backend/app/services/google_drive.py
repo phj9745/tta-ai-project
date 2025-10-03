@@ -9,7 +9,7 @@ import re
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
 
 import httpx
 from docx import Document
@@ -17,6 +17,7 @@ from fastapi import HTTPException, UploadFile
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
+from .excel_templates import populate_feature_list, populate_testcase_list
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DRIVE_FILES_ENDPOINT = "/files"
 DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
 TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
 PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
@@ -33,6 +35,26 @@ PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
     "GS-X-X-XXXX",
 )
 EXAM_NUMBER_PATTERN = re.compile(r"GS-[A-Z]-\d{2}-\d{4}")
+
+
+class _SpreadsheetRule(TypedDict):
+    folder_name: str
+    file_suffix: str
+    populate: Any
+
+
+_SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
+    "feature-list": {
+        "folder_name": "가.계획",
+        "file_suffix": "기능리스트 v1.0.xlsx",
+        "populate": populate_feature_list,
+    },
+    "testcase-generation": {
+        "folder_name": "나.설계",
+        "file_suffix": "테스트케이스.xlsx",
+        "populate": populate_testcase_list,
+    },
+}
 
 
 class GoogleDriveService:
@@ -449,6 +471,158 @@ class GoogleDriveService:
 
         raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
+    async def _download_file_content(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> Tuple[bytes, StoredTokens]:
+        active_tokens = tokens
+        for attempt in range(2):
+            headers = {
+                "Authorization": f"Bearer {active_tokens.access_token}",
+            }
+            async with httpx.AsyncClient(timeout=30.0, base_url=DRIVE_API_BASE) as client:
+                response = await client.get(
+                    f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+                    params={"alt": "media"},
+                    headers=headers,
+                )
+
+            if response.status_code == 401 and attempt == 0:
+                active_tokens = await self._refresh_access_token(active_tokens)
+                continue
+
+            if response.is_error:
+                logger.error("Google Drive file download failed for %s: %s", file_id, response.text)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive에서 파일을 다운로드하지 못했습니다. 잠시 후 다시 시도해주세요.",
+                )
+
+            return response.content, active_tokens
+
+        raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
+
+    async def _update_file_content(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+        file_name: str,
+        content: bytes,
+        content_type: str,
+    ) -> Tuple[Dict[str, Any], StoredTokens]:
+        active_tokens = tokens
+        for attempt in range(2):
+            headers = {
+                "Authorization": f"Bearer {active_tokens.access_token}",
+            }
+            metadata = {"name": file_name}
+            files = {
+                "metadata": (
+                    "metadata",
+                    json.dumps(metadata),
+                    "application/json; charset=UTF-8",
+                ),
+                "file": (
+                    file_name,
+                    content,
+                    content_type,
+                ),
+            }
+
+            async with httpx.AsyncClient(timeout=30.0, base_url=DRIVE_UPLOAD_BASE) as client:
+                response = await client.patch(
+                    f"{DRIVE_FILES_ENDPOINT}/{file_id}?uploadType=multipart&fields=id,name,modifiedTime",
+                    headers=headers,
+                    files=files,
+                )
+
+            if response.status_code == 401 and attempt == 0:
+                active_tokens = await self._refresh_access_token(active_tokens)
+                continue
+
+            if response.is_error:
+                logger.error("Google Drive file update failed for %s: %s", file_id, response.text)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive 파일을 업데이트하지 못했습니다. 잠시 후 다시 시도해주세요.",
+                )
+
+            data = response.json()
+            if not isinstance(data, dict) or "id" not in data:
+                logger.error("Google Drive file update response missing id: %s", data)
+                raise HTTPException(status_code=502, detail="업데이트된 파일 정보를 확인하지 못했습니다. 다시 시도해주세요.")
+
+            return data, active_tokens
+
+        raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
+
+    async def apply_csv_to_spreadsheet(
+        self,
+        *,
+        project_id: str,
+        menu_id: str,
+        csv_text: str,
+        google_id: Optional[str],
+    ) -> None:
+        rule = _SPREADSHEET_RULES.get(menu_id)
+        if not rule:
+            return
+
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        folder, active_tokens = await self._find_child_folder_by_name(
+            active_tokens,
+            parent_id=project_id,
+            name=rule["folder_name"],
+        )
+        if folder is None or not folder.get("id"):
+            raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['folder_name']}' 폴더를 찾을 수 없습니다.")
+
+        folder_id = str(folder["id"])
+        file_entry, active_tokens = await self._find_file_by_suffix(
+            active_tokens,
+            parent_id=folder_id,
+            suffix=rule["file_suffix"],
+            mime_type=XLSX_MIME_TYPE,
+        )
+        if file_entry is None or not file_entry.get("id"):
+            raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+
+        file_id = str(file_entry["id"])
+        file_name = str(file_entry.get("name", rule["file_suffix"]))
+
+        workbook_bytes, active_tokens = await self._download_file_content(
+            active_tokens,
+            file_id=file_id,
+        )
+
+        try:
+            updated_bytes = rule["populate"](workbook_bytes, csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Failed to populate spreadsheet for project", extra={"project_id": project_id, "menu_id": menu_id}
+            )
+            raise HTTPException(status_code=500, detail="엑셀 템플릿을 업데이트하지 못했습니다. 다시 시도해주세요.") from exc
+
+        await self._update_file_content(
+            active_tokens,
+            file_id=file_id,
+            file_name=file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        logger.info(
+            "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
+        )
+
     async def _list_child_folders(
         self,
         tokens: StoredTokens,
@@ -479,6 +653,71 @@ class GoogleDriveService:
             return files, updated_tokens
 
         return [], updated_tokens
+
+    async def _list_child_files(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        mime_type: Optional[str] = None,
+    ) -> Tuple[Sequence[Dict[str, Any]], StoredTokens]:
+        clauses = [f"'{parent_id}' in parents", "trashed = false"]
+        if mime_type:
+            clauses.append(f"mimeType = '{mime_type}'")
+        params = {
+            "q": " and ".join(clauses),
+            "fields": "files(id,name,mimeType,modifiedTime)",
+            "orderBy": "name_natural",
+            "spaces": "drive",
+            "pageSize": 100,
+        }
+
+        data, updated_tokens = await self._drive_request(
+            tokens,
+            method="GET",
+            path=DRIVE_FILES_ENDPOINT,
+            params=params,
+        )
+
+        files = data.get("files")
+        if isinstance(files, Sequence):
+            return files, updated_tokens
+
+        return [], updated_tokens
+
+    async def _find_child_folder_by_name(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        name: str,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        folders, updated_tokens = await self._list_child_folders(tokens, parent_id=parent_id)
+        for folder in folders:
+            if not isinstance(folder, dict):
+                continue
+            folder_name = folder.get("name")
+            if isinstance(folder_name, str) and folder_name == name:
+                return folder, updated_tokens
+        return None, updated_tokens
+
+    async def _find_file_by_suffix(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        suffix: str,
+        mime_type: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        files, updated_tokens = await self._list_child_files(tokens, parent_id=parent_id, mime_type=mime_type)
+        normalized_suffix = suffix.strip()
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if isinstance(name, str) and name.endswith(normalized_suffix):
+                return entry, updated_tokens
+        return None, updated_tokens
 
     async def ensure_drive_setup(self, google_id: Optional[str]) -> Dict[str, Any]:
         self._oauth_service.ensure_credentials()

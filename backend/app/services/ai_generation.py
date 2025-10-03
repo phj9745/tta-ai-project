@@ -30,6 +30,7 @@ class BufferedUpload:
 class GeneratedCsv:
     filename: str
     content: bytes
+    csv_text: str
 
 
 @dataclass
@@ -55,16 +56,16 @@ _PROMPT_TEMPLATES: Dict[str, Dict[str, str]] = {
         "system": "당신은 소프트웨어 기획 QA 리드입니다. 업로드된 요구사항을 기반으로 기능 정의서를 작성합니다.",
         "instruction": (
             "요구사항 자료에서 주요 기능을 발췌하여 CSV로 정리하세요. "
-            "다음 열을 포함해야 합니다: 기능 ID, 기능명, 설명, 우선순위, 비고. "
-            "기능 ID는 FT-001과 같이 일관된 형식을 사용하세요."
+            "다음 열을 포함해야 합니다: 대분류, 중분류, 소분류. "
+            "각 열은 템플릿의 계층 구조에 맞춰 핵심 기능을 요약해야 합니다."
         ),
     },
     "testcase-generation": {
         "system": "당신은 소프트웨어 QA 테스터입니다. 업로드된 요구사항을 읽고 테스트 케이스 초안을 설계합니다.",
         "instruction": (
             "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
-            "다음 열을 포함합니다: 테스트 케이스 ID, 시나리오, 입력 데이터, 기대 결과, 우선순위. "
-            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하세요."
+            "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
+            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하고, 테스트 결과는 기본값으로 '미실행'을 사용하세요."
         ),
     },
     "defect-report": {
@@ -373,4 +374,4 @@ class AIGenerationService:
         safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
         filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
 
-        return GeneratedCsv(filename=filename, content=encoded)
+        return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)

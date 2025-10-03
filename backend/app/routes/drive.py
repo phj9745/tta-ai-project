@@ -102,7 +102,9 @@ async def generate_project_asset(
     file_metadata: Optional[str] = Form(
         None, description="업로드된 파일에 대한 메타데이터(JSON 배열)"
     ),
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> StreamingResponse:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -195,6 +197,13 @@ async def generate_project_asset(
         menu_id=menu_id,
         uploads=uploads,
         metadata=metadata_entries,
+    )
+
+    await drive_service.apply_csv_to_spreadsheet(
+        project_id=project_id,
+        menu_id=menu_id,
+        csv_text=result.csv_text,
+        google_id=google_id,
     )
 
     headers = {
