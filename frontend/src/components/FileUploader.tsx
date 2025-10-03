@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ChangeEvent, DragEvent } from 'react'
 
 import {
@@ -13,6 +13,7 @@ interface FileUploaderProps {
   onChange: (files: File[]) => void
   disabled?: boolean
   multiple?: boolean
+  hideDropzoneWhenFilled?: boolean
 }
 
 function formatBytes(bytes: number): string {
@@ -30,12 +31,23 @@ function createFileKey(file: File) {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
+const IMAGE_FILE_PATTERN = /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i
+
+function isImageFile(file: File) {
+  if (file.type.startsWith('image/')) {
+    return true
+  }
+
+  return IMAGE_FILE_PATTERN.test(file.name)
+}
+
 export function FileUploader({
   allowedTypes,
   files,
   onChange,
   disabled = false,
   multiple = true,
+  hideDropzoneWhenFilled = false,
 }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -161,51 +173,121 @@ export function FileUploader({
     }
   }
 
+  const shouldShowDropzone = !(hideDropzoneWhenFilled && files.length > 0)
+
+  const shouldUseCompactLayout = useMemo(() => {
+    return multiple && files.length > 0 && files.every((file) => isImageFile(file))
+  }, [files, multiple])
+
+  const imagePreviewMap = useMemo(() => {
+    const canCreateObjectUrl =
+      typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+
+    if (!shouldUseCompactLayout || !canCreateObjectUrl) {
+      return new Map<string, string>()
+    }
+
+    const previews = new Map<string, string>()
+    files.forEach((file) => {
+      const key = createFileKey(file)
+      previews.set(key, URL.createObjectURL(file))
+    })
+    return previews
+  }, [files, shouldUseCompactLayout])
+
+  useEffect(() => {
+    return () => {
+      imagePreviewMap.forEach((url) => {
+        URL.revokeObjectURL(url)
+      })
+    }
+  }, [imagePreviewMap])
+
   return (
     <div className="file-uploader">
-      <label
-        className={`file-uploader__dropzone${
-          isDragging ? ' file-uploader__dropzone--active' : ''
-        }${disabled ? ' file-uploader__dropzone--disabled' : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <input
-          type="file"
-          className="file-uploader__input"
-          accept={acceptValue}
-          multiple={multiple}
-          onChange={handleInputChange}
-          disabled={disabled}
-        />
-        <div className="file-uploader__prompt">
-          <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
-        </div>
-        <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
-      </label>
+      {shouldShowDropzone && (
+        <label
+          className={`file-uploader__dropzone${
+            isDragging ? ' file-uploader__dropzone--active' : ''
+          }${disabled ? ' file-uploader__dropzone--disabled' : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <input
+            type="file"
+            className="file-uploader__input"
+            accept={acceptValue}
+            multiple={multiple}
+            onChange={handleInputChange}
+            disabled={disabled}
+          />
+          <div className="file-uploader__prompt">
+            <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
+          </div>
+          <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+        </label>
+      )}
 
       {error && <p className="file-uploader__error" role="alert">{error}</p>}
 
       {files.length > 0 && (
-        <ul className="file-uploader__files">
-          {files.map((file, index) => (
-            <li key={createFileKey(file)} className="file-uploader__file">
-              <div>
-                <span className="file-uploader__file-name">{file.name}</span>
-                <span className="file-uploader__file-size">{formatBytes(file.size)}</span>
-              </div>
-              <button
-                type="button"
-                className="file-uploader__remove"
-                onClick={() => handleRemove(index)}
-                aria-label={`${file.name} 삭제`}
-                disabled={disabled}
-              >
-                삭제
-              </button>
-            </li>
-          ))}
+        <ul
+          className={`file-uploader__files${
+            shouldUseCompactLayout ? ' file-uploader__files--grid' : ''
+          }`}
+        >
+          {files.map((file, index) => {
+            const key = createFileKey(file)
+            const previewUrl = shouldUseCompactLayout ? imagePreviewMap.get(key) : null
+
+            if (shouldUseCompactLayout) {
+              return (
+                <li key={key} className="file-uploader__file file-uploader__file--grid">
+                  {previewUrl ? (
+                    <div className="file-uploader__thumbnail" aria-hidden="true">
+                      <img src={previewUrl} alt="" />
+                    </div>
+                  ) : (
+                    <div className="file-uploader__thumbnail file-uploader__thumbnail--placeholder">
+                      <span className="file-uploader__thumbnail-label">이미지</span>
+                    </div>
+                  )}
+                  <div className="file-uploader__file-details">
+                    <span className="file-uploader__file-name">{file.name}</span>
+                    <span className="file-uploader__file-size">{formatBytes(file.size)}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="file-uploader__remove file-uploader__remove--block"
+                    onClick={() => handleRemove(index)}
+                    aria-label={`${file.name} 삭제`}
+                    disabled={disabled}
+                  >
+                    삭제
+                  </button>
+                </li>
+              )
+            }
+
+            return (
+              <li key={key} className="file-uploader__file">
+                <div>
+                  <span className="file-uploader__file-name">{file.name}</span>
+                  <span className="file-uploader__file-size">{formatBytes(file.size)}</span>
+                </div>
+                <button
+                  type="button"
+                  className="file-uploader__remove"
+                  onClick={() => handleRemove(index)}
+                  aria-label={`${file.name} 삭제`}
+                  disabled={disabled}
+                >
+                  삭제
+                </button>
+              </li>
+            )
+          })}
         </ul>
       )}
     </div>
