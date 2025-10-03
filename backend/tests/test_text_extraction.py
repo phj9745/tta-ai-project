@@ -138,6 +138,17 @@ class TextExtractionTests(unittest.TestCase):
         self.assertIn("기능 ID | 기능명 | 설명", preview.body)
         self.assertIn("FT-001 | 로그인 | 사용자 인증", preview.body)
 
+    def test_extract_without_limit(self) -> None:
+        body = "문단1" + "\n" * 2 + "문단2" * 2000
+        preview = extract_text_preview(
+            filename="manual.txt",
+            raw=body.encode("utf-8"),
+            content_type="text/plain",
+            max_chars=0,
+        )
+        self.assertTrue(preview.body.endswith("문단2"))
+        self.assertGreater(len(preview.body), 5000)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
