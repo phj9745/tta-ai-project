@@ -26,7 +26,7 @@ DRIVE_FILES_ENDPOINT = "/files"
 DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
-TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "템플릿"
+TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
 PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
     "GS-B-XX-XXXX",
     "GS-B-2X-XXXX",
@@ -169,7 +169,7 @@ class GoogleDriveService:
         exam_number: str,
     ) -> StoredTokens:
         if not TEMPLATE_ROOT.exists():
-            raise HTTPException(status_code=500, detail="템플릿 폴더를 찾을 수 없습니다.")
+            raise HTTPException(status_code=500, detail="template 폴더를 찾을 수 없습니다.")
 
         path_to_folder_id: Dict[Path, str] = {TEMPLATE_ROOT: parent_id}
         for root_dir, dirnames, filenames in os.walk(TEMPLATE_ROOT):
