@@ -351,7 +351,7 @@ def extract_text_preview(
     if not normalized:
         normalized = _default_message(filename)
 
-    if len(normalized) > max_chars:
+    if max_chars and max_chars > 0 and len(normalized) > max_chars:
         normalized = normalized[:max_chars].rstrip() + "\n... (이후 내용 생략)"
 
     header = f"### 파일: {filename}"

@@ -16,7 +16,8 @@ from ..config import Settings
 from .openai_payload import OpenAIMessageBuilder
 from .text_extraction import ExtractedUploadPreview, extract_text_preview
 
-_MAX_PREVIEW_CHARS = 6000
+_MAX_PREVIEW_CHARS = 0
+_PROMPT_CHUNK_SIZE = 3500
 
 
 @dataclass
@@ -30,6 +31,7 @@ class BufferedUpload:
 class GeneratedCsv:
     filename: str
     content: bytes
+    csv_text: str
 
 
 @dataclass
@@ -55,16 +57,16 @@ _PROMPT_TEMPLATES: Dict[str, Dict[str, str]] = {
         "system": "당신은 소프트웨어 기획 QA 리드입니다. 업로드된 요구사항을 기반으로 기능 정의서를 작성합니다.",
         "instruction": (
             "요구사항 자료에서 주요 기능을 발췌하여 CSV로 정리하세요. "
-            "다음 열을 포함해야 합니다: 기능 ID, 기능명, 설명, 우선순위, 비고. "
-            "기능 ID는 FT-001과 같이 일관된 형식을 사용하세요."
+            "다음 열을 포함해야 합니다: 대분류, 중분류, 소분류. "
+            "각 열은 템플릿의 계층 구조에 맞춰 핵심 기능을 요약해야 합니다."
         ),
     },
     "testcase-generation": {
         "system": "당신은 소프트웨어 QA 테스터입니다. 업로드된 요구사항을 읽고 테스트 케이스 초안을 설계합니다.",
         "instruction": (
             "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
-            "다음 열을 포함합니다: 테스트 케이스 ID, 시나리오, 입력 데이터, 기대 결과, 우선순위. "
-            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하세요."
+            "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
+            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하고, 테스트 결과는 기본값으로 '미실행'을 사용하세요."
         ),
     },
     "defect-report": {
@@ -88,9 +90,6 @@ _PROMPT_TEMPLATES: Dict[str, Dict[str, str]] = {
         ),
     },
 }
-
-_MAX_IMAGE_PREVIEW_CHARS = 8000
-
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +121,21 @@ class AIGenerationService:
             cleaned_descriptor = descriptor.strip() or context.upload.name
             cleaned_body = body.strip()
 
-            if cleaned_body:
-                sections.append(f"### {cleaned_descriptor}\n{cleaned_body}")
-            else:
+            chunks = AIGenerationService._chunk_body(cleaned_body, _PROMPT_CHUNK_SIZE)
+            if not chunks:
                 sections.append(f"### {cleaned_descriptor}")
+            else:
+                total = len(chunks)
+                for index, chunk in enumerate(chunks, start=1):
+                    if total == 1:
+                        title = cleaned_descriptor
+                    else:
+                        title = f"{cleaned_descriptor} (부분 {index}/{total})"
+                    chunk_text = chunk.strip()
+                    if chunk_text:
+                        sections.append(f"### {title}\n{chunk_text}")
+                    else:
+                        sections.append(f"### {title}")
 
             descriptors.append(
                 PromptContextPreview(descriptor=cleaned_descriptor, doc_id=doc_id)
@@ -189,17 +199,14 @@ class AIGenerationService:
         if AIGenerationService._is_image(upload):
             mime = upload.content_type or "image/jpeg"
             encoded = base64.b64encode(upload.content).decode("ascii")
-            if len(encoded) > _MAX_IMAGE_PREVIEW_CHARS:
-                encoded = (
-                    encoded[:_MAX_IMAGE_PREVIEW_CHARS].rstrip()
-                    + "\n... (이후 이미지 데이터 생략)"
-                )
 
             if doc_id == "configuration":
                 context_name = label or "형상 이미지"
-                prefix = f"첨부된 이미지는 {context_name}이며 제품의 형상을 보여줍니다."
+                prefix = (
+                    f"첨부된 이미지는 {context_name}이며 제품의 형상을 전체적으로 보여줍니다."
+                )
             else:
-                prefix = "첨부된 이미지 파일의 원본 데이터를 제공합니다."
+                prefix = "첨부된 이미지 파일의 전체 원본 데이터를 Base64로 제공합니다."
 
             return (
                 f"{prefix}\n"
@@ -241,6 +248,51 @@ class AIGenerationService:
             body = f"{intro}\n{preview.body}" if preview.body else intro
 
         return body.strip()
+
+    @staticmethod
+    def _chunk_body(body: str, chunk_size: int) -> List[str]:
+        normalized = body.strip()
+        if not normalized:
+            return []
+
+        if chunk_size <= 0 or len(normalized) <= chunk_size:
+            return [normalized]
+
+        parts: List[str] = []
+        current: List[str] = []
+        current_len = 0
+
+        def flush() -> None:
+            nonlocal current, current_len
+            if current:
+                parts.append("\n\n".join(current))
+                current = []
+                current_len = 0
+
+        for paragraph in re.split(r"\n{2,}", normalized):
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+
+            if current and current_len + 2 + len(paragraph) > chunk_size:
+                flush()
+
+            if len(paragraph) > chunk_size:
+                flush()
+                for start in range(0, len(paragraph), chunk_size):
+                    parts.append(paragraph[start : start + chunk_size])
+                continue
+
+            if not current:
+                current = [paragraph]
+                current_len = len(paragraph)
+            else:
+                current.append(paragraph)
+                current_len += 2 + len(paragraph)
+
+        flush()
+
+        return parts if parts else [normalized]
 
     @staticmethod
     def _closing_note(menu_id: str, contexts: List[PromptContextPreview]) -> str | None:
@@ -322,7 +374,11 @@ class AIGenerationService:
 
         user_prompt_parts = [
             prompt["instruction"],
-            "다음은 업로드된 자료의 요약입니다. 자료의 용도와 형식을 참고하세요.",
+            (
+                "다음은 업로드된 모든 자료의 전체 원문과 이미지 데이터입니다. "
+                "자료의 용도와 형식을 참고하여 누락 없이 활용하세요."
+            ),
+            "각 문서는 필요에 따라 여러 부분으로 나뉘어 제공되며 순서는 업로드 순서를 따릅니다.",
             preview_bundle.text,
         ]
         if closing_note:
@@ -373,4 +429,4 @@ class AIGenerationService:
         safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
         filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
 
-        return GeneratedCsv(filename=filename, content=encoded)
+        return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
