@@ -173,11 +173,14 @@ export function FileUploader({
     }
   }
 
-  const shouldShowDropzone = !(hideDropzoneWhenFilled && files.length > 0)
-
   const shouldUseCompactLayout = useMemo(() => {
     return multiple && files.length > 0 && files.every((file) => isImageFile(file))
   }, [files, multiple])
+
+  const shouldRenderCompactPreview = shouldUseCompactLayout && hideDropzoneWhenFilled
+
+  const shouldShowDropzone =
+    !hideDropzoneWhenFilled || files.length === 0 || shouldRenderCompactPreview
 
   const imagePreviewMap = useMemo(() => {
     const canCreateObjectUrl =
@@ -209,7 +212,11 @@ export function FileUploader({
         <label
           className={`file-uploader__dropzone${
             isDragging ? ' file-uploader__dropzone--active' : ''
-          }${disabled ? ' file-uploader__dropzone--disabled' : ''}`}
+          }${disabled ? ' file-uploader__dropzone--disabled' : ''}${
+            shouldRenderCompactPreview && files.length > 0
+              ? ' file-uploader__dropzone--preview'
+              : ''
+          }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
@@ -222,16 +229,55 @@ export function FileUploader({
             onChange={handleInputChange}
             disabled={disabled}
           />
-          <div className="file-uploader__prompt">
-            <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
-          </div>
-          <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+          {shouldRenderCompactPreview && files.length > 0 ? (
+            <>
+              <div className="file-uploader__preview-grid" aria-live="polite">
+                {files.map((file, index) => {
+                  const key = createFileKey(file)
+                  const previewUrl = imagePreviewMap.get(key)
+
+                  return (
+                    <div key={key} className="file-uploader__preview-item">
+                      {previewUrl ? (
+                        <img src={previewUrl} alt="" />
+                      ) : (
+                        <span className="file-uploader__preview-fallback">이미지</span>
+                      )}
+                      <button
+                        type="button"
+                        className="file-uploader__preview-remove"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          handleRemove(index)
+                        }}
+                        aria-label={`${file.name} 삭제`}
+                        disabled={disabled}
+                      >
+                        삭제
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="file-uploader__preview-helper" aria-hidden="true">
+                이미지를 클릭해서 추가하거나 드래그 앤 드롭하세요.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="file-uploader__prompt">
+                <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
+              </div>
+              <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+            </>
+          )}
         </label>
       )}
 
       {error && <p className="file-uploader__error" role="alert">{error}</p>}
 
-      {files.length > 0 && (
+      {files.length > 0 && !shouldRenderCompactPreview && (
         <ul
           className={`file-uploader__files${
             shouldUseCompactLayout ? ' file-uploader__files--grid' : ''

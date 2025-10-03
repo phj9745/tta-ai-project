@@ -37,7 +37,7 @@ def test_text_message_appends_image_parts() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image": {"file_id": "img-1"}}
+        {"type": "input_image", "image_url": {"url": "openai://file/img-1"}}
     ]
 
 
@@ -93,7 +93,10 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "check"},
-                {"type": "input_image", "image": {"file_id": "img-legacy"}},
+                {
+                    "type": "input_image",
+                    "image_url": {"url": "openai://file/img-legacy"},
+                },
             ],
         }
     ]
