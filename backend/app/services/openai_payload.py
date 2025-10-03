@@ -24,11 +24,17 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
+class ImageReference(TypedDict):
+    """Reference to an uploaded image asset."""
+
+    file_id: str
+
+
 class InputImageContent(TypedDict):
     """Response API image reference content."""
 
     type: _ImageContentType
-    image_id: str
+    image: ImageReference
 
 
 class TextContent(TypedDict):
@@ -117,7 +123,9 @@ class OpenAIMessageBuilder:
             if kind == "file":
                 parts.append({"type": "input_file", "file_id": file_id})
             elif kind == "image":
-                parts.append({"type": "input_image", "image_id": file_id})
+                parts.append(
+                    {"type": "input_image", "image": {"file_id": file_id}}
+                )
             else:  # pragma: no cover - typing guard
                 raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
 
@@ -184,13 +192,29 @@ class OpenAIMessageBuilder:
                             }
                         )
                     elif part_type == "input_image":
+                        image: object | None = item.get("image")
                         image_id = item.get("image_id")
-                        if not isinstance(image_id, str) or not image_id.strip():
-                            raise ValueError("input_image 항목에는 유효한 image_id가 필요합니다.")
+
+                        file_id: object | None = None
+                        if isinstance(image, MutableMapping):
+                            file_id = image.get("file_id")
+                        elif image is not None:
+                            raise ValueError(
+                                "input_image 항목의 image 필드는 매핑이어야 합니다."
+                            )
+
+                        if file_id is None:
+                            file_id = image_id
+
+                        if not isinstance(file_id, str) or not file_id.strip():
+                            raise ValueError(
+                                "input_image 항목에는 유효한 image.file_id가 필요합니다."
+                            )
+
                         normalized_contents.append(
                             {
                                 "type": "input_image",
-                                "image_id": image_id,
+                                "image": {"file_id": file_id},
                             }
                         )
                     else:

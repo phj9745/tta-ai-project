@@ -36,7 +36,9 @@ def test_text_message_appends_image_parts() -> None:
     )
 
     assert message["role"] == "user"
-    assert message["content"][1:] == [{"type": "input_image", "image_id": "img-1"}]
+    assert message["content"][1:] == [
+        {"type": "input_image", "image": {"file_id": "img-1"}}
+    ]
 
 
 def test_attachments_to_chat_completions_converts_images() -> None:
@@ -68,6 +70,30 @@ def test_normalize_messages_allows_input_file_parts() -> None:
             "content": [
                 {"type": "input_text", "text": "summary"},
                 {"type": "input_file", "file_id": "file-42"},
+            ],
+        }
+    ]
+
+
+def test_normalize_messages_converts_legacy_image_id() -> None:
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "check"},
+                {"type": "input_image", "image_id": "img-legacy"},
+            ],
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+    assert normalized == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "check"},
+                {"type": "input_image", "image": {"file_id": "img-legacy"}},
             ],
         }
     ]
