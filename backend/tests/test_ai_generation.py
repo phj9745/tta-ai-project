@@ -16,6 +16,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.config import Settings
 from app.services.ai_generation import AIGenerationService
+from app.services.openai_payload import OpenAIMessageBuilder
 
 
 class _StubFiles:
@@ -118,7 +119,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     ]
     assert file_parts == [
         {"type": "input_file", "file_id": "file-1"},
-        {"type": "input_image", "image_url": "openai://file/file-2"},
+        {"type": "input_image", "image": {"file_id": "file-2"}},
     ]
 
     # The text portions should not include the raw upload bodies.
@@ -131,4 +132,53 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     assert stub_client.files.deleted == ["file-1", "file-2"]
 
     assert result.csv_text == "col1,col2\nvalue1,value2"
+
+
+@pytest.mark.anyio
+async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    original_text_message = OpenAIMessageBuilder.text_message
+
+    def _augmented_text_message(*args: object, **kwargs: object):
+        message = original_text_message(*args, **kwargs)  # type: ignore[misc]
+        if message["role"] == "user":
+            message["content"].append(  # type: ignore[index]
+                {
+                    "type": "input_image",
+                    "image_url": {"url": "openai://file/file-extra"},
+                }
+            )
+        return message
+
+    monkeypatch.setattr(OpenAIMessageBuilder, "text_message", _augmented_text_message)
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-456",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+    )
+
+    assert result.csv_text == "col1,col2\nvalue1,value2"
+
+    assert len(stub_client.responses.calls) == 1
+    user_message = stub_client.responses.calls[0]["input"][1]
+    image_parts = [
+        part
+        for part in user_message["content"]
+        if part["type"] == "input_image"
+    ]
+    assert {
+        "type": "input_image",
+        "image": {"file_id": "file-extra"},
+    } in image_parts
 

@@ -37,6 +37,11 @@ def test_text_message_appends_image_parts() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
+        {"type": "input_image", "image_url": "openai://file/img-1"}
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages([message])
+    assert normalized[0]["content"][1:] == [
         {"type": "input_image", "image": {"file_id": "img-1"}}
     ]
 
