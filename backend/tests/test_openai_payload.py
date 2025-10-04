@@ -32,27 +32,27 @@ def test_text_message_appends_image_parts() -> None:
     message = OpenAIMessageBuilder.text_message(
         "user",
         "see this",
-        attachments=[{"file_id": "img-1", "kind": "image"}],
+        attachments=[{"file_id": "file-img-1", "kind": "image"}],
     )
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image_url": "openai://img-1"}
+        {"type": "input_image", "image_url": "openai://file-file-img-1"}
     ]
 
     normalized = OpenAIMessageBuilder.normalize_messages([message])
     assert normalized[0]["content"][1:] == [
-        {"type": "input_image", "image_url": "openai://img-1"}
+        {"type": "input_image", "image_url": "openai://file-file-img-1"}
     ]
 
 
 def test_attachments_to_chat_completions_converts_images() -> None:
-    attachments = [{"file_id": "img-2", "kind": "image"}]
+    attachments = [{"file_id": "file-img-2", "kind": "image"}]
 
     completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
 
     assert completion_parts == [
-        {"type": "image_url", "image_url": "openai://img-2"}
+        {"type": "image_url", "image_url": "openai://file-file-img-2"}
     ]
 
 
@@ -86,7 +86,7 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "text", "text": "check"},
-                {"type": "input_image", "image_id": "img-legacy"},
+                {"type": "input_image", "image_id": "file-img-legacy"},
             ],
         }
     ]
@@ -98,7 +98,7 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "check"},
-                {"type": "input_image", "image_url": "openai://img-legacy"},
+                {"type": "input_image", "image_url": "openai://file-file-img-legacy"},
             ],
         }
     ]
@@ -116,7 +116,7 @@ def test_normalize_messages_accepts_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image": {"file_id": "img-direct"},
+                    "image": {"file_id": "file-img-direct"},
                 }
             ],
         }
@@ -130,7 +130,7 @@ def test_normalize_messages_accepts_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": "openai://img-direct",
+                    "image_url": "openai://file-file-img-direct",
                 },
             ],
         }
@@ -144,7 +144,7 @@ def test_normalize_messages_converts_image_url_string() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": "openai://file-img-from-url",
+                    "image_url": "openai://file-file-img-from-url",
                 }
             ],
         }
@@ -158,7 +158,7 @@ def test_normalize_messages_converts_image_url_string() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": "openai://file-img-from-url",
+                    "image_url": "openai://file-file-img-from-url",
                 },
             ],
         }
