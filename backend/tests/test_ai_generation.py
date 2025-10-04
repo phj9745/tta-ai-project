@@ -157,12 +157,6 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
                     "image_url": "data:image/png;base64,abc123",
                 }
             )
-            message["content"].append(  # type: ignore[index]
-                {
-                    "type": "input_image",
-                    "image_url": "data:image/png;base64,abc123",
-                }
-            )
         return message
 
     monkeypatch.setattr(OpenAIMessageBuilder, "text_message", _augmented_text_message)
