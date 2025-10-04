@@ -42,7 +42,7 @@ def test_text_message_appends_image_parts() -> None:
 
     normalized = OpenAIMessageBuilder.normalize_messages([message])
     assert normalized[0]["content"][1:] == [
-        {"type": "input_image", "image": {"file_id": "img-1"}}
+        {"type": "input_image", "image_url": "openai://file/img-1"}
     ]
 
 
@@ -98,7 +98,7 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "check"},
-                {"type": "input_image", "image": {"file_id": "img-legacy"}},
+                {"type": "input_image", "image_url": "openai://file/img-legacy"},
             ],
         }
     ]
@@ -130,7 +130,7 @@ def test_normalize_messages_accepts_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image": {"file_id": "img-direct"},
+                    "image_url": "openai://file/img-direct",
                 },
             ],
         }
@@ -158,7 +158,7 @@ def test_normalize_messages_converts_image_url_string() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image": {"file_id": "img-from-url"},
+                    "image_url": "openai://file/img-from-url",
                 },
             ],
         }

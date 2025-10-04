@@ -25,24 +25,11 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
-class ImageObject(TypedDict):
-    """Image reference that points to an uploaded OpenAI file."""
-
-    file_id: str
-
-
 class InputImageURLContent(TypedDict):
     """Response API image content that references an external URL."""
 
     type: _ImageContentType
     image_url: str
-
-
-class InputImageFileContent(TypedDict):
-    """Response API image content that references an uploaded file."""
-
-    type: _ImageContentType
-    image: ImageObject
 
 
 class TextContent(TypedDict):
@@ -52,7 +39,7 @@ class TextContent(TypedDict):
     text: str
 
 
-ContentPart = TextContent | InputFileContent | InputImageURLContent | InputImageFileContent
+ContentPart = TextContent | InputFileContent | InputImageURLContent
 
 
 class AttachmentMetadata(TypedDict):
@@ -227,7 +214,7 @@ class OpenAIMessageBuilder:
     @classmethod
     def _normalize_image_part(
         cls, item: MutableMapping[str, object]
-    ) -> InputImageURLContent | InputImageFileContent:
+    ) -> InputImageURLContent:
         image: object | None = item.get("image")
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
@@ -277,7 +264,7 @@ class OpenAIMessageBuilder:
         if isinstance(file_id, str) and file_id.strip():
             return {
                 "type": "input_image",
-                "image": {"file_id": file_id},
+                "image_url": f"openai://file/{file_id}",
             }
 
         if isinstance(external_url, str) and external_url.strip():
