@@ -266,28 +266,6 @@ class OpenAIMessageBuilder:
 
         return normalized
 
-    @staticmethod
-    def _file_id_from_openai_url(url: object | None) -> str | None:
-        if not isinstance(url, str):
-            return None
-        if not url.startswith("openai://"):
-            return None
-        remainder = url[len("openai://") :].strip()
-        if not remainder.startswith("file-"):
-            return None
-
-        file_id_candidate = remainder[len("file-") :]
-        if not file_id_candidate:
-            return None
-
-        if file_id_candidate.startswith("file-"):
-            legacy_remainder = file_id_candidate[len("file-") :]
-            if not legacy_remainder:
-                return None
-            file_id_candidate = f"file-{legacy_remainder}"
-
-        return file_id_candidate
-
     @classmethod
     def _normalize_image_part(
         cls, item: MutableMapping[str, object]
@@ -311,11 +289,7 @@ class OpenAIMessageBuilder:
             raise ValueError("input_image 항목의 image 필드는 매핑이어야 합니다.")
 
         if image_url is not None:
-            normalized_url, url_file_id = cls._normalize_image_url_value(image_url)
-            if normalized_url:
-                external_url = normalized_url
-            if url_file_id:
-                file_id = url_file_id
+            external_url = cls._normalize_external_image_url(image_url)
 
         if isinstance(image_id, str) and image_id.strip():
             file_id = image_id.strip()
@@ -329,9 +303,7 @@ class OpenAIMessageBuilder:
         raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
 
     @classmethod
-    def _normalize_image_url_value(
-        cls, value: object
-    ) -> tuple[str | None, str | None]:
+    def _normalize_external_image_url(cls, value: object) -> str:
         raw: object
         if isinstance(value, MutableMapping):
             raw = value.get("url")
@@ -350,17 +322,9 @@ class OpenAIMessageBuilder:
             )
 
         parsed = urlparse(candidate)
-        if parsed.scheme == "openai":
-            file_id = cls._file_id_from_openai_url(candidate)
-            if file_id is None:
-                raise ValueError(
-                    "input_image 항목의 image_url는 openai://file-{file_id} 형식을 따라야 합니다."
-                )
-            return (None, file_id)
-
         if parsed.scheme in {"http", "https", "data"}:
             if cls._is_valid_external_url(candidate):
-                return (candidate, None)
+                return candidate
             raise ValueError(
                 "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다."
             )
