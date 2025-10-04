@@ -37,7 +37,7 @@ def test_text_message_appends_image_parts() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image_url": {"url": "openai://file/img-1"}}
+        {"type": "input_image", "image_url": "openai://file/img-1"}
     ]
 
 
@@ -47,7 +47,7 @@ def test_attachments_to_chat_completions_converts_images() -> None:
     completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
 
     assert completion_parts == [
-        {"type": "image_url", "image_url": {"url": "openai://file/img-2"}}
+        {"type": "image_url", "image_url": "openai://file/img-2"}
     ]
 
 
@@ -95,7 +95,7 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
                 {"type": "input_text", "text": "check"},
                 {
                     "type": "input_image",
-                    "image_url": {"url": "openai://file/img-legacy"},
+                    "image_url": "openai://file/img-legacy",
                 },
             ],
         }
@@ -128,7 +128,7 @@ def test_normalize_messages_accepts_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": {"url": "openai://file/img-direct"},
+                    "image_url": "openai://file/img-direct",
                 },
             ],
         }
@@ -156,7 +156,7 @@ def test_normalize_messages_converts_image_url_string() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": {"url": "openai://file/img-from-url"},
+                    "image_url": "openai://file/img-from-url",
                 },
             ],
         }

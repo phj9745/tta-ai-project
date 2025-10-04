@@ -28,13 +28,7 @@ class InputImageContent(TypedDict):
     """Response API image reference content."""
 
     type: _ImageContentType
-    image: "ImageReference"
-
-
-class ImageReference(TypedDict):
-    """Reference to an uploaded image asset."""
-
-    file_id: str
+    image_url: str
 
 
 class TextContent(TypedDict):
@@ -126,7 +120,7 @@ class OpenAIMessageBuilder:
                 parts.append(
                     {
                         "type": "input_image",
-                        "image_url": {"url": f"openai://file/{file_id}"},
+                        "image_url": f"openai://file/{file_id}",
                     }
                 )
             else:  # pragma: no cover - typing guard
@@ -264,7 +258,7 @@ class OpenAIMessageBuilder:
 
         return {
             "type": "input_image",
-            "image_url": {"url": f"openai://file/{file_id}"},
+            "image_url": f"openai://file/{file_id}",
         }
 
     @staticmethod
@@ -281,7 +275,7 @@ class OpenAIMessageBuilder:
                 completion_parts.append(
                     {
                         "type": "image_url",
-                        "image_url": {"url": f"openai://file/{file_id}"},
+                        "image_url": f"openai://file/{file_id}",
                     }
                 )
         return completion_parts

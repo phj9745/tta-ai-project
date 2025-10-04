@@ -118,7 +118,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     ]
     assert file_parts == [
         {"type": "input_file", "file_id": "file-1"},
-        {"type": "input_image", "image_url": {"url": "openai://file/file-2"}},
+        {"type": "input_image", "image_url": "openai://file/file-2"},
     ]
 
     # The text portions should not include the raw upload bodies.
