@@ -93,7 +93,10 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "check"},
-                {"type": "input_image", "image": {"file_id": "img-legacy"}},
+                {
+                    "type": "input_image",
+                    "image": {"file_id": "img-legacy"},
+                },
             ],
         }
     ]
@@ -102,3 +105,53 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
 def test_text_message_rejects_blank_file_id() -> None:
     with pytest.raises(ValueError):
         OpenAIMessageBuilder.text_message("user", "hello", file_ids=[" "])
+
+
+def test_normalize_messages_accepts_image_mapping() -> None:
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image": {"file_id": "img-direct"},
+                }
+            ],
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+    assert normalized == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_image", "image": {"file_id": "img-direct"}},
+            ],
+        }
+    ]
+
+
+def test_normalize_messages_converts_image_url_string() -> None:
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "openai://file/img-from-url",
+                }
+            ],
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+    assert normalized == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_image", "image": {"file_id": "img-from-url"}},
+            ],
+        }
+    ]
