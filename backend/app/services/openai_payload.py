@@ -134,7 +134,7 @@ class OpenAIMessageBuilder:
                 parts.append(
                     {
                         "type": "input_image",
-                        "image": {"file_id": file_id},
+                        "image_url": f"openai://file/{file_id}",
                     }
                 )
             else:  # pragma: no cover - typing guard
