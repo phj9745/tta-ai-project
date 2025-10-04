@@ -151,6 +151,12 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
                     "image_url": {"url": "openai://file-file-extra"},
                 }
             )
+            message["content"].append(  # type: ignore[index]
+                {
+                    "type": "input_image",
+                    "image_url": "data:image/png;base64,abc123",
+                }
+            )
         return message
 
     monkeypatch.setattr(OpenAIMessageBuilder, "text_message", _augmented_text_message)
@@ -180,5 +186,9 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
     assert {
         "type": "input_image",
         "image_url": "openai://file-file-extra",
+    } in image_parts
+    assert {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,abc123",
     } in image_parts
 

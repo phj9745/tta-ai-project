@@ -28,7 +28,7 @@ def test_text_message_appends_file_parts() -> None:
     ]
 
 
-def test_text_message_appends_image_parts() -> None:
+def test_text_message_appends_image_parts_from_file_id() -> None:
     message = OpenAIMessageBuilder.text_message(
         "user",
         "see this",
@@ -46,6 +46,49 @@ def test_text_message_appends_image_parts() -> None:
     ]
 
 
+def test_text_message_appends_image_parts_from_image_url() -> None:
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "look at this",
+        attachments=[
+            {
+                "image_url": "https://example.com/external.png",
+                "kind": "image",
+            }
+        ],
+    )
+
+    assert message["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/external.png",
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages([message])
+    assert normalized[0]["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/external.png",
+        }
+    ]
+
+
+def test_text_message_accepts_image_url_alias() -> None:
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "alias",
+        attachments=[{"url": "https://example.com/from-alias", "kind": "image"}],
+    )
+
+    assert message["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/from-alias",
+        }
+    ]
+
+
 def test_attachments_to_chat_completions_converts_images() -> None:
     attachments = [{"file_id": "file-img-2", "kind": "image"}]
 
@@ -53,6 +96,22 @@ def test_attachments_to_chat_completions_converts_images() -> None:
 
     assert completion_parts == [
         {"type": "image_url", "image_url": "openai://file-file-img-2"}
+    ]
+
+
+def test_attachments_to_chat_completions_prefers_image_url() -> None:
+    attachments = [
+        {
+            "file_id": "file-img-3",
+            "image_url": "data:image/png;base64,abc123",
+            "kind": "image",
+        }
+    ]
+
+    completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
+
+    assert completion_parts == [
+        {"type": "image_url", "image_url": "data:image/png;base64,abc123"}
     ]
 
 
@@ -187,6 +246,35 @@ def test_normalize_messages_preserves_external_image_url() -> None:
                 {
                     "type": "input_image",
                     "image_url": "https://example.com/image.png",
+                },
+            ],
+        }
+    ]
+
+
+def test_normalize_messages_preserves_data_image_url() -> None:
+    data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": data_url,
+                }
+            ],
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+    assert normalized == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": data_url,
                 },
             ],
         }
