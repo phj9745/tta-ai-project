@@ -121,7 +121,7 @@ class OpenAIMessageBuilder:
                 parts.append(
                     {
                         "type": "input_image",
-                        "image_url": f"openai://file-{file_id}",
+                        "image_url": f"openai://{file_id}",
                     }
                 )
             else:  # pragma: no cover - typing guard
@@ -205,10 +205,16 @@ class OpenAIMessageBuilder:
     def _file_id_from_openai_url(url: object | None) -> str | None:
         if not isinstance(url, str):
             return None
-        prefix = "openai://file-"
-        if not url.startswith(prefix):
+        if not url.startswith("openai://"):
             return None
-        file_id = url[len(prefix) :].strip()
+        remainder = url[len("openai://") :].strip()
+        if not remainder:
+            return None
+
+        if remainder.startswith("file-file-"):
+            remainder = remainder[len("file-") :]
+
+        file_id = remainder
         return file_id or None
 
     @classmethod
@@ -241,7 +247,7 @@ class OpenAIMessageBuilder:
                         external_url = image_url
                     else:
                         raise ValueError(
-                            "input_image 항목의 image_url는 유효한 URL이거나 openai://file- 형식이어야 합니다."
+                            "input_image 항목의 image_url는 유효한 URL이거나 openai://{file_id} 형식이어야 합니다."
                         )
             elif isinstance(image_url, MutableMapping):
                 url_value = image_url.get("url")
@@ -251,7 +257,7 @@ class OpenAIMessageBuilder:
                         external_url = url_value
                     else:
                         raise ValueError(
-                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://file- 형식이어야 합니다."
+                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://{file_id} 형식이어야 합니다."
                         )
             elif image_url is not None:
                 raise ValueError(
@@ -264,7 +270,7 @@ class OpenAIMessageBuilder:
         if isinstance(file_id, str) and file_id.strip():
             return {
                 "type": "input_image",
-                "image_url": f"openai://file-{file_id}",
+                "image_url": f"openai://{file_id}",
             }
 
         if isinstance(external_url, str) and external_url.strip():
@@ -298,7 +304,7 @@ class OpenAIMessageBuilder:
                 completion_parts.append(
                     {
                         "type": "image_url",
-                        "image_url": f"openai://file-{file_id}",
+                        "image_url": f"openai://{file_id}",
                     }
                 )
         return completion_parts
