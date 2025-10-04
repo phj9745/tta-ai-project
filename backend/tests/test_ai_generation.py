@@ -191,4 +191,8 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
         "type": "input_image",
         "image_url": "data:image/png;base64,abc123",
     } in image_parts
+    assert {
+        "type": "input_image",
+        "image_url": "data:image/png;base64,abc123",
+    } in image_parts
 

@@ -296,17 +296,17 @@ class OpenAIMessageBuilder:
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
 
-        file_id: str | None = None
-        external_url: str | None = None
-
         if isinstance(image, MutableMapping):
             candidate = image.get("file_id")
             if isinstance(candidate, str) and candidate.strip():
-                file_id = candidate.strip()
-            else:
-                raise ValueError(
-                    "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
-                )
+                normalized_file_id = candidate.strip()
+                return {
+                    "type": "input_image",
+                    "image_url": f"openai://file-{normalized_file_id}",
+                }
+            raise ValueError(
+                "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
+            )
         elif image is not None:
             raise ValueError("input_image 항목의 image 필드는 매핑이어야 합니다.")
 
