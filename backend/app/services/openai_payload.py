@@ -61,6 +61,8 @@ ContentPart = (
 
 logger = logging.getLogger(__name__)
 
+logger = logging.getLogger(__name__)
+
 
 class AttachmentMetadata(TypedDict, total=False):
     """Metadata describing how an uploaded asset should be attached."""
@@ -222,25 +224,13 @@ class OpenAIMessageBuilder:
                     )
                     continue
 
-                file_id = attachment.get("file_id")
-                if isinstance(file_id, str) and file_id.strip():
-                    parts.append(
-                        {
-                            "type": "input_image",
-                            "image": {"file_id": file_id},
-                        }
-                    )
-                    continue
-
                 cls._log_invalid_attachment(
                     role,
                     text,
-                    "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다.",
+                    "image 첨부에는 image_url이 필요합니다.",
                     attachment,
                 )
-                raise ValueError(
-                    "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다."
-                )
+                raise ValueError("image 첨부에는 image_url이 필요합니다.")
             else:  # pragma: no cover - typing guard
                 cls._log_invalid_attachment(
                     role,
@@ -332,44 +322,80 @@ class OpenAIMessageBuilder:
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
 
-        if isinstance(image, MutableMapping):
-            candidate = image.get("file_id")
-            if isinstance(candidate, str) and candidate.strip():
-                file_id = candidate.strip()
-            else:
-                cls._log_invalid_image_part(
-                    "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다.",
-                    item,
-                )
-                raise ValueError(
-                    "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
-                )
-        elif image is not None:
+        if image is not None:
             cls._log_invalid_image_part(
-                "input_image 항목의 image 필드는 매핑이어야 합니다.",
+                "input_image 항목의 image 필드는 더 이상 지원되지 않습니다.",
                 item,
             )
-            raise ValueError("input_image 항목의 image 필드는 매핑이어야 합니다.")
+            raise ValueError("input_image 항목의 image 필드는 더 이상 지원되지 않습니다.")
+
+        if isinstance(image_id, str) and image_id.strip():
+            cls._log_invalid_image_part(
+                "input_image 항목의 image_id는 더 이상 지원되지 않습니다.",
+                item,
+            )
+            raise ValueError("input_image 항목의 image_id는 더 이상 지원되지 않습니다.")
 
         if image_url is not None:
             external_url = cls._normalize_external_image_url(
                 image_url, context=item
             )
-
-        if isinstance(image_id, str) and image_id.strip():
-            file_id = image_id.strip()
-
-        if file_id:
-            return {"type": "input_image", "image": {"file_id": file_id}}
-
-        if external_url:
             return {"type": "input_image", "image_url": external_url}
 
         cls._log_invalid_image_part(
-            "input_image 항목에는 유효한 이미지 참조가 필요합니다.",
+            "input_image 항목에는 image_url이 필요합니다.",
             item,
         )
-        raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
+        raise ValueError("input_image 항목에는 image_url이 필요합니다.")
+
+    @classmethod
+    def _normalize_external_image_url(
+        cls, value: object, *, context: MutableMapping[str, object] | None = None
+    ) -> str:
+        raw: object
+        if isinstance(value, MutableMapping):
+            raw = value.get("url")
+        else:
+            raw = value
+
+        if not isinstance(raw, str):
+            cls._log_invalid_image_part(
+                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다.",
+                context,
+            )
+            raise ValueError(
+                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
+            )
+
+        candidate = raw.strip()
+        if not candidate:
+            cls._log_invalid_image_part(
+                "input_image 항목의 image_url는 공백이 아닌 문자열이어야 합니다.",
+                context,
+            )
+            raise ValueError(
+                "input_image 항목의 image_url는 공백이 아닌 문자열이어야 합니다."
+            )
+
+        parsed = urlparse(candidate)
+        if parsed.scheme in {"http", "https", "data"}:
+            if cls._is_valid_external_url(candidate):
+                return candidate
+            cls._log_invalid_image_part(
+                "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다.",
+                context,
+            )
+            raise ValueError(
+                "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다."
+            )
+
+        cls._log_invalid_image_part(
+            "input_image 항목의 image_url는 지원되는 스킴을 사용해야 합니다.",
+            context,
+        )
+        raise ValueError(
+            "input_image 항목의 image_url는 지원되는 스킴을 사용해야 합니다."
+        )
 
     @classmethod
     def _normalize_external_image_url(
@@ -461,15 +487,6 @@ class OpenAIMessageBuilder:
                     }
                 )
                 continue
-
-            file_id = attachment.get("file_id")
-            if isinstance(file_id, str) and file_id.strip():
-                completion_parts.append(
-                    {
-                        "type": "input_image",
-                        "image": {"file_id": file_id},
-                    }
-                )
         return completion_parts
 
     @staticmethod

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import io
 import logging
+import mimetypes
 import os
 import re
 from dataclasses import dataclass
@@ -304,10 +306,21 @@ class AIGenerationService:
             descriptor_section = "\n".join(descriptor_lines)
 
             for context in contexts:
+                kind = self._attachment_kind(context.upload)
+                if kind == "image":
+                    image_url = self._image_data_url(context.upload)
+                    uploaded_attachments.append(
+                        {
+                            "kind": "image",
+                            "image_url": image_url,
+                        }
+                    )
+                    continue
+
                 file_id = await self._upload_openai_file(client, context)
                 uploaded_file_ids.append(file_id)
                 uploaded_attachments.append(
-                    {"file_id": file_id, "kind": self._attachment_kind(context.upload)}
+                    {"file_id": file_id, "kind": kind}
                 )
 
             user_prompt_parts = [
@@ -377,3 +390,17 @@ class AIGenerationService:
         finally:
             if uploaded_file_ids:
                 await self._cleanup_openai_files(client, uploaded_file_ids)
+
+    @staticmethod
+    def _image_data_url(upload: BufferedUpload) -> str:
+        media_type = (upload.content_type or "").split(";")[0].strip()
+        if not media_type:
+            guessed, _ = mimetypes.guess_type(upload.name)
+            if guessed:
+                media_type = guessed
+
+        if not media_type:
+            media_type = "application/octet-stream"
+
+        encoded = base64.b64encode(upload.content).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
