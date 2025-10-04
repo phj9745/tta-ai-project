@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from typing import Iterable, List, Literal, MutableMapping, Sequence, TypedDict
+from urllib.parse import urlparse
 
 Role = Literal["system", "user", "assistant", "tool"]
 
@@ -24,11 +25,24 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
-class InputImageContent(TypedDict):
-    """Response API image reference content."""
+class ImageObject(TypedDict):
+    """Image reference that points to an uploaded OpenAI file."""
+
+    file_id: str
+
+
+class InputImageURLContent(TypedDict):
+    """Response API image content that references an external URL."""
 
     type: _ImageContentType
     image_url: str
+
+
+class InputImageFileContent(TypedDict):
+    """Response API image content that references an uploaded file."""
+
+    type: _ImageContentType
+    image: ImageObject
 
 
 class TextContent(TypedDict):
@@ -38,7 +52,7 @@ class TextContent(TypedDict):
     text: str
 
 
-ContentPart = TextContent | InputFileContent | InputImageContent
+ContentPart = TextContent | InputFileContent | InputImageURLContent | InputImageFileContent
 
 
 class AttachmentMetadata(TypedDict):
@@ -213,12 +227,13 @@ class OpenAIMessageBuilder:
     @classmethod
     def _normalize_image_part(
         cls, item: MutableMapping[str, object]
-    ) -> InputImageContent:
+    ) -> InputImageURLContent | InputImageFileContent:
         image: object | None = item.get("image")
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
 
         file_id: str | None = None
+        external_url: str | None = None
 
         if isinstance(image, MutableMapping):
             candidate = image.get("file_id")
@@ -235,16 +250,22 @@ class OpenAIMessageBuilder:
             if isinstance(image_url, str):
                 file_id = cls._file_id_from_openai_url(image_url)
                 if file_id is None:
-                    raise ValueError(
-                        "input_image 항목의 image_url는 openai://file/ 형식의 문자열이어야 합니다."
-                    )
+                    if cls._is_valid_external_url(image_url):
+                        external_url = image_url
+                    else:
+                        raise ValueError(
+                            "input_image 항목의 image_url는 유효한 URL이거나 openai://file/ 형식이어야 합니다."
+                        )
             elif isinstance(image_url, MutableMapping):
                 url_value = image_url.get("url")
                 file_id = cls._file_id_from_openai_url(url_value)
                 if file_id is None:
-                    raise ValueError(
-                        "input_image 항목의 image_url.url은 openai://file/ 형식이어야 합니다."
-                    )
+                    if isinstance(url_value, str) and cls._is_valid_external_url(url_value):
+                        external_url = url_value
+                    else:
+                        raise ValueError(
+                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://file/ 형식이어야 합니다."
+                        )
             elif image_url is not None:
                 raise ValueError(
                     "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
@@ -253,13 +274,28 @@ class OpenAIMessageBuilder:
         if file_id is None and isinstance(image_id, str) and image_id.strip():
             file_id = image_id.strip()
 
-        if not isinstance(file_id, str) or not file_id.strip():
-            raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
+        if isinstance(file_id, str) and file_id.strip():
+            return {
+                "type": "input_image",
+                "image": {"file_id": file_id},
+            }
 
-        return {
-            "type": "input_image",
-            "image_url": f"openai://file/{file_id}",
-        }
+        if isinstance(external_url, str) and external_url.strip():
+            return {
+                "type": "input_image",
+                "image_url": external_url,
+            }
+
+        raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
+
+    @staticmethod
+    def _is_valid_external_url(value: str) -> bool:
+        parsed = urlparse(value)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return True
+        if parsed.scheme == "data" and value.count(":") >= 1:
+            return True
+        return False
 
     @staticmethod
     def attachments_to_chat_completions(
