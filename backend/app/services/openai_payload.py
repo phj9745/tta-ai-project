@@ -26,6 +26,19 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
+class ImageFileReference(TypedDict):
+    """Response API image reference backed by an uploaded file."""
+
+    file_id: str
+
+
+class InputImageFileContent(TypedDict):
+    """Response API image content that references an uploaded file."""
+
+    type: _ImageContentType
+    image: ImageFileReference
+
+
 class InputImageURLContent(TypedDict):
     """Response API image content that references an external URL."""
 
@@ -40,7 +53,9 @@ class TextContent(TypedDict):
     text: str
 
 
-ContentPart = TextContent | InputFileContent | InputImageURLContent
+ContentPart = (
+    TextContent | InputFileContent | InputImageURLContent | InputImageFileContent
+)
 
 
 class AttachmentMetadata(TypedDict, total=False):
@@ -166,7 +181,7 @@ class OpenAIMessageBuilder:
                     parts.append(
                         {
                             "type": "input_image",
-                            "image_url": f"openai://file-{file_id}",
+                            "image": {"file_id": file_id},
                         }
                     )
                     continue
@@ -276,7 +291,7 @@ class OpenAIMessageBuilder:
     @classmethod
     def _normalize_image_part(
         cls, item: MutableMapping[str, object]
-    ) -> InputImageURLContent:
+    ) -> InputImageURLContent | InputImageFileContent:
         image: object | None = item.get("image")
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
@@ -295,35 +310,44 @@ class OpenAIMessageBuilder:
         elif image is not None:
             raise ValueError("input_image 항목의 image 필드는 매핑이어야 합니다.")
 
-        normalized_url: str | None = None
-        if isinstance(image_url, str):
-            normalized_url = cls._normalize_image_url_value(image_url)
-        elif isinstance(image_url, MutableMapping):
-            normalized_url = cls._normalize_image_url_value(image_url.get("url"))
-        elif image_url is not None:
-            raise ValueError(
-                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
-            )
-
-        if normalized_url:
-            return {"type": "input_image", "image_url": normalized_url}
+        if image_url is not None:
+            normalized_url, url_file_id = cls._normalize_image_url_value(image_url)
+            if normalized_url:
+                external_url = normalized_url
+            if url_file_id:
+                file_id = url_file_id
 
         if isinstance(image_id, str) and image_id.strip():
-            return {
-                "type": "input_image",
-                "image_url": f"openai://file-{image_id.strip()}",
-            }
+            file_id = image_id.strip()
+
+        if file_id:
+            return {"type": "input_image", "image": {"file_id": file_id}}
+
+        if external_url:
+            return {"type": "input_image", "image_url": external_url}
 
         raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
 
     @classmethod
-    def _normalize_image_url_value(cls, value: object) -> str | None:
-        if not isinstance(value, str):
-            return None
+    def _normalize_image_url_value(
+        cls, value: object
+    ) -> tuple[str | None, str | None]:
+        raw: object
+        if isinstance(value, MutableMapping):
+            raw = value.get("url")
+        else:
+            raw = value
 
-        candidate = value.strip()
+        if not isinstance(raw, str):
+            raise ValueError(
+                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
+            )
+
+        candidate = raw.strip()
         if not candidate:
-            return None
+            raise ValueError(
+                "input_image 항목의 image_url는 공백이 아닌 문자열이어야 합니다."
+            )
 
         parsed = urlparse(candidate)
         if parsed.scheme == "openai":
@@ -332,11 +356,11 @@ class OpenAIMessageBuilder:
                 raise ValueError(
                     "input_image 항목의 image_url는 openai://file-{file_id} 형식을 따라야 합니다."
                 )
-            return f"openai://file-{file_id}"
+            return (None, file_id)
 
         if parsed.scheme in {"http", "https", "data"}:
             if cls._is_valid_external_url(candidate):
-                return candidate
+                return (candidate, None)
             raise ValueError(
                 "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다."
             )
@@ -367,11 +391,22 @@ class OpenAIMessageBuilder:
                 continue
 
             image_url = attachment.get("image_url")
+            if isinstance(image_url, MutableMapping):
+                raw_url = image_url.get("url")
+                if isinstance(raw_url, str) and raw_url.strip():
+                    completion_parts.append(
+                        {
+                            "type": "input_image",
+                            "image_url": {"url": raw_url.strip()},
+                        }
+                    )
+                    continue
+
             if isinstance(image_url, str) and image_url.strip():
                 completion_parts.append(
                     {
-                        "type": "image_url",
-                        "image_url": image_url,
+                        "type": "input_image",
+                        "image_url": {"url": image_url},
                     }
                 )
                 continue
@@ -380,8 +415,8 @@ class OpenAIMessageBuilder:
             if isinstance(file_id, str) and file_id.strip():
                 completion_parts.append(
                     {
-                        "type": "image_url",
-                        "image_url": f"openai://file-{file_id}",
+                        "type": "input_image",
+                        "image": {"file_id": file_id},
                     }
                 )
         return completion_parts

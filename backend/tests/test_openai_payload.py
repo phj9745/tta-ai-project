@@ -37,12 +37,55 @@ def test_text_message_appends_image_parts_from_file_id() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image_url": "openai://file-file-img-1"}
+        {"type": "input_image", "image": {"file_id": "file-img-1"}}
     ]
 
     normalized = OpenAIMessageBuilder.normalize_messages([message])
     assert normalized[0]["content"][1:] == [
-        {"type": "input_image", "image_url": "openai://file-file-img-1"}
+        {"type": "input_image", "image": {"file_id": "file-img-1"}}
+    ]
+
+
+def test_text_message_appends_image_parts_from_image_url() -> None:
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "look at this",
+        attachments=[
+            {
+                "image_url": "https://example.com/external.png",
+                "kind": "image",
+            }
+        ],
+    )
+
+    assert message["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/external.png",
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages([message])
+    assert normalized[0]["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/external.png",
+        }
+    ]
+
+
+def test_text_message_accepts_image_url_alias() -> None:
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "alias",
+        attachments=[{"url": "https://example.com/from-alias", "kind": "image"}],
+    )
+
+    assert message["content"][1:] == [
+        {
+            "type": "input_image",
+            "image_url": "https://example.com/from-alias",
+        }
     ]
 
 
@@ -95,7 +138,23 @@ def test_attachments_to_chat_completions_converts_images() -> None:
     completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
 
     assert completion_parts == [
-        {"type": "image_url", "image_url": "openai://file-file-img-2"}
+        {"type": "input_image", "image": {"file_id": "file-img-2"}}
+    ]
+
+
+def test_attachments_to_chat_completions_prefers_image_url() -> None:
+    attachments = [
+        {
+            "file_id": "file-img-3",
+            "image_url": "data:image/png;base64,abc123",
+            "kind": "image",
+        }
+    ]
+
+    completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
+
+    assert completion_parts == [
+        {"type": "input_image", "image_url": {"url": "data:image/png;base64,abc123"}}
     ]
 
 
@@ -157,7 +216,7 @@ def test_normalize_messages_converts_legacy_image_id() -> None:
             "role": "user",
             "content": [
                 {"type": "input_text", "text": "check"},
-                {"type": "input_image", "image_url": "openai://file-file-img-legacy"},
+                {"type": "input_image", "image": {"file_id": "file-img-legacy"}},
             ],
         }
     ]
@@ -189,7 +248,7 @@ def test_normalize_messages_accepts_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": "openai://file-file-img-direct",
+                    "image": {"file_id": "file-img-direct"},
                 },
             ],
         }
@@ -215,10 +274,7 @@ def test_normalize_messages_converts_image_url_string() -> None:
         {
             "role": "user",
             "content": [
-                {
-                    "type": "input_image",
-                    "image_url": "openai://file-file-img-from-url",
-                },
+                {"type": "input_image", "image": {"file_id": "file-img-from-url"}},
             ],
         }
     ]
