@@ -219,6 +219,23 @@ def test_normalize_messages_preserves_external_image_url() -> None:
         }
     ]
 
+    with pytest.raises(ValueError):
+        OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+
+def test_normalize_messages_preserves_external_image_url() -> None:
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": "https://example.com/image.png",
+                }
+            ],
+        }
+    ]
+
     normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
 
     assert normalized == [
