@@ -268,3 +268,32 @@ def test_normalize_messages_preserves_data_image_url() -> None:
             ],
         }
     ]
+
+
+def test_normalize_messages_preserves_data_image_url() -> None:
+    data_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA"
+    raw_messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": data_url,
+                }
+            ],
+        }
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages(raw_messages)
+
+    assert normalized == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": data_url,
+                },
+            ],
+        }
+    ]
