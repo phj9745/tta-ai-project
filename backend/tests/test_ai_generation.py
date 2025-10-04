@@ -119,7 +119,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     ]
     assert file_parts == [
         {"type": "input_file", "file_id": "file-1"},
-        {"type": "input_image", "image_url": "openai://file/file-2"},
+        {"type": "input_image", "image_url": "openai://file-file-2"},
     ]
 
     # The text portions should not include the raw upload bodies.
@@ -148,7 +148,7 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
             message["content"].append(  # type: ignore[index]
                 {
                     "type": "input_image",
-                    "image_url": {"url": "openai://file/file-extra"},
+                    "image_url": {"url": "openai://file-file-extra"},
                 }
             )
         return message
@@ -179,6 +179,6 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
     ]
     assert {
         "type": "input_image",
-        "image_url": "openai://file/file-extra",
+        "image_url": "openai://file-file-extra",
     } in image_parts
 
