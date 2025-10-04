@@ -6,7 +6,8 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Literal, MutableMapping, Sequence, TypedDict
+from typing import Iterable, List, Literal, MutableMapping, Sequence, TypedDict, cast
+from typing import NotRequired, Required
 from urllib.parse import urlparse
 
 Role = Literal["system", "user", "assistant", "tool"]
@@ -42,11 +43,12 @@ class TextContent(TypedDict):
 ContentPart = TextContent | InputFileContent | InputImageURLContent
 
 
-class AttachmentMetadata(TypedDict):
+class AttachmentMetadata(TypedDict, total=False):
     """Metadata describing how an uploaded asset should be attached."""
 
-    file_id: str
-    kind: _AttachmentKind
+    kind: Required[_AttachmentKind]
+    file_id: NotRequired[str]
+    image_url: NotRequired[str]
 
 
 class Message(TypedDict):
@@ -91,14 +93,46 @@ class OpenAIMessageBuilder:
             for attachment in attachments:
                 if not isinstance(attachment, MutableMapping):
                     raise ValueError("attachment 항목은 매핑이어야 합니다.")
-                file_id = attachment.get("file_id")
                 kind = attachment.get("kind")
-                if not isinstance(file_id, str) or not file_id.strip():
-                    raise ValueError("attachment file_id는 공백이 아닌 문자열이어야 합니다.")
                 if kind not in {"file", "image"}:
                     raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
+
+                normalized_attachment: MutableMapping[str, object] = {"kind": kind}
+
+                raw_file_id = attachment.get("file_id")
+                if raw_file_id is not None:
+                    if not isinstance(raw_file_id, str) or not raw_file_id.strip():
+                        raise ValueError(
+                            "attachment file_id는 공백이 아닌 문자열이어야 합니다."
+                        )
+                    normalized_attachment["file_id"] = raw_file_id.strip()
+
+                if kind == "file" and "file_id" not in normalized_attachment:
+                    raise ValueError(
+                        "file 첨부에는 file_id가 필요합니다."
+                    )
+
+                if kind == "image":
+                    raw_image_url = attachment.get("image_url")
+                    if raw_image_url is None and "url" in attachment:
+                        raw_image_url = attachment.get("url")
+                    if raw_image_url is not None:
+                        if not isinstance(raw_image_url, str) or not raw_image_url.strip():
+                            raise ValueError(
+                                "image 첨부의 image_url은 공백이 아닌 문자열이어야 합니다."
+                            )
+                        normalized_attachment["image_url"] = raw_image_url.strip()
+
+                    if (
+                        "image_url" not in normalized_attachment
+                        and "file_id" not in normalized_attachment
+                    ):
+                        raise ValueError(
+                            "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다."
+                        )
+
                 normalized_attachments.append(
-                    {"file_id": file_id, "kind": kind}  # type: ignore[typeddict-item]
+                    cast(AttachmentMetadata, normalized_attachment)
                 )
 
         if file_ids:
@@ -110,19 +144,35 @@ class OpenAIMessageBuilder:
                 )
 
         for attachment in normalized_attachments:
-            file_id = attachment["file_id"]
-            if not isinstance(file_id, str) or not file_id.strip():
-                raise ValueError("attachment file_id는 공백이 아닌 문자열이어야 합니다.")
-
             kind = attachment["kind"]
             if kind == "file":
+                file_id = attachment.get("file_id")
+                if not isinstance(file_id, str) or not file_id.strip():
+                    raise ValueError("file 첨부에는 유효한 file_id가 필요합니다.")
                 parts.append({"type": "input_file", "file_id": file_id})
             elif kind == "image":
-                parts.append(
-                    {
-                        "type": "input_image",
-                        "image_url": f"openai://file-{file_id}",
-                    }
+                image_url = attachment.get("image_url")
+                if isinstance(image_url, str) and image_url.strip():
+                    parts.append(
+                        {
+                            "type": "input_image",
+                            "image_url": image_url,
+                        }
+                    )
+                    continue
+
+                file_id = attachment.get("file_id")
+                if isinstance(file_id, str) and file_id.strip():
+                    parts.append(
+                        {
+                            "type": "input_image",
+                            "image_url": f"openai://file-{file_id}",
+                        }
+                    )
+                    continue
+
+                raise ValueError(
+                    "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다."
                 )
             else:  # pragma: no cover - typing guard
                 raise ValueError(f"지원하지 않는 attachment kind입니다: {kind!r}")
@@ -231,61 +281,69 @@ class OpenAIMessageBuilder:
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
 
-        file_id: str | None = None
-        external_url: str | None = None
-
         if isinstance(image, MutableMapping):
             candidate = image.get("file_id")
             if isinstance(candidate, str) and candidate.strip():
-                file_id = candidate.strip()
-            else:
-                raise ValueError(
-                    "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
-                )
+                normalized_file_id = candidate.strip()
+                return {
+                    "type": "input_image",
+                    "image_url": f"openai://file-{normalized_file_id}",
+                }
+            raise ValueError(
+                "input_image 항목의 image.file_id는 공백이 아닌 문자열이어야 합니다."
+            )
         elif image is not None:
             raise ValueError("input_image 항목의 image 필드는 매핑이어야 합니다.")
 
-        if file_id is None:
-            if isinstance(image_url, str):
-                file_id = cls._file_id_from_openai_url(image_url)
-                if file_id is None:
-                    if cls._is_valid_external_url(image_url):
-                        external_url = image_url
-                    else:
-                        raise ValueError(
-                            "input_image 항목의 image_url는 유효한 URL이거나 openai://file-{file_id} 형식이어야 합니다."
-                        )
-            elif isinstance(image_url, MutableMapping):
-                url_value = image_url.get("url")
-                file_id = cls._file_id_from_openai_url(url_value)
-                if file_id is None:
-                    if isinstance(url_value, str) and cls._is_valid_external_url(url_value):
-                        external_url = url_value
-                    else:
-                        raise ValueError(
-                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://file-{file_id} 형식이어야 합니다."
-                        )
-            elif image_url is not None:
-                raise ValueError(
-                    "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
-                )
+        normalized_url: str | None = None
+        if isinstance(image_url, str):
+            normalized_url = cls._normalize_image_url_value(image_url)
+        elif isinstance(image_url, MutableMapping):
+            normalized_url = cls._normalize_image_url_value(image_url.get("url"))
+        elif image_url is not None:
+            raise ValueError(
+                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
+            )
 
-        if file_id is None and isinstance(image_id, str) and image_id.strip():
-            file_id = image_id.strip()
+        if normalized_url:
+            return {"type": "input_image", "image_url": normalized_url}
 
-        if isinstance(file_id, str) and file_id.strip():
+        if isinstance(image_id, str) and image_id.strip():
             return {
                 "type": "input_image",
-                "image_url": f"openai://file-{file_id}",
-            }
-
-        if isinstance(external_url, str) and external_url.strip():
-            return {
-                "type": "input_image",
-                "image_url": external_url,
+                "image_url": f"openai://file-{image_id.strip()}",
             }
 
         raise ValueError("input_image 항목에는 유효한 이미지 참조가 필요합니다.")
+
+    @classmethod
+    def _normalize_image_url_value(cls, value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+
+        candidate = value.strip()
+        if not candidate:
+            return None
+
+        parsed = urlparse(candidate)
+        if parsed.scheme == "openai":
+            file_id = cls._file_id_from_openai_url(candidate)
+            if file_id is None:
+                raise ValueError(
+                    "input_image 항목의 image_url는 openai://file-{file_id} 형식을 따라야 합니다."
+                )
+            return f"openai://file-{file_id}"
+
+        if parsed.scheme in {"http", "https", "data"}:
+            if cls._is_valid_external_url(candidate):
+                return candidate
+            raise ValueError(
+                "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다."
+            )
+
+        raise ValueError(
+            "input_image 항목의 image_url는 지원되는 스킴을 사용해야 합니다."
+        )
 
     @staticmethod
     def _is_valid_external_url(value: str) -> bool:
@@ -304,9 +362,22 @@ class OpenAIMessageBuilder:
 
         completion_parts: List[MutableMapping[str, object]] = []
         for attachment in attachments:
-            kind = attachment["kind"]
-            file_id = attachment["file_id"]
-            if kind == "image":
+            kind = attachment.get("kind")
+            if kind != "image":
+                continue
+
+            image_url = attachment.get("image_url")
+            if isinstance(image_url, str) and image_url.strip():
+                completion_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": image_url,
+                    }
+                )
+                continue
+
+            file_id = attachment.get("file_id")
+            if isinstance(file_id, str) and file_id.strip():
                 completion_parts.append(
                     {
                         "type": "image_url",
