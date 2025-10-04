@@ -332,9 +332,6 @@ class OpenAIMessageBuilder:
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")
 
-        file_id: str | None = None
-        external_url: str | None = None
-
         if isinstance(image, MutableMapping):
             candidate = image.get("file_id")
             if isinstance(candidate, str) and candidate.strip():
