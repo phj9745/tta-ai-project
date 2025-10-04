@@ -37,7 +37,7 @@ def test_text_message_appends_image_parts() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image": {"file_id": "img-1"}}
+        {"type": "input_image", "image_url": {"url": "openai://file/img-1"}}
     ]
 
 
