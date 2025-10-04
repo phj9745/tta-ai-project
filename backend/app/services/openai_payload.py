@@ -121,7 +121,7 @@ class OpenAIMessageBuilder:
                 parts.append(
                     {
                         "type": "input_image",
-                        "image_url": f"openai://{file_id}",
+                        "image_url": f"openai://file-{file_id}",
                     }
                 )
             else:  # pragma: no cover - typing guard
@@ -208,14 +208,20 @@ class OpenAIMessageBuilder:
         if not url.startswith("openai://"):
             return None
         remainder = url[len("openai://") :].strip()
-        if not remainder:
+        if not remainder.startswith("file-"):
             return None
 
-        if remainder.startswith("file-file-"):
-            remainder = remainder[len("file-") :]
+        file_id_candidate = remainder[len("file-") :]
+        if not file_id_candidate:
+            return None
 
-        file_id = remainder
-        return file_id or None
+        if file_id_candidate.startswith("file-"):
+            legacy_remainder = file_id_candidate[len("file-") :]
+            if not legacy_remainder:
+                return None
+            file_id_candidate = f"file-{legacy_remainder}"
+
+        return file_id_candidate
 
     @classmethod
     def _normalize_image_part(
@@ -247,7 +253,7 @@ class OpenAIMessageBuilder:
                         external_url = image_url
                     else:
                         raise ValueError(
-                            "input_image 항목의 image_url는 유효한 URL이거나 openai://{file_id} 형식이어야 합니다."
+                            "input_image 항목의 image_url는 유효한 URL이거나 openai://file-{file_id} 형식이어야 합니다."
                         )
             elif isinstance(image_url, MutableMapping):
                 url_value = image_url.get("url")
@@ -257,7 +263,7 @@ class OpenAIMessageBuilder:
                         external_url = url_value
                     else:
                         raise ValueError(
-                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://{file_id} 형식이어야 합니다."
+                            "input_image 항목의 image_url.url은 유효한 URL이거나 openai://file-{file_id} 형식이어야 합니다."
                         )
             elif image_url is not None:
                 raise ValueError(
@@ -270,7 +276,7 @@ class OpenAIMessageBuilder:
         if isinstance(file_id, str) and file_id.strip():
             return {
                 "type": "input_image",
-                "image_url": f"openai://{file_id}",
+                "image_url": f"openai://file-{file_id}",
             }
 
         if isinstance(external_url, str) and external_url.strip():
@@ -304,7 +310,7 @@ class OpenAIMessageBuilder:
                 completion_parts.append(
                     {
                         "type": "image_url",
-                        "image_url": f"openai://{file_id}",
+                        "image_url": f"openai://file-{file_id}",
                     }
                 )
         return completion_parts
