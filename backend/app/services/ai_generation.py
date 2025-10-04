@@ -335,6 +335,8 @@ class AIGenerationService:
                 ),
             ]
 
+            normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+
             logger.info(
                 "AI generation prompt assembled",
                 extra={
@@ -349,7 +351,7 @@ class AIGenerationService:
                 response = await asyncio.to_thread(
                     client.responses.create,
                     model=self._settings.openai_model,
-                    input=messages,
+                    input=normalized_messages,
                     temperature=0.2,
                     max_output_tokens=1500,
                 )
