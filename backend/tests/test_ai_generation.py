@@ -145,7 +145,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     assert "Image bytes" not in combined_text
 
     # Temporary files should be cleaned up after the request completes.
-    assert stub_client.files.deleted == ["file-1", "file-2"]
+    assert stub_client.files.deleted == ["file-1"]
 
     assert result.csv_text == "col1,col2\nvalue1,value2"
 

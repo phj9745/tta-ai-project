@@ -27,6 +27,19 @@ class InputFileContent(TypedDict):
     file_id: str
 
 
+class ImageFileReference(TypedDict):
+    """Response API image reference backed by an uploaded file."""
+
+    file_id: str
+
+
+class InputImageFileContent(TypedDict):
+    """Response API image content that references an uploaded file."""
+
+    type: _ImageContentType
+    image: ImageFileReference
+
+
 class InputImageURLContent(TypedDict):
     """Response API image content that references an external URL."""
 
@@ -41,7 +54,9 @@ class TextContent(TypedDict):
     text: str
 
 
-ContentPart = TextContent | InputFileContent | InputImageURLContent
+ContentPart = (
+    TextContent | InputFileContent | InputImageURLContent | InputImageFileContent
+)
 
 
 logger = logging.getLogger(__name__)
@@ -300,7 +315,7 @@ class OpenAIMessageBuilder:
     @classmethod
     def _normalize_image_part(
         cls, item: MutableMapping[str, object]
-    ) -> InputImageURLContent:
+    ) -> InputImageURLContent | InputImageFileContent:
         image: object | None = item.get("image")
         image_url: object | None = item.get("image_url")
         image_id: object | None = item.get("image_id")

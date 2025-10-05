@@ -179,7 +179,7 @@ def test_normalize_messages_rejects_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image": {"file_id": "file-img-direct"},
+                    "image_url": "openai://file-file-img-from-url",
                 }
             ],
         }
