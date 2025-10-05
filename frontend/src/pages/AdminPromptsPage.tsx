@@ -76,45 +76,13 @@ function isPromptCategory(value: string): value is PromptCategory {
   )
 }
 
-function cloneSection(section: PromptSection): PromptSection {
-  return { ...section }
-}
-
-function cloneScaffolding(scaffolding: PromptScaffolding): PromptScaffolding {
-  return { ...scaffolding }
-}
-
-function cloneBuiltinContext(context: PromptBuiltinContext): PromptBuiltinContext {
-  return { ...context }
-}
-
-function cloneModelParameters(parameters: PromptModelParameters): PromptModelParameters {
-  return { ...parameters }
-}
-
-function cloneSection(section: PromptSection): PromptSection {
-  return { ...section }
-}
-
-function cloneScaffolding(scaffolding: PromptScaffolding): PromptScaffolding {
-  return { ...scaffolding }
-}
-
-function cloneBuiltinContext(context: BuiltinContext): BuiltinContext {
-  return { ...context }
-}
-
-function cloneModelParameters(parameters: ModelParameters): ModelParameters {
-  return { ...parameters }
-}
-
 function cloneConfig(config: PromptConfig): PromptConfig {
   return {
     ...config,
-    userPromptSections: config.userPromptSections.map(cloneSection),
-    scaffolding: cloneScaffolding(config.scaffolding),
-    builtinContexts: config.builtinContexts.map(cloneBuiltinContext),
-    modelParameters: cloneModelParameters(config.modelParameters),
+    userPromptSections: config.userPromptSections.map((section) => ({ ...section })),
+    scaffolding: { ...config.scaffolding },
+    builtinContexts: config.builtinContexts.map((context) => ({ ...context })),
+    modelParameters: { ...config.modelParameters },
   }
 }
 
