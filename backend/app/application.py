@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .container import Container
-from .routes import auth_router, drive_router
+from .routes import auth_router, drive_router, prompt_router
 
 
 def create_app() -> FastAPI:
@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(drive_router)
+    app.include_router(prompt_router)
 
     @app.get("/")
     def read_root() -> dict[str, str]:
