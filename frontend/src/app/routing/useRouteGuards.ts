@@ -6,9 +6,15 @@ import { navigate } from '../../navigation'
 const PROJECT_PATH_PATTERN = /^\/projects\/(.+)$/
 const PROJECTS_ROOT_PATH = '/projects'
 const LEGACY_DRIVE_PATH = '/drive'
+const ADMIN_PROMPTS_PATH = '/admin/prompts'
 
 function isKnownPathname(pathname: string): boolean {
-  if (pathname === '/' || pathname === PROJECTS_ROOT_PATH || pathname === LEGACY_DRIVE_PATH) {
+  if (
+    pathname === '/' ||
+    pathname === PROJECTS_ROOT_PATH ||
+    pathname === LEGACY_DRIVE_PATH ||
+    pathname === ADMIN_PROMPTS_PATH
+  ) {
     return true
   }
   return PROJECT_PATH_PATTERN.test(pathname)
