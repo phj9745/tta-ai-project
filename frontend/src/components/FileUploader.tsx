@@ -54,6 +54,15 @@ export function FileUploader({
 
   const activeTypes = allowedTypes.length > 0 ? allowedTypes : ALL_FILE_TYPES
 
+  const maxFileCount =
+    Number.isFinite(maxFiles) && maxFiles !== undefined ? Math.max(0, Math.floor(maxFiles)) : undefined
+  const shouldHideForFilled =
+    hideDropzoneWhenFilled && (maxFileCount !== undefined ? files.length >= maxFileCount : files.length > 0)
+  const atCapacity = maxFileCount !== undefined && files.length >= maxFileCount
+  const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
+  const shouldRenderDropzone = !atCapacity && !shouldHideForFilled
+  const isGridVariant = variant === 'grid'
+
   const acceptValue = useMemo(() => {
     return activeTypes.flatMap((type) => FILE_TYPE_OPTIONS[type].accept).join(',')
   }, [activeTypes])
@@ -62,8 +71,35 @@ export function FileUploader({
     return activeTypes.map((type) => FILE_TYPE_OPTIONS[type].label).join(', ')
   }, [activeTypes])
 
+  const previewItems = useMemo(() => {
+    return files.map((file) => ({
+      key: createFileKey(file),
+      url: isPreviewableImage(file) ? URL.createObjectURL(file) : null,
+    }))
+  }, [files])
+
+  const previewMap = useMemo(() => {
+    const map = new Map<string, string>()
+    previewItems.forEach((item) => {
+      if (item.url) {
+        map.set(item.key, item.url)
+      }
+    })
+    return map
+  }, [previewItems])
+
+  useEffect(() => {
+    return () => {
+      previewItems.forEach((item) => {
+        if (item.url) {
+          URL.revokeObjectURL(item.url)
+        }
+      })
+    }
+  }, [previewItems])
+
   const handleDragOver = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -74,7 +110,7 @@ export function FileUploader({
   }
 
   const handleDragLeave = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -86,6 +122,11 @@ export function FileUploader({
 
   const addFiles = (incoming: File[]) => {
     if (disabled) {
+      return
+    }
+
+    if (atCapacity) {
+      setError('업로드 가능한 파일 수를 모두 채웠습니다.')
       return
     }
 
@@ -121,6 +162,7 @@ export function FileUploader({
       }
 
       allowed.push(file)
+      remaining -= 1
     })
 
     if (rejected.length > 0) {
@@ -139,7 +181,7 @@ export function FileUploader({
   }
 
   const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       return
     }
 
@@ -150,7 +192,7 @@ export function FileUploader({
   }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>) => {
-    if (disabled) {
+    if (dropzoneDisabled) {
       event.target.value = ''
       return
     }
