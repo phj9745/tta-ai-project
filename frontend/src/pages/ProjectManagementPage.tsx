@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { FileUploader } from '../components/FileUploader'
-import {
-  ALL_FILE_TYPES,
-  type FileType,
-} from '../components/fileUploaderTypes'
+import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -14,6 +11,23 @@ type MenuItemId =
   | 'defect-report'
   | 'security-report'
   | 'performance-report'
+
+interface RequiredDocument {
+  id: string
+  label: string
+  allowedTypes?: FileType[]
+}
+
+interface AdditionalFileEntry {
+  id: string
+  file: File
+  description: string
+}
+
+type FileMetadataEntry =
+  | { role: 'required'; id: string; label: string }
+  | { role: 'additional'; description: string }
+
 interface MenuItemContent {
   id: MenuItemId
   label: string
@@ -23,24 +37,35 @@ interface MenuItemContent {
   helper: string
   buttonLabel: string
   allowedTypes: FileType[]
-  uploaderVariant?: 'list' | 'grid'
-  maxFiles?: number
-  hideDropzoneWhenFilled?: boolean
+  requiredDocuments?: RequiredDocument[]
 }
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 
+const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
+
 interface ItemState {
   files: File[]
+  requiredFiles: Record<string, File[]>
+  additionalFiles: AdditionalFileEntry[]
   status: GenerationStatus
   errorMessage: string | null
   downloadUrl: string | null
   downloadName: string | null
 }
 
-function createItemState(): ItemState {
+function createItemState(item?: MenuItemContent): ItemState {
+  const requiredFiles: Record<string, File[]> = {}
+  if (item?.requiredDocuments) {
+    item.requiredDocuments.forEach((doc) => {
+      requiredFiles[doc.id] = []
+    })
+  }
+
   return {
     files: [],
+    requiredFiles,
+    additionalFiles: [],
     status: 'idle',
     errorMessage: null,
     downloadUrl: null,
@@ -49,8 +74,8 @@ function createItemState(): ItemState {
 }
 
 function createInitialItemStates(): Record<MenuItemId, ItemState> {
-  return MENU_ITEM_IDS.reduce((acc, id) => {
-    acc[id as MenuItemId] = createItemState()
+  return MENU_ITEMS.reduce((acc, item) => {
+    acc[item.id] = createItemState(item)
     return acc
   }, {} as Record<MenuItemId, ItemState>)
 }
@@ -92,8 +117,23 @@ const MENU_ITEMS: MenuItemContent[] = [
     helper: 'PDF, TXT, CSV 등 요구사항 관련 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '기능리스트 생성하기',
     allowedTypes: ALL_FILE_TYPES,
-    maxFiles: 1,
-    hideDropzoneWhenFilled: true,
+    requiredDocuments: [
+      {
+        id: 'user-manual',
+        label: '사용자 매뉴얼',
+        allowedTypes: ['pdf', 'docx', 'xlsx'],
+      },
+      {
+        id: 'configuration',
+        label: '형상 이미지',
+        allowedTypes: ['png', 'jpg'],
+      },
+      {
+        id: 'vendor-feature-list',
+        label: '기능리스트',
+        allowedTypes: ['pdf', 'docx', 'xlsx'],
+      },
+    ],
   },
   {
     id: 'testcase-generation',
@@ -105,8 +145,23 @@ const MENU_ITEMS: MenuItemContent[] = [
     helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
-    maxFiles: 1,
-    hideDropzoneWhenFilled: true,
+    requiredDocuments: [
+      {
+        id: 'user-manual',
+        label: '사용자 매뉴얼',
+        allowedTypes: ['pdf', 'docx', 'xlsx'],
+      },
+      {
+        id: 'configuration',
+        label: '형상 이미지',
+        allowedTypes: ['png', 'jpg'],
+      },
+      {
+        id: 'vendor-feature-list',
+        label: '기능리스트',
+        allowedTypes: ['pdf', 'docx', 'xlsx'],
+      },
+    ],
   },
   {
     id: 'defect-report',
@@ -175,10 +230,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, string | null>,
   )
 
+  const menuById = useMemo(() => {
+    return MENU_ITEMS.reduce((acc, item) => {
+      acc[item.id] = item
+      return acc
+    }, {} as Record<MenuItemId, MenuItemContent>)
+  }, [])
+  const additionalIdRef = useRef(0)
+
+  const releaseDownloadUrl = useCallback((id: MenuItemId, url: string | null) => {
+    if (url) {
+      URL.revokeObjectURL(url)
+    }
+    downloadUrlsRef.current[id] = null
+  }, [])
+
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
 
-  const activeState = itemStates[activeContent.id] ?? createItemState()
-
+  const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
+  const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -192,8 +262,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
 
         if (current.downloadUrl) {
-          URL.revokeObjectURL(current.downloadUrl)
-          downloadUrlsRef.current[id] = null
+          releaseDownloadUrl(id, current.downloadUrl)
         }
 
         return {
@@ -209,17 +278,204 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
       })
     },
+    [releaseDownloadUrl],
+  )
+
+  const handleSetRequiredFiles = useCallback(
+    (id: MenuItemId, docId: string, nextFiles: File[]) => {
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        if (!(docId in current.requiredFiles)) {
+          return prev
+        }
+
+        if (current.downloadUrl) {
+          releaseDownloadUrl(id, current.downloadUrl)
+        }
+
+        return {
+          ...prev,
+          [id]: {
+            ...current,
+            requiredFiles: {
+              ...current.requiredFiles,
+              [docId]: nextFiles,
+            },
+            status: 'idle',
+            errorMessage: null,
+            downloadUrl: null,
+            downloadName: null,
+          },
+        }
+      })
+    },
+    [releaseDownloadUrl],
+  )
+
+  const handleAddAdditionalFiles = useCallback(
+    (id: MenuItemId, selectedFiles: File[]) => {
+      if (selectedFiles.length === 0) {
+        return
+      }
+
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        if (current.downloadUrl) {
+          releaseDownloadUrl(id, current.downloadUrl)
+        }
+
+        const entries = selectedFiles.map((file) => {
+          additionalIdRef.current += 1
+          return {
+            id: `${id}-extra-${additionalIdRef.current}`,
+            file,
+            description: '',
+          }
+        })
+
+        return {
+          ...prev,
+          [id]: {
+            ...current,
+            additionalFiles: [...current.additionalFiles, ...entries],
+            status: 'idle',
+            errorMessage: null,
+            downloadUrl: null,
+            downloadName: null,
+          },
+        }
+      })
+    },
+    [releaseDownloadUrl],
+  )
+
+  const handleUpdateAdditionalDescription = useCallback(
+    (id: MenuItemId, entryId: string, description: string) => {
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        const nextEntries = current.additionalFiles.map((entry) =>
+          entry.id === entryId ? { ...entry, description } : entry,
+        )
+
+        return {
+          ...prev,
+          [id]: {
+            ...current,
+            additionalFiles: nextEntries,
+          },
+        }
+      })
+    },
     [],
+  )
+
+  const handleRemoveAdditionalFile = useCallback(
+    (id: MenuItemId, entryId: string) => {
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        const nextEntries = current.additionalFiles.filter((entry) => entry.id !== entryId)
+        if (nextEntries.length === current.additionalFiles.length) {
+          return prev
+        }
+
+        if (current.downloadUrl) {
+          releaseDownloadUrl(id, current.downloadUrl)
+        }
+
+        return {
+          ...prev,
+          [id]: {
+            ...current,
+            additionalFiles: nextEntries,
+            status: 'idle',
+            errorMessage: null,
+            downloadUrl: null,
+            downloadName: null,
+          },
+        }
+      })
+    },
+    [releaseDownloadUrl],
   )
 
   const handleGenerate = useCallback(
     async (id: MenuItemId) => {
       const current = itemStates[id]
+      const menu = menuById[id] ?? MENU_ITEMS[0]
       if (!current || current.status === 'loading') {
         return
       }
 
-      if (current.files.length === 0) {
+      const requiredDocs = menu?.requiredDocuments ?? []
+      let uploads: File[] = []
+      const metadataEntries: FileMetadataEntry[] = []
+
+      if (requiredDocs.length > 0) {
+        const missingDocs = requiredDocs.filter(
+          (doc) => (current.requiredFiles[doc.id]?.length ?? 0) === 0,
+        )
+        if (missingDocs.length > 0) {
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id],
+              status: 'error',
+              errorMessage: `다음 필수 문서를 업로드해 주세요: ${missingDocs
+                .map((doc) => doc.label)
+                .join(', ')}`,
+            },
+          }))
+          return
+        }
+
+        const incompleteDescriptions = current.additionalFiles.filter(
+          (entry) => entry.description.trim().length === 0,
+        )
+        if (incompleteDescriptions.length > 0) {
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id],
+              status: 'error',
+              errorMessage: '추가로 업로드한 문서의 종류를 입력해 주세요.',
+            },
+          }))
+          return
+        }
+
+        requiredDocs.forEach((doc) => {
+          const files = current.requiredFiles[doc.id] ?? []
+          files.forEach((file) => {
+            uploads.push(file)
+            metadataEntries.push({ role: 'required', id: doc.id, label: doc.label })
+          })
+        })
+
+        current.additionalFiles.forEach((entry) => {
+          uploads.push(entry.file)
+          metadataEntries.push({ role: 'additional', description: entry.description })
+        })
+      } else {
+        uploads = current.files
+      }
+
+      if (uploads.length === 0) {
         setItemStates((prev) => ({
           ...prev,
           [id]: {
@@ -246,9 +502,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
       const formData = new FormData()
       formData.append('menu_id', id)
-      current.files.forEach((file) => {
+      uploads.forEach((file) => {
         formData.append('files', file)
       })
+      if (metadataEntries.length > 0) {
+        formData.append('file_metadata', JSON.stringify(metadataEntries))
+      }
 
       try {
         const response = await fetch(
@@ -297,25 +556,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         const safeName = sanitizeFileName(parsedName ?? `${id}-result.csv`)
         const objectUrl = URL.createObjectURL(blob)
 
-        downloadUrlsRef.current[id] = objectUrl
-
         setItemStates((prev) => {
           const previous = prev[id]
           if (previous?.downloadUrl) {
-            URL.revokeObjectURL(previous.downloadUrl)
+            releaseDownloadUrl(id, previous.downloadUrl)
           }
+
+          const baseState = createItemState(menu)
 
           return {
             ...prev,
             [id]: {
-              files: [],
+              ...baseState,
               status: 'success',
-              errorMessage: null,
               downloadUrl: objectUrl,
               downloadName: safeName,
             },
           }
         })
+        downloadUrlsRef.current[id] = objectUrl
       } catch (error) {
         if (controller.signal.aborted) {
           return
@@ -340,26 +599,28 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
       }
     },
-    [backendUrl, itemStates, projectId],
+    [backendUrl, itemStates, menuById, projectId, releaseDownloadUrl],
   )
 
-  const handleReset = useCallback((id: MenuItemId) => {
-    controllersRef.current[id]?.abort()
-    controllersRef.current[id] = null
+  const handleReset = useCallback(
+    (id: MenuItemId) => {
+      controllersRef.current[id]?.abort()
+      controllersRef.current[id] = null
 
-    setItemStates((prev) => {
-      const current = prev[id]
-      if (current?.downloadUrl) {
-        URL.revokeObjectURL(current.downloadUrl)
-        downloadUrlsRef.current[id] = null
-      }
+      setItemStates((prev) => {
+        const current = prev[id]
+        if (current?.downloadUrl) {
+          releaseDownloadUrl(id, current.downloadUrl)
+        }
 
-      return {
-        ...prev,
-        [id]: createItemState(),
-      }
-    })
-  }, [])
+        return {
+          ...prev,
+          [id]: createItemState(menuById[id] ?? MENU_ITEMS[0]),
+        }
+      })
+    },
+    [menuById, releaseDownloadUrl],
+  )
 
   useEffect(() => {
     return () => {
@@ -431,21 +692,99 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           </div>
 
           {activeState.status !== 'success' && (
-            <section aria-labelledby="upload-section" className="project-management-content__section">
-              <h2 id="upload-section" className="project-management-content__section-title">
-                자료 업로드
-              </h2>
-              <p className="project-management-content__helper">{activeContent.helper}</p>
-              <FileUploader
-                allowedTypes={activeContent.allowedTypes}
-                files={activeState.files}
-                onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
-                disabled={activeState.status === 'loading'}
-                variant={activeContent.uploaderVariant}
-                maxFiles={activeContent.maxFiles}
-                hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
-              />
-            </section>
+            <>
+              {hasRequiredDocuments ? (
+                <>
+                  <section
+                    aria-labelledby="required-upload-section"
+                    className="project-management-content__section"
+                  >
+                    <h2 id="required-upload-section" className="project-management-content__section-title">
+                      필수 문서 업로드
+                    </h2>
+                    <div className="project-management-required__list">
+                      {(activeContent.requiredDocuments ?? []).map((doc) => {
+                        const fileList = activeState.requiredFiles[doc.id] ?? []
+                        const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
+                        const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
+
+                        return (
+                          <div key={doc.id} className="project-management-required__item">
+                            <span className="project-management-required__label">{doc.label}</span>
+                            <FileUploader
+                              allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
+                              files={fileList}
+                              onChange={(nextFiles) =>
+                                handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
+                              }
+                              disabled={activeState.status === 'loading'}
+                              multiple={allowMultiple}
+                              hideDropzoneWhenFilled
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div className="project-management-additional project-management-additional--inline">
+                      <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
+                      <FileUploader
+                        allowedTypes={activeContent.allowedTypes}
+                        files={[]}
+                        onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
+                        disabled={activeState.status === 'loading'}
+                      />
+                      {activeState.additionalFiles.length > 0 && (
+                        <ul className="project-management-additional__list">
+                          {activeState.additionalFiles.map((entry) => (
+                            <li key={entry.id} className="project-management-additional__item">
+                              <div className="project-management-additional__file">{entry.file.name}</div>
+                              <label className="project-management-additional__description">
+                                <span>문서 종류</span>
+                                <input
+                                  type="text"
+                                  value={entry.description}
+                                  onChange={(event) =>
+                                    handleUpdateAdditionalDescription(
+                                      activeContent.id,
+                                      entry.id,
+                                      event.target.value,
+                                    )
+                                  }
+                                  placeholder="예: 테스트 보고서"
+                                  disabled={activeState.status === 'loading'}
+                                />
+                              </label>
+                              <button
+                                type="button"
+                                className="project-management-additional__remove"
+                                onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
+                                disabled={activeState.status === 'loading'}
+                              >
+                                제거
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <section aria-labelledby="upload-section" className="project-management-content__section">
+                  <h2 id="upload-section" className="project-management-content__section-title">
+                    자료 업로드
+                  </h2>
+                  <p className="project-management-content__helper">{activeContent.helper}</p>
+                  <FileUploader
+                    allowedTypes={activeContent.allowedTypes}
+                    files={activeState.files}
+                    onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
+                    disabled={activeState.status === 'loading'}
+                  />
+                </section>
+              )}
+            </>
           )}
 
           <div className="project-management-content__actions">

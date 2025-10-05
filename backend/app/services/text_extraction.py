@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import os
 import re
+import zipfile
 from dataclasses import dataclass
 from html import unescape
 from html.parser import HTMLParser
 from typing import Callable, Optional
+from xml.etree import ElementTree as ET
 
 
 @dataclass
@@ -159,6 +161,123 @@ def _extract_html(raw: bytes) -> str:
         return ""
     return parser.get_text()
 
+
+def _extract_xlsx(raw: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            shared_strings: list[str] = []
+            main_ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+            rel_ns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+            pkg_rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+            if "xl/sharedStrings.xml" in archive.namelist():
+                try:
+                    shared_root = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+                except Exception:
+                    shared_root = None
+                if shared_root is not None:
+                    for si in shared_root.findall(f".//{{{main_ns}}}si"):
+                        text_parts = [
+                            (node.text or "")
+                            for node in si.findall(f".//{{{main_ns}}}t")
+                        ]
+                        if text_parts:
+                            shared_strings.append("".join(text_parts))
+
+            sheet_targets: dict[str, str] = {}
+            if "xl/_rels/workbook.xml.rels" in archive.namelist():
+                try:
+                    rel_root = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+                except Exception:
+                    rel_root = None
+                if rel_root is not None:
+                    for rel in rel_root.findall(
+                        f".//{{{pkg_rel_ns}}}Relationship"
+                    ):
+                        rel_id = rel.get("Id")
+                        target = rel.get("Target")
+                        if rel_id and target:
+                            sheet_targets[rel_id] = target
+
+            sheets: list[tuple[str, str]] = []
+            rel_attr = f"{{{rel_ns}}}id"
+            if "xl/workbook.xml" in archive.namelist():
+                try:
+                    workbook_root = ET.fromstring(archive.read("xl/workbook.xml"))
+                except Exception:
+                    workbook_root = None
+                if workbook_root is not None:
+                    for sheet in workbook_root.findall(f".//{{{main_ns}}}sheet"):
+                        name = sheet.get("name", "Sheet")
+                        rel_id = sheet.get(rel_attr)
+                        sheet_path: Optional[str] = None
+                        if rel_id and rel_id in sheet_targets:
+                            target = sheet_targets[rel_id]
+                            if target.startswith("/"):
+                                sheet_path = target.lstrip("/")
+                            else:
+                                sheet_path = f"xl/{target}" if not target.startswith("xl/") else target
+                        else:
+                            sheet_id = sheet.get("sheetId")
+                            candidate = f"xl/worksheets/sheet{sheet_id}.xml"
+                            if sheet_id and candidate in archive.namelist():
+                                sheet_path = candidate
+
+                        if sheet_path and sheet_path in archive.namelist():
+                            sheets.append((name, sheet_path))
+
+            if not sheets:
+                sheets = [
+                    (member.rsplit("/", 1)[-1], member)
+                    for member in archive.namelist()
+                    if member.startswith("xl/worksheets/") and member.endswith(".xml")
+                ]
+
+            lines: list[str] = []
+            row_tag = f"{{{main_ns}}}row"
+            cell_tag = f"{{{main_ns}}}c"
+            value_tag = f"{{{main_ns}}}v"
+            inline_tag = f"{{{main_ns}}}is"
+            text_tag = f"{{{main_ns}}}t"
+
+            for sheet_name, path in sheets:
+                try:
+                    sheet_root = ET.fromstring(archive.read(path))
+                except Exception:
+                    continue
+
+                lines.append(f"[시트] {sheet_name}")
+                for row in sheet_root.findall(f".//{row_tag}"):
+                    cells: list[str] = []
+                    for cell in row.findall(cell_tag):
+                        cell_type = cell.get("t")
+                        text = ""
+                        if cell_type == "s":
+                            value_node = cell.find(value_tag)
+                            if value_node is not None and value_node.text is not None:
+                                try:
+                                    index = int(value_node.text)
+                                except ValueError:
+                                    index = -1
+                                if 0 <= index < len(shared_strings):
+                                    text = shared_strings[index]
+                        elif cell_type == "inlineStr":
+                            inline = cell.find(f"{inline_tag}/{text_tag}")
+                            if inline is not None and inline.text:
+                                text = inline.text
+                        else:
+                            value_node = cell.find(value_tag)
+                            if value_node is not None and value_node.text:
+                                text = value_node.text
+                        cells.append(text.strip())
+                    if cells:
+                        lines.append(" | ".join(cells).strip())
+                lines.append("")
+
+            return "\n".join(line for line in lines if line).strip()
+    except Exception:
+        return ""
+
 def _default_message(filename: str) -> str:
     return (
         "텍스트를 추출하지 못했습니다. 파일 내용을 직접 확인해 주세요. "
@@ -198,6 +317,11 @@ def extract_text_preview(
         strategies.append(_extract_html)
     elif extension == ".pdf" or content_type == "application/pdf":
         strategies.append(_extract_pdf)
+    elif extension in {".xlsx"} or (
+        content_type
+        == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ):
+        strategies.append(_extract_xlsx)
     else:
         # Attempt generic text decode as a fallback before giving up
         strategies.append(_decode_text_lenient)
@@ -215,6 +339,11 @@ def extract_text_preview(
             text = (
                 "이미지에서 텍스트를 추출할 수 없습니다. 필요하다면 OCR 결과를 제공해 주세요."
             )
+        elif extension == ".xlsx" or (
+            content_type
+            == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            text = _default_message(filename)
         else:
             text = _default_message(filename)
 
@@ -222,7 +351,7 @@ def extract_text_preview(
     if not normalized:
         normalized = _default_message(filename)
 
-    if len(normalized) > max_chars:
+    if max_chars and max_chars > 0 and len(normalized) > max_chars:
         normalized = normalized[:max_chars].rstrip() + "\n... (이후 내용 생략)"
 
     header = f"### 파일: {filename}"
