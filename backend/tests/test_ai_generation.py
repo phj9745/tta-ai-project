@@ -104,8 +104,20 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
         metadata=metadata,
     )
 
-    # Ensure each upload was transmitted as a file to OpenAI with the assistants purpose.
-    assert [entry["purpose"] for entry in stub_client.files.created] == ["assistants", "assistants"]
+    # Ensure each upload (including the built-in template) was transmitted as a file
+    # to OpenAI with the assistants purpose.
+    assert [entry["purpose"] for entry in stub_client.files.created] == [
+        "assistants",
+        "assistants",
+    ]
+    assert [entry["name"] for entry in stub_client.files.created] == [
+        "사용자_매뉴얼.docx",
+        "GS-B-XX-XXXX 기능리스트 v1.0.csv",
+    ]
+
+    template_upload = stub_client.files.created[1]
+    assert isinstance(template_upload["content"], bytes)
+    assert not template_upload["content"].startswith(b"PK")
 
     # The response payload should include input_file parts for each uploaded file.
     assert len(stub_client.responses.calls) == 1
@@ -119,7 +131,11 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     ]
     assert file_parts == [
         {"type": "input_file", "file_id": "file-1"},
-        {"type": "input_image", "image_url": "openai://file-file-2"},
+        {
+            "type": "input_image",
+            "image_url": "data:image/png;base64,SW1hZ2UgYnl0ZXM=",
+        },
+        {"type": "input_file", "file_id": "file-2"},
     ]
 
     # The text portions should not include the raw upload bodies.
@@ -148,7 +164,13 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
             message["content"].append(  # type: ignore[index]
                 {
                     "type": "input_image",
-                    "image_url": {"url": "openai://file-file-extra"},
+                    "image_url": "data:image/png;base64,abc123",
+                }
+            )
+            message["content"].append(  # type: ignore[index]
+                {
+                    "type": "input_image",
+                    "image_url": "https://example.com/additional.png",
                 }
             )
         return message
@@ -179,6 +201,10 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
     ]
     assert {
         "type": "input_image",
-        "image_url": "openai://file-file-extra",
+        "image_url": "data:image/png;base64,abc123",
+    } in image_parts
+    assert {
+        "type": "input_image",
+        "image_url": "https://example.com/additional.png",
     } in image_parts
 

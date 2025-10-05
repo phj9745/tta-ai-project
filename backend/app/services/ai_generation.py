@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import base64
 import io
 import logging
+import mimetypes
 import os
 import re
+import zipfile
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal
+from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
 from openai import APIError, OpenAI
@@ -288,6 +294,8 @@ class AIGenerationService:
             entry = metadata[index] if index < len(metadata) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
+        contexts.extend(self._builtin_attachment_contexts(menu_id))
+
         client = self._get_client()
         uploaded_file_ids: List[str] = []
         uploaded_attachments: List[AttachmentMetadata] = []
@@ -304,10 +312,21 @@ class AIGenerationService:
             descriptor_section = "\n".join(descriptor_lines)
 
             for context in contexts:
+                kind = self._attachment_kind(context.upload)
+                if kind == "image":
+                    image_url = self._image_data_url(context.upload)
+                    uploaded_attachments.append(
+                        {
+                            "kind": "image",
+                            "image_url": image_url,
+                        }
+                    )
+                    continue
+
                 file_id = await self._upload_openai_file(client, context)
                 uploaded_file_ids.append(file_id)
                 uploaded_attachments.append(
-                    {"file_id": file_id, "kind": self._attachment_kind(context.upload)}
+                    {"file_id": file_id, "kind": kind}
                 )
 
             user_prompt_parts = [
@@ -377,3 +396,189 @@ class AIGenerationService:
         finally:
             if uploaded_file_ids:
                 await self._cleanup_openai_files(client, uploaded_file_ids)
+
+    @staticmethod
+    def _image_data_url(upload: BufferedUpload) -> str:
+        media_type = (upload.content_type or "").split(";")[0].strip()
+        if not media_type:
+            guessed, _ = mimetypes.guess_type(upload.name)
+            if guessed:
+                media_type = guessed
+
+        if not media_type:
+            media_type = "application/octet-stream"
+
+        encoded = base64.b64encode(upload.content).decode("ascii")
+        return f"data:{media_type};base64,{encoded}"
+
+    @staticmethod
+    def _builtin_attachment_contexts(menu_id: str) -> List[UploadContext]:
+        if menu_id != "feature-list":
+            return []
+
+        template_path = (
+            Path(__file__).resolve().parents[2]
+            / "template"
+            / "가.계획"
+            / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
+        )
+
+        upload = AIGenerationService._load_feature_template_csv(menu_id, template_path)
+
+        metadata: Dict[str, Any] = {
+            "role": "additional",
+            "label": "기능리스트 예제 양식",
+        }
+
+        return [UploadContext(upload=upload, metadata=metadata)]
+
+    @staticmethod
+    def _load_feature_template_csv(menu_id: str, template_path: Path) -> BufferedUpload:
+        try:
+            content = template_path.read_bytes()
+        except FileNotFoundError as exc:
+            logger.error(
+                "기능리스트 예제 파일을 찾을 수 없습니다.",
+                extra={"menu_id": menu_id, "path": str(template_path)},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기능리스트 예제 파일을 찾을 수 없습니다.",
+            ) from exc
+        except OSError as exc:
+            logger.error(
+                "기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
+                extra={"menu_id": menu_id, "path": str(template_path), "error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
+            ) from exc
+
+        try:
+            rows = AIGenerationService._parse_xlsx_rows(content)
+        except ValueError as exc:
+            logger.error(
+                "기능리스트 예제 파일을 CSV로 변환하는 중 오류가 발생했습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": str(template_path),
+                    "error": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기능리스트 예제 파일을 CSV로 변환하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        for row in rows:
+            writer.writerow(row)
+        csv_bytes = buffer.getvalue().encode("utf-8-sig")
+
+        return BufferedUpload(
+            name=template_path.with_suffix(".csv").name,
+            content=csv_bytes,
+            content_type="text/csv",
+        )
+
+    @staticmethod
+    def _parse_xlsx_rows(content: bytes) -> List[List[str]]:
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(content))
+        except zipfile.BadZipFile as exc:
+            raise ValueError("잘못된 XLSX 형식입니다.") from exc
+
+        with archive:
+            shared_strings = AIGenerationService._read_shared_strings(archive)
+            try:
+                with archive.open("xl/worksheets/sheet1.xml") as sheet_file:
+                    tree = ET.parse(sheet_file)
+            except KeyError as exc:
+                raise ValueError("기본 시트를 찾을 수 없습니다.") from exc
+            except ET.ParseError as exc:
+                raise ValueError("시트 XML을 해석할 수 없습니다.") from exc
+
+            namespace = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+            root = tree.getroot()
+            sheet_data = root.find("main:sheetData", namespace)
+            if sheet_data is None:
+                return []
+
+            rows: List[List[str]] = []
+            for row_elem in sheet_data.findall("main:row", namespace):
+                row_values: List[str] = []
+                for cell_elem in row_elem.findall("main:c", namespace):
+                    column_index = AIGenerationService._column_index_from_ref(cell_elem.get("r"))
+                    value = AIGenerationService._extract_cell_value(cell_elem, shared_strings, namespace)
+                    if column_index is None:
+                        column_index = len(row_values)
+                    while len(row_values) <= column_index:
+                        row_values.append("")
+                    row_values[column_index] = value
+                rows.append(row_values)
+
+            return rows
+
+    @staticmethod
+    def _read_shared_strings(archive: zipfile.ZipFile) -> List[str]:
+        try:
+            with archive.open("xl/sharedStrings.xml") as handle:
+                tree = ET.parse(handle)
+        except KeyError:
+            return []
+        except ET.ParseError as exc:
+            raise ValueError("공유 문자열 XML을 해석할 수 없습니다.") from exc
+
+        namespace = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        strings: List[str] = []
+        root = tree.getroot()
+        for si in root.findall("main:si", namespace):
+            text_parts = [node.text or "" for node in si.findall(".//main:t", namespace)]
+            strings.append("".join(text_parts))
+        return strings
+
+    @staticmethod
+    def _column_index_from_ref(ref: str | None) -> int | None:
+        if not ref:
+            return None
+        match = re.match(r"([A-Z]+)", ref)
+        if not match:
+            return None
+        letters = match.group(1)
+        index = 0
+        for letter in letters:
+            index = index * 26 + (ord(letter) - ord("A") + 1)
+        return index - 1
+
+    @staticmethod
+    def _extract_cell_value(
+        cell_elem: ET.Element,
+        shared_strings: List[str],
+        namespace: Dict[str, str],
+    ) -> str:
+        cell_type = cell_elem.get("t")
+        if cell_type == "s":
+            index_text = cell_elem.findtext("main:v", default="", namespaces=namespace)
+            try:
+                shared_index = int(index_text)
+            except (TypeError, ValueError):
+                return ""
+            if 0 <= shared_index < len(shared_strings):
+                return shared_strings[shared_index]
+            return ""
+
+        if cell_type == "inlineStr":
+            text_nodes = cell_elem.findall(".//main:t", namespace)
+            return "".join(node.text or "" for node in text_nodes)
+
+        value = cell_elem.findtext("main:v", default="", namespaces=namespace)
+        if value:
+            return value
+
+        text_nodes = cell_elem.findall(".//main:t", namespace)
+        if text_nodes:
+            return "".join(node.text or "" for node in text_nodes)
+
+        return ""
