@@ -61,8 +61,6 @@ ContentPart = (
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 
 class AttachmentMetadata(TypedDict, total=False):
     """Metadata describing how an uploaded asset should be attached."""
@@ -347,55 +345,6 @@ class OpenAIMessageBuilder:
             item,
         )
         raise ValueError("input_image 항목에는 image_url이 필요합니다.")
-
-    @classmethod
-    def _normalize_external_image_url(
-        cls, value: object, *, context: MutableMapping[str, object] | None = None
-    ) -> str:
-        raw: object
-        if isinstance(value, MutableMapping):
-            raw = value.get("url")
-        else:
-            raw = value
-
-        if not isinstance(raw, str):
-            cls._log_invalid_image_part(
-                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다.",
-                context,
-            )
-            raise ValueError(
-                "input_image 항목의 image_url 필드는 문자열 또는 매핑이어야 합니다."
-            )
-
-        candidate = raw.strip()
-        if not candidate:
-            cls._log_invalid_image_part(
-                "input_image 항목의 image_url는 공백이 아닌 문자열이어야 합니다.",
-                context,
-            )
-            raise ValueError(
-                "input_image 항목의 image_url는 공백이 아닌 문자열이어야 합니다."
-            )
-
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https", "data"}:
-            if cls._is_valid_external_url(candidate):
-                return candidate
-            cls._log_invalid_image_part(
-                "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다.",
-                context,
-            )
-            raise ValueError(
-                "input_image 항목의 image_url는 유효한 외부 URL이어야 합니다."
-            )
-
-        cls._log_invalid_image_part(
-            "input_image 항목의 image_url는 지원되는 스킴을 사용해야 합니다.",
-            context,
-        )
-        raise ValueError(
-            "input_image 항목의 image_url는 지원되는 스킴을 사용해야 합니다."
-        )
 
     @classmethod
     def _normalize_external_image_url(

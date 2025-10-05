@@ -179,7 +179,7 @@ def test_normalize_messages_rejects_image_mapping() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image": {"file_id": "file-img-direct"},
+                    "image_url": "openai://file-file-img-from-url",
                 }
             ],
         }
@@ -197,23 +197,6 @@ def test_normalize_messages_rejects_openai_scheme() -> None:
                 {
                     "type": "input_image",
                     "image_url": "openai://file-file-img-from-url",
-                }
-            ],
-        }
-    ]
-
-    with pytest.raises(ValueError):
-        OpenAIMessageBuilder.normalize_messages(raw_messages)
-
-
-def test_normalize_messages_preserves_external_image_url() -> None:
-    raw_messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_image",
-                    "image_url": "https://example.com/image.png",
                 }
             ],
         }

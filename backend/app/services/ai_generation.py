@@ -7,6 +7,7 @@ import logging
 import mimetypes
 import os
 import re
+from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal
@@ -290,6 +291,8 @@ class AIGenerationService:
             entry = metadata[index] if index < len(metadata) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
+        contexts.extend(self._builtin_attachment_contexts(menu_id))
+
         client = self._get_client()
         uploaded_file_ids: List[str] = []
         uploaded_attachments: List[AttachmentMetadata] = []
@@ -404,3 +407,49 @@ class AIGenerationService:
 
         encoded = base64.b64encode(upload.content).decode("ascii")
         return f"data:{media_type};base64,{encoded}"
+
+    @staticmethod
+    def _builtin_attachment_contexts(menu_id: str) -> List[UploadContext]:
+        if menu_id != "feature-list":
+            return []
+
+        template_path = (
+            Path(__file__).resolve().parents[2]
+            / "template"
+            / "가.계획"
+            / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
+        )
+
+        try:
+            content = template_path.read_bytes()
+        except FileNotFoundError as exc:
+            logger.error(
+                "기능리스트 예제 파일을 찾을 수 없습니다.",
+                extra={"menu_id": menu_id, "path": str(template_path)},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기능리스트 예제 파일을 찾을 수 없습니다.",
+            ) from exc
+        except OSError as exc:
+            logger.error(
+                "기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
+                extra={"menu_id": menu_id, "path": str(template_path), "error": str(exc)},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
+            ) from exc
+
+        upload = BufferedUpload(
+            name=template_path.name,
+            content=content,
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        metadata: Dict[str, Any] = {
+            "role": "additional",
+            "label": "기능리스트 예제 양식",
+        }
+
+        return [UploadContext(upload=upload, metadata=metadata)]

@@ -104,8 +104,16 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
         metadata=metadata,
     )
 
-    # Ensure each upload was transmitted as a file to OpenAI with the assistants purpose.
-    assert [entry["purpose"] for entry in stub_client.files.created] == ["assistants"]
+    # Ensure each upload (including the built-in template) was transmitted as a file
+    # to OpenAI with the assistants purpose.
+    assert [entry["purpose"] for entry in stub_client.files.created] == [
+        "assistants",
+        "assistants",
+    ]
+    assert [entry["name"] for entry in stub_client.files.created] == [
+        "사용자_매뉴얼.docx",
+        "GS-B-XX-XXXX 기능리스트 v1.0.xlsx",
+    ]
 
     # The response payload should include input_file parts for each uploaded file.
     assert len(stub_client.responses.calls) == 1
@@ -123,6 +131,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
             "type": "input_image",
             "image_url": "data:image/png;base64,SW1hZ2UgYnl0ZXM=",
         },
+        {"type": "input_file", "file_id": "file-2"},
     ]
 
     # The text portions should not include the raw upload bodies.
