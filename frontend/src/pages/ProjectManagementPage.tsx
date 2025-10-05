@@ -38,6 +38,9 @@ interface MenuItemContent {
   buttonLabel: string
   allowedTypes: FileType[]
   requiredDocuments?: RequiredDocument[]
+  uploaderVariant?: 'default' | 'grid'
+  maxFiles?: number
+  hideDropzoneWhenFilled?: boolean
 }
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -781,6 +784,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     files={activeState.files}
                     onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
                     disabled={activeState.status === 'loading'}
+                    maxFiles={activeContent.maxFiles}
+                    hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
+                    variant={activeContent.uploaderVariant}
                   />
                 </section>
               )}

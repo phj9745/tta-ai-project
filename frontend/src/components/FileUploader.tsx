@@ -14,6 +14,8 @@ interface FileUploaderProps {
   disabled?: boolean
   multiple?: boolean
   hideDropzoneWhenFilled?: boolean
+  maxFiles?: number
+  variant?: 'default' | 'grid'
 }
 
 function formatBytes(bytes: number): string {
@@ -41,6 +43,10 @@ function isImageFile(file: File) {
   return IMAGE_FILE_PATTERN.test(file.name)
 }
 
+function isPreviewableImage(file: File) {
+  return isImageFile(file)
+}
+
 export function FileUploader({
   allowedTypes,
   files,
@@ -48,6 +54,8 @@ export function FileUploader({
   disabled = false,
   multiple = true,
   hideDropzoneWhenFilled = false,
+  maxFiles,
+  variant = 'default',
 }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -55,12 +63,13 @@ export function FileUploader({
   const activeTypes = allowedTypes.length > 0 ? allowedTypes : ALL_FILE_TYPES
 
   const maxFileCount =
-    Number.isFinite(maxFiles) && maxFiles !== undefined ? Math.max(0, Math.floor(maxFiles)) : undefined
+    typeof maxFiles === 'number' && Number.isFinite(maxFiles)
+      ? Math.max(0, Math.floor(maxFiles))
+      : undefined
   const shouldHideForFilled =
     hideDropzoneWhenFilled && (maxFileCount !== undefined ? files.length >= maxFileCount : files.length > 0)
   const atCapacity = maxFileCount !== undefined && files.length >= maxFileCount
   const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
-  const shouldRenderDropzone = !atCapacity && !shouldHideForFilled
   const isGridVariant = variant === 'grid'
 
   const acceptValue = useMemo(() => {
@@ -77,16 +86,6 @@ export function FileUploader({
       url: isPreviewableImage(file) ? URL.createObjectURL(file) : null,
     }))
   }, [files])
-
-  const previewMap = useMemo(() => {
-    const map = new Map<string, string>()
-    previewItems.forEach((item) => {
-      if (item.url) {
-        map.set(item.key, item.url)
-      }
-    })
-    return map
-  }, [previewItems])
 
   useEffect(() => {
     return () => {
@@ -136,11 +135,20 @@ export function FileUploader({
 
     const normalizedIncoming = multiple ? incoming : incoming.slice(0, 1)
 
+    let remainingSlots =
+      maxFileCount !== undefined ? Math.max(0, maxFileCount - files.length) : Number.POSITIVE_INFINITY
+    let limitedByCapacity = false
+
     const allowed: File[] = []
     const rejected: string[] = []
     const existingKeys = multiple ? new Set(files.map(createFileKey)) : null
 
     normalizedIncoming.forEach((file) => {
+      if (remainingSlots <= 0) {
+        limitedByCapacity = true
+        return
+      }
+
       const extension = file.name.split('.').pop()?.toLowerCase() ?? ''
       const matchesType = activeTypes.some((type) => {
         const info = FILE_TYPE_OPTIONS[type]
@@ -162,11 +170,19 @@ export function FileUploader({
       }
 
       allowed.push(file)
-      remaining -= 1
+      if (maxFileCount !== undefined && Number.isFinite(remainingSlots)) {
+        remainingSlots = Math.max(0, remainingSlots - 1)
+      }
     })
 
     if (rejected.length > 0) {
       setError(`허용되지 않은 형식입니다: ${rejected.join(', ')}`)
+    } else if (limitedByCapacity) {
+      setError(
+        maxFileCount !== undefined
+          ? `최대 ${maxFileCount}개의 파일까지 업로드할 수 있습니다.`
+          : '업로드 가능한 파일 수를 모두 채웠습니다.',
+      )
     } else {
       setError(null)
     }
@@ -249,7 +265,7 @@ export function FileUploader({
   }, [imagePreviewMap])
 
   return (
-    <div className="file-uploader">
+    <div className={`file-uploader${isGridVariant ? ' file-uploader--grid' : ''}`}>
       {shouldShowDropzone && (
         <label
           className={`file-uploader__dropzone${
@@ -258,6 +274,8 @@ export function FileUploader({
             shouldRenderCompactPreview && files.length > 0
               ? ' file-uploader__dropzone--preview'
               : ''
+          }${
+            isGridVariant ? ' file-uploader__dropzone--grid' : ''
           }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
