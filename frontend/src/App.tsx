@@ -27,11 +27,17 @@ function App() {
     openGoogleDriveWorkspace()
   }, [])
 
+  const handleOpenAdmin = useCallback(() => {
+    navigate('/admin/prompts')
+  }, [])
+
   return (
     <AppShell
       isAuthenticated={authStatus === 'authenticated'}
+      currentPath={pathname}
       onLogout={handleLogout}
       onOpenDrive={handleOpenDrive}
+      onNavigateAdmin={handleOpenAdmin}
     >
       {pageContent}
     </AppShell>

@@ -4,10 +4,12 @@ import type { AuthStatus } from '../../auth'
 import { DriveSetupPage } from '../../pages/DriveSetupPage'
 import { LoginPage } from '../../pages/LoginPage'
 import { ProjectManagementPage } from '../../pages/ProjectManagementPage'
+import { AdminPromptsPage } from '../../pages/AdminPromptsPage'
 
 const PROJECT_PATH_PATTERN = /^\/projects\/([^/]+)$/
 const PROJECTS_ROOT_PATH = '/projects'
 const LEGACY_DRIVE_PATH = '/drive'
+const ADMIN_PROMPTS_PATH = '/admin/prompts'
 
 interface ResolvePageOptions {
   pathname: string
@@ -21,6 +23,10 @@ export function resolvePage({ pathname, authStatus }: ResolvePageOptions): React
 
   if (pathname === PROJECTS_ROOT_PATH || pathname === LEGACY_DRIVE_PATH) {
     return <DriveSetupPage />
+  }
+
+  if (pathname === ADMIN_PROMPTS_PATH) {
+    return <AdminPromptsPage />
   }
 
   const projectMatch = pathname.match(PROJECT_PATH_PATTERN)
