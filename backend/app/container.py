@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .config import Settings, load_settings
 from .services.ai_generation import AIGenerationService
+from .services.prompt_config import PromptConfigService
 from .services.google_drive import GoogleDriveService
 from .services.oauth import GoogleOAuthService
 from .token_store import TokenStorage
@@ -17,7 +18,11 @@ class Container:
         self._drive_service = GoogleDriveService(
             self._settings, self._token_storage, self._oauth_service
         )
-        self._ai_generation_service = AIGenerationService(self._settings)
+        prompt_storage_path = self._settings.tokens_path.with_name("prompt_configs.json")
+        self._prompt_config_service = PromptConfigService(prompt_storage_path)
+        self._ai_generation_service = AIGenerationService(
+            self._settings, self._prompt_config_service
+        )
 
     @property
     def settings(self) -> Settings:
@@ -38,3 +43,7 @@ class Container:
     @property
     def ai_generation_service(self) -> AIGenerationService:
         return self._ai_generation_service
+
+    @property
+    def prompt_config_service(self) -> PromptConfigService:
+        return self._prompt_config_service
