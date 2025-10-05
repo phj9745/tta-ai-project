@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import csv
 import base64
 import io
 import logging
@@ -423,7 +422,7 @@ class AIGenerationService:
             / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
         )
 
-        upload = AIGenerationService._load_feature_template_csv(menu_id, template_path)
+        upload = AIGenerationService._load_feature_template_pdf(menu_id, template_path)
 
         metadata: Dict[str, Any] = {
             "role": "additional",
@@ -433,7 +432,7 @@ class AIGenerationService:
         return [UploadContext(upload=upload, metadata=metadata)]
 
     @staticmethod
-    def _load_feature_template_csv(menu_id: str, template_path: Path) -> BufferedUpload:
+    def _load_feature_template_pdf(menu_id: str, template_path: Path) -> BufferedUpload:
         try:
             content = template_path.read_bytes()
         except FileNotFoundError as exc:
@@ -459,7 +458,7 @@ class AIGenerationService:
             rows = AIGenerationService._parse_xlsx_rows(content)
         except ValueError as exc:
             logger.error(
-                "기능리스트 예제 파일을 CSV로 변환하는 중 오류가 발생했습니다.",
+                "기능리스트 예제 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
                 extra={
                     "menu_id": menu_id,
                     "path": str(template_path),
@@ -468,20 +467,83 @@ class AIGenerationService:
             )
             raise HTTPException(
                 status_code=500,
-                detail="기능리스트 예제 파일을 CSV로 변환하는 중 오류가 발생했습니다.",
+                detail="기능리스트 예제 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
             ) from exc
 
-        buffer = io.StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
-        for row in rows:
-            writer.writerow(row)
-        csv_bytes = buffer.getvalue().encode("utf-8-sig")
+        pdf_bytes = AIGenerationService._rows_to_pdf(rows)
 
         return BufferedUpload(
-            name=template_path.with_suffix(".csv").name,
-            content=csv_bytes,
-            content_type="text/csv",
+            name=template_path.with_suffix(".pdf").name,
+            content=pdf_bytes,
+            content_type="application/pdf",
         )
+
+    @staticmethod
+    def _rows_to_pdf(rows: List[List[str]]) -> bytes:
+        lines: List[str] = []
+        for row in rows:
+            if row:
+                line = ", ".join(cell.strip() for cell in row)
+            else:
+                line = ""
+            lines.append(line)
+
+        if not lines:
+            lines.append("")
+
+        def _escape(text: str) -> str:
+            encoded = ("\ufeff" + text).encode("utf-16-be")
+            return "".join(f"\\{byte:03o}" for byte in encoded)
+
+        content_lines = [
+            "BT",
+            "/F1 11 Tf",
+            "1 0 0 1 72 770 Tm",
+            "14 TL",
+        ]
+        for line in lines:
+            escaped = _escape(line)
+            content_lines.append(f"({escaped}) Tj")
+            content_lines.append("T*")
+        content_lines.append("ET")
+
+        content_stream = "\n".join(content_lines).encode("utf-8")
+
+        objects: List[bytes] = [
+            b"<< /Type /Catalog /Pages 2 0 R >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 6 0 R /Resources << /Font << /F1 4 0 R >> >> >>",
+            b"<< /Type /Font /Subtype /Type0 /BaseFont /HYGoThic-Medium /Encoding /UniKS-UCS2-H /DescendantFonts [5 0 R] >>",
+            b"<< /Type /Font /Subtype /CIDFontType0 /BaseFont /HYGoThic-Medium /CIDSystemInfo << /Registry (Adobe) /Ordering (Korea1) /Supplement 0 >> /DW 1000 >>",
+            b"<< /Length %d >>\nstream\n" % len(content_stream)
+            + content_stream
+            + b"\nendstream",
+        ]
+
+        buffer = io.BytesIO()
+        buffer.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+        offsets: List[int] = []
+        for index, obj in enumerate(objects, start=1):
+            offsets.append(buffer.tell())
+            buffer.write(f"{index} 0 obj\n".encode("ascii"))
+            buffer.write(obj)
+            buffer.write(b"\nendobj\n")
+
+        xref_offset = buffer.tell()
+        total_objects = len(objects) + 1
+        buffer.write(f"xref\n0 {total_objects}\n".encode("ascii"))
+        buffer.write(b"0000000000 65535 f \n")
+        for offset in offsets:
+            buffer.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+        buffer.write(
+            b"trailer\n<< /Size "
+            + str(total_objects).encode("ascii")
+            + b" /Root 1 0 R >>\nstartxref\n"
+            + str(xref_offset).encode("ascii")
+            + b"\n%%EOF\n"
+        )
+
+        return buffer.getvalue()
 
     @staticmethod
     def _parse_xlsx_rows(content: bytes) -> List[List[str]]:
