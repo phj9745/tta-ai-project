@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
+import { getBackendUrl } from '../config'
 import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
 
@@ -12,151 +13,160 @@ type PromptCategory =
   | 'security-report'
   | 'performance-report'
 
-type StatusType = 'idle' | 'success' | 'info'
+type StatusType = 'idle' | 'success' | 'error'
 
-interface PromptAttachment {
+type PromptScaffolding = {
+  attachmentsHeading: string
+  attachmentsIntro: string
+  closingNote: string
+  formatWarning: string
+}
+
+type PromptSection = {
+  id: string
+  label: string
+  content: string
+  enabled: boolean
+}
+
+type PromptBuiltinContext = {
   id: string
   label: string
   description: string
-  required: boolean
-  acceptedTypes: string
-  notes?: string
+  sourcePath: string
+  renderMode: 'file' | 'image' | 'xlsx-to-pdf' | 'text'
+  includeInPrompt: boolean
+  showInAttachmentList: boolean
 }
 
-interface PromptMetadataEntry {
-  id: string
-  key: string
-  value: string
+type PromptModelParameters = {
+  temperature: number
+  topP: number
+  maxOutputTokens: number
+  presencePenalty: number
+  frequencyPenalty: number
 }
 
-interface PromptConfig {
+type PromptConfig = {
   label: string
   summary: string
-  requestDescription: string
   systemPrompt: string
   userPrompt: string
-  evaluationNotes: string
-  attachments: PromptAttachment[]
-  metadata: PromptMetadataEntry[]
+  userPromptSections: PromptSection[]
+  scaffolding: PromptScaffolding
+  attachmentDescriptorTemplate: string
+  builtinContexts: PromptBuiltinContext[]
+  modelParameters: PromptModelParameters
 }
 
-const INITIAL_PROMPTS: Record<PromptCategory, PromptConfig> = {
-  'feature-list': {
-    label: '기능리스트 생성',
-    summary:
-      '요구사항, 사용 매뉴얼, 기존 기능 정의서를 바탕으로 새로운 프로젝트의 기능 정의서를 생성하는 기본 템플릿입니다.',
-    requestDescription:
-      '업로드된 요구사항을 검토하여 기능 목록, 기능 설명, 관련 근거 자료를 정리한 결과물을 생성합니다. 입력 문서를 정제하고 핵심 내용을 추출할 수 있도록 안내해 주세요.',
-    systemPrompt:
-      'You are an assistant that specialises in extracting structured feature definitions from Korean software requirement documents. Use polite and concise Korean, preserve numbering, and reference uploaded evidence where helpful.',
-    userPrompt:
-      '아래 첨부된 자료들을 검토하여 기능리스트 초안을 작성해 주세요.\n- 각 기능은 식별자, 이름, 설명, 근거 자료 링크를 포함합니다.\n- 사용자 매뉴얼과 기존 기능리스트가 있으면 우선적으로 반영하고, 누락된 요구사항이 있으면 “추가 제안” 섹션에 정리해 주세요.',
-    evaluationNotes:
-      '출력은 Markdown 테이블과 추가 제안 요약으로 구성합니다. 첨부 파일이 부족할 경우 필요한 자료를 명시적으로 요청하도록 안내하세요.',
-    attachments: [
-      {
-        id: 'feature-manual',
-        label: '사용자 매뉴얼',
-        description: '최신 버전의 사용자 매뉴얼. 기능 흐름과 화면 정의가 포함되어야 합니다.',
-        required: true,
-        acceptedTypes: 'PDF, DOCX, HWP',
-        notes: '없으면 요구사항 명세서 또는 제안요청서를 대신 업로드하도록 안내',
-      },
-      {
-        id: 'feature-config',
-        label: '형상 이미지',
-        description: 'UI 흐름, 메뉴 구조, 아키텍처를 설명하는 다이어그램.',
-        required: false,
-        acceptedTypes: 'PNG, JPG, SVG',
-        notes: '가능하다면 최신 형상 버전을 첨부',
-      },
-      {
-        id: 'feature-existing',
-        label: '기존 기능리스트',
-        description: '벤더 또는 이전 프로젝트에서 제공한 기능 정의 자료.',
-        required: false,
-        acceptedTypes: 'XLSX, CSV, PDF',
-      },
-    ],
-    metadata: [
-      {
-        id: 'feature-tone',
-        key: 'tone',
-        value: 'formal-korean',
-      },
-      {
-        id: 'feature-output',
-        key: 'output_format',
-        value: 'markdown-table+summary',
-      },
-    ],
-  },
-  'testcase-generation': {
-    label: '테스트케이스 생성',
-    summary:
-      '테스트 케이스 설계 자동화를 위한 프롬프트 영역입니다. 요구사항과 기능리스트를 기반으로 테스트 항목을 도출합니다.',
-    requestDescription: '',
-    systemPrompt: '',
-    userPrompt: '',
-    evaluationNotes: '',
-    attachments: [],
-    metadata: [],
-  },
-  'defect-report': {
-    label: '결함 리포트',
-    summary:
-      '결함 재현 단계, 영향도, 스크린샷을 정리하여 리포트 형태로 변환하는 프롬프트 설정 공간입니다.',
-    requestDescription: '',
-    systemPrompt: '',
-    userPrompt: '',
-    evaluationNotes: '',
-    attachments: [],
-    metadata: [],
-  },
-  'security-report': {
-    label: '보안성 리포트',
-    summary:
-      '보안 점검 결과와 취약점 목록을 요약하는 데 사용할 프롬프트를 등록하는 공간입니다.',
-    requestDescription: '',
-    systemPrompt: '',
-    userPrompt: '',
-    evaluationNotes: '',
-    attachments: [],
-    metadata: [],
-  },
-  'performance-report': {
-    label: '성능 평가 리포트',
-    summary:
-      '성능 측정 데이터와 분석 결과를 구조화된 보고서로 전환하는 프롬프트 초안을 준비할 수 있습니다.',
-    requestDescription: '',
-    systemPrompt: '',
-    userPrompt: '',
-    evaluationNotes: '',
-    attachments: [],
-    metadata: [],
-  },
+type PromptConfigResponse = Record<PromptCategory, PromptConfig>
+
+type PromptResponsePayload = {
+  current: Record<string, PromptConfig>
+  defaults: Record<string, PromptConfig>
 }
 
-function cloneAttachment(attachment: PromptAttachment): PromptAttachment {
-  return { ...attachment }
+function isPromptCategory(value: string): value is PromptCategory {
+  return (
+    value === 'feature-list' ||
+    value === 'testcase-generation' ||
+    value === 'defect-report' ||
+    value === 'security-report' ||
+    value === 'performance-report'
+  )
 }
 
-function cloneMetadataEntry(entry: PromptMetadataEntry): PromptMetadataEntry {
-  return { ...entry }
+function cloneSection(section: PromptSection): PromptSection {
+  return { ...section }
+}
+
+function cloneScaffolding(scaffolding: PromptScaffolding): PromptScaffolding {
+  return { ...scaffolding }
+}
+
+function cloneBuiltinContext(context: PromptBuiltinContext): PromptBuiltinContext {
+  return { ...context }
+}
+
+function cloneModelParameters(parameters: PromptModelParameters): PromptModelParameters {
+  return { ...parameters }
 }
 
 function cloneConfig(config: PromptConfig): PromptConfig {
   return {
     ...config,
-    attachments: config.attachments.map(cloneAttachment),
-    metadata: config.metadata.map(cloneMetadataEntry),
+    userPromptSections: config.userPromptSections.map(cloneSection),
+    scaffolding: cloneScaffolding(config.scaffolding),
+    builtinContexts: config.builtinContexts.map(cloneBuiltinContext),
+    modelParameters: cloneModelParameters(config.modelParameters),
   }
 }
 
-function cloneConfigMap(map: Record<PromptCategory, PromptConfig>): Record<PromptCategory, PromptConfig> {
-  return Object.fromEntries(
-    Object.entries(map).map(([key, value]) => [key as PromptCategory, cloneConfig(value)]),
-  ) as Record<PromptCategory, PromptConfig>
+function cloneConfigMap(raw: Record<string, PromptConfig>): PromptConfigResponse {
+  const entries = Object.entries(raw)
+    .filter((entry): entry is [PromptCategory, PromptConfig] => isPromptCategory(entry[0]))
+    .map(([key, value]) => [key, cloneConfig(value)])
+  return Object.fromEntries(entries) as PromptConfigResponse
+}
+
+const PREVIEW_CONTEXT_SUMMARY = '사용자 매뉴얼 등 업로드 자료'
+
+function buildPreview(config: PromptConfig): string {
+  const parts: string[] = []
+  const base = config.userPrompt.trim()
+  if (base) {
+    parts.push(base)
+  }
+
+  config.userPromptSections
+    .filter((section) => section.enabled)
+    .forEach((section) => {
+      const label = section.label.trim()
+      const content = section.content.trim()
+      if (!label && !content) {
+        return
+      }
+      if (label && content) {
+        parts.push(`${label}\n${content}`)
+      } else {
+        parts.push(label || content)
+      }
+    })
+
+  const heading = config.scaffolding.attachmentsHeading.trim()
+  const intro = config.scaffolding.attachmentsIntro.trim()
+  if (heading) {
+    parts.push(heading)
+  }
+  if (intro) {
+    parts.push(intro)
+  }
+
+  const descriptorTemplate = config.attachmentDescriptorTemplate || '{{index}}. {{descriptor}}'
+  const descriptorExample = descriptorTemplate
+    .replaceAll('{{index}}', '1')
+    .replaceAll('{{descriptor}}', '사용자 매뉴얼 (PDF)')
+    .replaceAll('{{label}}', '사용자 매뉴얼')
+    .replaceAll('{{description}}', '첨부 자료 설명')
+    .replaceAll('{{extension}}', 'PDF')
+    .replaceAll('{{doc_id}}', 'sample-doc')
+    .replaceAll('{{notes}}', '비고')
+    .replaceAll('{{source_path}}', 'template/sample.pdf')
+  if (descriptorExample.trim()) {
+    parts.push(descriptorExample)
+  }
+
+  const closingTemplate = config.scaffolding.closingNote.trim()
+  if (closingTemplate) {
+    parts.push(closingTemplate.replaceAll('{{context_summary}}', PREVIEW_CONTEXT_SUMMARY))
+  }
+
+  const warning = config.scaffolding.formatWarning.trim()
+  if (warning) {
+    parts.push(warning)
+  }
+
+  return parts.join('\n\n').trim()
 }
 
 let uniqueId = 0
@@ -166,178 +176,377 @@ function createUniqueId(prefix: string): string {
 }
 
 export function AdminPromptsPage() {
-  const [configs, setConfigs] = useState<Record<PromptCategory, PromptConfig>>(() => cloneConfigMap(INITIAL_PROMPTS))
+  const backendUrl = useMemo(() => getBackendUrl(), [])
+  const [configs, setConfigs] = useState<PromptConfigResponse | null>(null)
+  const [serverConfigs, setServerConfigs] = useState<PromptConfigResponse | null>(null)
+  const [defaults, setDefaults] = useState<PromptConfigResponse | null>(null)
   const [activeCategory, setActiveCategory] = useState<PromptCategory>('feature-list')
-  const [status, setStatus] = useState<{ category: PromptCategory | null; type: StatusType; message: string }>(
-    { category: null, type: 'idle', message: '' },
-  )
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState<{ type: StatusType; message: string }>({ type: 'idle', message: '' })
 
-  const activeConfig = configs[activeCategory]
+  useEffect(() => {
+    const controller = new AbortController()
+    async function loadConfigs() {
+      setLoading(true)
+      setError(null)
+      try {
+        const response = await fetch(`${backendUrl}/admin/prompts`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          throw new Error('서버에서 프롬프트 구성을 불러오지 못했습니다.')
+        }
+        const payload = (await response.json()) as PromptResponsePayload
+        const current = cloneConfigMap(payload.current)
+        const fallback = cloneConfigMap(payload.defaults)
+        setConfigs(current)
+        setServerConfigs(cloneConfigMap(payload.current))
+        setDefaults(fallback)
+      } catch (err) {
+        if (controller.signal.aborted) {
+          return
+        }
+        setError('프롬프트 구성을 불러오는 중 오류가 발생했습니다.')
+      } finally {
+        setLoading(false)
+      }
+    }
 
-  const navItems = useMemo(
-    () =>
-      (Object.entries(configs) as [PromptCategory, PromptConfig][]).map(([key, value]) => ({
-        id: key,
-        label: value.label,
-        summary: value.summary,
-      })),
-    [configs],
-  )
+    loadConfigs()
+    return () => controller.abort()
+  }, [backendUrl])
 
-  const handleUpdateField = (field: keyof Pick<PromptConfig, 'requestDescription' | 'systemPrompt' | 'userPrompt' | 'evaluationNotes'>, value: string) => {
-    setConfigs((prev) => ({
-      ...prev,
-      [activeCategory]: {
-        ...prev[activeCategory],
-        [field]: value,
-      },
+  const activeConfig = configs ? configs[activeCategory] : null
+  const preview = activeConfig ? buildPreview(activeConfig) : ''
+
+  const navItems = useMemo(() => {
+    if (!configs) {
+      return []
+    }
+    return (Object.entries(configs) as [PromptCategory, PromptConfig][]).map(([key, value]) => ({
+      id: key,
+      label: value.label,
+      summary: value.summary,
     }))
-    setStatus({ category: null, type: 'idle', message: '' })
+  }, [configs])
+
+  const handleUpdateConfigField = (field: keyof Pick<PromptConfig, 'label' | 'summary' | 'systemPrompt' | 'userPrompt'>, value: string) => {
+    if (!configs) {
+      return
+    }
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...prev[activeCategory],
+          [field]: value,
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleUpdateAttachment = (
-    attachmentId: string,
-    field: keyof Pick<PromptAttachment, 'label' | 'description' | 'acceptedTypes' | 'notes'>,
-    value: string,
-  ) => {
+  const handleUpdateSection = (sectionId: string, field: keyof PromptSection, value: string | boolean) => {
     setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
       const current = prev[activeCategory]
-      const nextAttachments = current.attachments.map((attachment) =>
-        attachment.id === attachmentId ? { ...attachment, [field]: value } : attachment,
+      const nextSections = current.userPromptSections.map((section) =>
+        section.id === sectionId ? { ...section, [field]: value } : section,
       )
       return {
         ...prev,
         [activeCategory]: {
           ...current,
-          attachments: nextAttachments,
+          userPromptSections: nextSections,
         },
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleToggleAttachmentRequired = (attachmentId: string, required: boolean) => {
+  const handleAddSection = () => {
     setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
       const current = prev[activeCategory]
-      const nextAttachments = current.attachments.map((attachment) =>
-        attachment.id === attachmentId ? { ...attachment, required } : attachment,
+      const newSection: PromptSection = {
+        id: createUniqueId(`${activeCategory}-section`),
+        label: '새 지침',
+        content: '',
+        enabled: true,
+      }
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...current,
+          userPromptSections: [...current.userPromptSections, newSection],
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
+  }
+
+  const handleRemoveSection = (sectionId: string) => {
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      const current = prev[activeCategory]
+      const nextSections = current.userPromptSections.filter((section) => section.id !== sectionId)
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...current,
+          userPromptSections: nextSections,
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
+  }
+
+  const handleScaffoldingChange = (field: keyof PromptScaffolding, value: string) => {
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...prev[activeCategory],
+          scaffolding: {
+            ...prev[activeCategory].scaffolding,
+            [field]: value,
+          },
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
+  }
+
+  const handleDescriptorTemplateChange = (value: string) => {
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...prev[activeCategory],
+          attachmentDescriptorTemplate: value,
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
+  }
+
+  const handleBuiltinContextChange = <K extends keyof PromptBuiltinContext>(contextId: string, field: K, value: PromptBuiltinContext[K]) => {
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      const current = prev[activeCategory]
+      const nextContexts = current.builtinContexts.map((context) =>
+        context.id === contextId ? { ...context, [field]: value } : context,
       )
       return {
         ...prev,
         [activeCategory]: {
           ...current,
-          attachments: nextAttachments,
+          builtinContexts: nextContexts,
         },
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleRemoveAttachment = (attachmentId: string) => {
+  const handleToggleBuiltinContext = (contextId: string, field: keyof Pick<PromptBuiltinContext, 'includeInPrompt' | 'showInAttachmentList'>, checked: boolean) => {
+    handleBuiltinContextChange(contextId, field, checked)
+  }
+
+  const handleAddBuiltinContext = () => {
     setConfigs((prev) => {
-      const current = prev[activeCategory]
-      const nextAttachments = current.attachments.filter((attachment) => attachment.id !== attachmentId)
-      return {
-        ...prev,
-        [activeCategory]: {
-          ...current,
-          attachments: nextAttachments,
-        },
+      if (!prev) {
+        return prev
       }
-    })
-    setStatus({ category: null, type: 'idle', message: '' })
-  }
-
-  const handleAddAttachment = () => {
-    setConfigs((prev) => {
       const current = prev[activeCategory]
-      const newAttachment: PromptAttachment = {
-        id: createUniqueId(`${activeCategory}-attachment`),
-        label: '새 첨부 자료',
+      const newContext: PromptBuiltinContext = {
+        id: createUniqueId(`${activeCategory}-builtin`),
+        label: '새 내장 컨텍스트',
         description: '',
-        required: false,
-        acceptedTypes: '',
+        sourcePath: '',
+        renderMode: 'file',
+        includeInPrompt: true,
+        showInAttachmentList: true,
       }
       return {
         ...prev,
         [activeCategory]: {
           ...current,
-          attachments: [...current.attachments, newAttachment],
+          builtinContexts: [...current.builtinContexts, newContext],
         },
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleUpdateMetadata = (entryId: string, field: 'key' | 'value', value: string) => {
+  const handleRemoveBuiltinContext = (contextId: string) => {
     setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
       const current = prev[activeCategory]
-      const nextMetadata = current.metadata.map((entry) =>
-        entry.id === entryId ? { ...entry, [field]: value } : entry,
-      )
+      const nextContexts = current.builtinContexts.filter((context) => context.id !== contextId)
       return {
         ...prev,
         [activeCategory]: {
           ...current,
-          metadata: nextMetadata,
+          builtinContexts: nextContexts,
         },
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleRemoveMetadata = (entryId: string) => {
+  const handleModelParameterChange = <K extends keyof PromptModelParameters>(field: K, value: number) => {
+    if (!Number.isFinite(value)) {
+      return
+    }
     setConfigs((prev) => {
-      const current = prev[activeCategory]
-      const nextMetadata = current.metadata.filter((entry) => entry.id !== entryId)
+      if (!prev) {
+        return prev
+      }
       return {
         ...prev,
         [activeCategory]: {
-          ...current,
-          metadata: nextMetadata,
+          ...prev[activeCategory],
+          modelParameters: {
+            ...prev[activeCategory].modelParameters,
+            [field]: value,
+          },
         },
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'idle', message: '' })
   }
 
-  const handleAddMetadata = () => {
+  const handleSave = async () => {
+    if (!configs || !activeConfig) {
+      return
+    }
+    setSaving(true)
+    setStatus({ type: 'idle', message: '' })
+    try {
+      const response = await fetch(`${backendUrl}/admin/prompts/${activeCategory}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(activeConfig),
+      })
+      if (!response.ok) {
+        throw new Error('save failed')
+      }
+      const payload = (await response.json()) as { config: PromptConfig }
+      const updated = cloneConfig(payload.config)
+      setConfigs((prev) => {
+        if (!prev) {
+          return prev
+        }
+        return {
+          ...prev,
+          [activeCategory]: updated,
+        }
+      })
+      setServerConfigs((prev) => {
+        const base = prev ? { ...prev } : ({} as PromptConfigResponse)
+        base[activeCategory] = cloneConfig(updated)
+        return base
+      })
+      setStatus({ type: 'success', message: '변경 사항을 저장했습니다.' })
+    } catch (err) {
+      setStatus({ type: 'error', message: '저장 중 오류가 발생했습니다. 다시 시도해 주세요.' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRevert = () => {
+    if (!serverConfigs) {
+      return
+    }
+    const baseline = serverConfigs[activeCategory]
+    if (!baseline) {
+      return
+    }
     setConfigs((prev) => {
-      const current = prev[activeCategory]
-      const newEntry: PromptMetadataEntry = {
-        id: createUniqueId(`${activeCategory}-metadata`),
-        key: '',
-        value: '',
+      if (!prev) {
+        return prev
       }
       return {
         ...prev,
-        [activeCategory]: {
-          ...current,
-          metadata: [...current.metadata, newEntry],
-        },
+        [activeCategory]: cloneConfig(baseline),
       }
     })
-    setStatus({ category: null, type: 'idle', message: '' })
+    setStatus({ type: 'success', message: '서버에 저장된 값으로 되돌렸습니다.' })
   }
 
-  const handleSave = () => {
-    setStatus({
-      category: activeCategory,
-      type: 'success',
-      message: '현재 입력값을 임시로 저장했습니다. 백엔드 연동 시 이 로직을 API 호출로 교체하세요.',
+  const handleRestoreDefault = () => {
+    if (!defaults) {
+      return
+    }
+    const fallback = defaults[activeCategory]
+    if (!fallback) {
+      return
+    }
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeCategory]: cloneConfig(fallback),
+      }
     })
+    setStatus({ type: 'success', message: '기본 템플릿을 불러왔습니다.' })
   }
 
-  const handleReset = () => {
-    setConfigs((prev) => ({
-      ...prev,
-      [activeCategory]: cloneConfig(INITIAL_PROMPTS[activeCategory]),
-    }))
-    setStatus({
-      category: activeCategory,
-      type: 'info',
-      message: '초기 템플릿으로 되돌렸습니다.',
-    })
+  if (loading) {
+    return (
+      <PageLayout>
+        <div className="admin-prompts admin-prompts--loading">
+          <PageHeader
+            eyebrow="프롬프트 자산 관리"
+            title="요청 템플릿 & 첨부 자료 설정"
+            subtitle="기능리스트, 테스트케이스, 결함 리포트 등 생성 작업에 필요한 프롬프트를 관리합니다."
+          />
+          <div className="admin-prompts__placeholder">프롬프트 구성을 불러오는 중입니다...</div>
+        </div>
+      </PageLayout>
+    )
+  }
+
+  if (error || !configs || !activeConfig) {
+    return (
+      <PageLayout>
+        <div className="admin-prompts admin-prompts--error">
+          <PageHeader
+            eyebrow="프롬프트 자산 관리"
+            title="요청 템플릿 & 첨부 자료 설정"
+            subtitle="프롬프트 구성을 불러오는 중 문제가 발생했습니다."
+          />
+          <div className="admin-prompts__placeholder admin-prompts__placeholder--error">{error ?? '구성 데이터를 찾을 수 없습니다.'}</div>
+        </div>
+      </PageLayout>
+    )
   }
 
   return (
@@ -346,7 +555,7 @@ export function AdminPromptsPage() {
         <PageHeader
           eyebrow="프롬프트 자산 관리"
           title="요청 템플릿 & 첨부 자료 설정"
-          subtitle="기능리스트, 테스트케이스, 결함 리포트 등 각 생성 작업에 필요한 프롬프트와 첨부 요구사항을 한 곳에서 관리하세요."
+          subtitle="생성 작업에 사용되는 시스템/사용자 프롬프트와 부가 정보를 실시간으로 조정하세요."
         />
 
         <div className="admin-prompts__layout">
@@ -355,260 +564,324 @@ export function AdminPromptsPage() {
               const isActive = item.id === activeCategory
               return (
                 <button
-                  type="button"
                   key={item.id}
-                  className={`admin-prompts__nav-button${isActive ? ' admin-prompts__nav-button--active' : ''}`}
-                  onClick={() => setActiveCategory(item.id)}
+                  type="button"
+                  className={`admin-prompts__nav-item${isActive ? ' admin-prompts__nav-item--active' : ''}`}
+                  onClick={() => {
+                    setActiveCategory(item.id)
+                    setStatus({ type: 'idle', message: '' })
+                  }}
                 >
                   <span className="admin-prompts__nav-label">{item.label}</span>
-                  <span className="admin-prompts__nav-summary">{item.summary}</span>
+                  <span className="admin-prompts__nav-summary">{item.summary || '설명 없음'}</span>
                 </button>
               )
             })}
           </nav>
 
           <section className="admin-prompts__content" aria-live="polite">
-            <header className="admin-prompts__content-header">
-              <h2 className="admin-prompts__content-title">{activeConfig.label}</h2>
-              <p className="admin-prompts__content-description">{activeConfig.summary}</p>
-            </header>
+            <h2 className="admin-prompts__title">{activeConfig.label}</h2>
+            <p className="admin-prompts__summary">{activeConfig.summary || '설명이 비어 있습니다.'}</p>
 
             <div className="admin-prompts__field">
-              <label className="admin-prompts__label" htmlFor="request-description">
-                요청 설명
-              </label>
+              <label className="admin-prompts__label" htmlFor="systemPrompt">시스템 프롬프트</label>
               <textarea
-                id="request-description"
+                id="systemPrompt"
                 className="admin-prompts__textarea"
-                placeholder="요청 의도, 출력물 구성, 톤앤매너 등을 설명해 주세요."
-                value={activeConfig.requestDescription}
-                onChange={(event) => handleUpdateField('requestDescription', event.target.value)}
-                rows={4}
+                value={activeConfig.systemPrompt}
+                onChange={(event) => handleUpdateConfigField('systemPrompt', event.target.value)}
               />
             </div>
 
-            <div className="admin-prompts__grid">
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="system-prompt">
-                  시스템 프롬프트
-                </label>
-                <textarea
-                  id="system-prompt"
-                  className="admin-prompts__textarea"
-                  placeholder="모델에게 줄 역할 및 행동 지침을 입력하세요."
-                  value={activeConfig.systemPrompt}
-                  onChange={(event) => handleUpdateField('systemPrompt', event.target.value)}
-                  rows={6}
-                />
-              </div>
-
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="user-prompt">
-                  사용자 프롬프트 템플릿
-                </label>
-                <textarea
-                  id="user-prompt"
-                  className="admin-prompts__textarea"
-                  placeholder="사용자에게서 전달받는 입력 서식을 정의하세요."
-                  value={activeConfig.userPrompt}
-                  onChange={(event) => handleUpdateField('userPrompt', event.target.value)}
-                  rows={6}
-                />
-              </div>
-            </div>
-
             <div className="admin-prompts__field">
-              <label className="admin-prompts__label" htmlFor="evaluation-notes">
-                출력 검증 & 후처리 메모
-              </label>
+              <label className="admin-prompts__label" htmlFor="userPrompt">기본 사용자 지시</label>
               <textarea
-                id="evaluation-notes"
+                id="userPrompt"
                 className="admin-prompts__textarea"
-                placeholder="출력 검증 체크리스트, 후처리 규칙, 품질 기준 등을 기록하세요."
-                value={activeConfig.evaluationNotes}
-                onChange={(event) => handleUpdateField('evaluationNotes', event.target.value)}
-                rows={4}
+                value={activeConfig.userPrompt}
+                onChange={(event) => handleUpdateConfigField('userPrompt', event.target.value)}
               />
             </div>
 
-            <section className="admin-prompts__group" aria-labelledby="attachments-title">
-              <div className="admin-prompts__group-header">
-                <h3 id="attachments-title" className="admin-prompts__group-title">
-                  첨부 자료 요구사항
-                </h3>
-                <button type="button" className="admin-prompts__secondary" onClick={handleAddAttachment}>
-                  첨부 항목 추가
+            <section className="admin-prompts__group">
+              <header className="admin-prompts__group-header">
+                <h3 className="admin-prompts__group-title">추가 지침 블록</h3>
+                <button type="button" className="admin-prompts__secondary" onClick={handleAddSection}>
+                  + 지침 추가
                 </button>
-              </div>
-              {activeConfig.attachments.length > 0 ? (
+              </header>
+              {activeConfig.userPromptSections.length === 0 ? (
+                <p className="admin-prompts__empty">등록된 지침이 없습니다. 필요한 내용을 추가하세요.</p>
+              ) : (
                 <ul className="admin-prompts__list">
-                  {activeConfig.attachments.map((attachment) => (
-                    <li key={attachment.id} className="admin-prompts__list-item">
-                      <div className="admin-prompts__list-grid">
-                        <div className="admin-prompts__field">
-                          <label className="admin-prompts__label" htmlFor={`${attachment.id}-label`}>
-                            자료 이름
+                  {activeConfig.userPromptSections.map((section) => (
+                    <li key={section.id} className="admin-prompts__list-item">
+                      <div className="admin-prompts__list-row">
+                        <div className="admin-prompts__field admin-prompts__field--half">
+                          <label className="admin-prompts__label" htmlFor={`${section.id}-label`}>
+                            제목
                           </label>
                           <input
-                            id={`${attachment.id}-label`}
-                            type="text"
+                            id={`${section.id}-label`}
                             className="admin-prompts__input"
-                            value={attachment.label}
-                            onChange={(event) =>
-                              handleUpdateAttachment(attachment.id, 'label', event.target.value)
-                            }
+                            value={section.label}
+                            onChange={(event) => handleUpdateSection(section.id, 'label', event.target.value)}
                           />
                         </div>
-
-                        <div className="admin-prompts__field">
-                          <label className="admin-prompts__label" htmlFor={`${attachment.id}-types`}>
-                            허용 확장자 또는 소스
-                          </label>
-                          <input
-                            id={`${attachment.id}-types`}
-                            type="text"
-                            className="admin-prompts__input"
-                            placeholder="예: PDF, XLSX / 또는 Google Drive 폴더 경로"
-                            value={attachment.acceptedTypes}
-                            onChange={(event) =>
-                              handleUpdateAttachment(attachment.id, 'acceptedTypes', event.target.value)
-                            }
-                          />
-                        </div>
-                      </div>
-
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${attachment.id}-description`}>
-                          설명
-                        </label>
-                        <textarea
-                          id={`${attachment.id}-description`}
-                          className="admin-prompts__textarea"
-                          rows={3}
-                          value={attachment.description}
-                          onChange={(event) =>
-                            handleUpdateAttachment(attachment.id, 'description', event.target.value)
-                          }
-                        />
-                      </div>
-
-                      <div className="admin-prompts__list-footer">
-                        <label className="admin-prompts__checkbox">
+                        <label className="admin-prompts__switch">
                           <input
                             type="checkbox"
-                            checked={attachment.required}
-                            onChange={(event) =>
-                              handleToggleAttachmentRequired(attachment.id, event.target.checked)
-                            }
+                            checked={section.enabled}
+                            onChange={(event) => handleUpdateSection(section.id, 'enabled', event.target.checked)}
                           />
-                          필수 첨부
+                          <span>활성화</span>
                         </label>
-
-                        <div className="admin-prompts__notes">
-                          <label className="admin-prompts__label" htmlFor={`${attachment.id}-notes`}>
-                            가이드 메모 (선택)
-                          </label>
-                          <textarea
-                            id={`${attachment.id}-notes`}
-                            className="admin-prompts__textarea"
-                            rows={2}
-                            value={attachment.notes ?? ''}
-                            placeholder="업로드 시 추가 안내가 필요하다면 작성하세요."
-                            onChange={(event) =>
-                              handleUpdateAttachment(attachment.id, 'notes', event.target.value)
-                            }
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          className="admin-prompts__remove"
-                          onClick={() => handleRemoveAttachment(attachment.id)}
-                        >
-                          삭제
-                        </button>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="admin-prompts__empty">등록된 첨부 자료 요구사항이 없습니다. 항목을 추가해 주세요.</div>
-              )}
-            </section>
-
-            <section className="admin-prompts__group" aria-labelledby="metadata-title">
-              <div className="admin-prompts__group-header">
-                <h3 id="metadata-title" className="admin-prompts__group-title">
-                  추가 메타데이터
-                </h3>
-                <button type="button" className="admin-prompts__secondary" onClick={handleAddMetadata}>
-                  메타데이터 추가
-                </button>
-              </div>
-              {activeConfig.metadata.length > 0 ? (
-                <ul className="admin-prompts__list admin-prompts__list--compact">
-                  {activeConfig.metadata.map((entry) => (
-                    <li key={entry.id} className="admin-prompts__list-item">
-                      <div className="admin-prompts__list-grid admin-prompts__list-grid--metadata">
-                        <div className="admin-prompts__field">
-                          <label className="admin-prompts__label" htmlFor={`${entry.id}-key`}>
-                            키
-                          </label>
-                          <input
-                            id={`${entry.id}-key`}
-                            type="text"
-                            className="admin-prompts__input"
-                            value={entry.key}
-                            onChange={(event) =>
-                              handleUpdateMetadata(entry.id, 'key', event.target.value)
-                            }
-                          />
-                        </div>
-                        <div className="admin-prompts__field">
-                          <label className="admin-prompts__label" htmlFor={`${entry.id}-value`}>
-                            값
-                          </label>
-                          <input
-                            id={`${entry.id}-value`}
-                            type="text"
-                            className="admin-prompts__input"
-                            value={entry.value}
-                            onChange={(event) =>
-                              handleUpdateMetadata(entry.id, 'value', event.target.value)
-                            }
-                          />
-                        </div>
+                      <div className="admin-prompts__field">
+                        <label className="admin-prompts__label" htmlFor={`${section.id}-content`}>
+                          내용
+                        </label>
+                        <textarea
+                          id={`${section.id}-content`}
+                          className="admin-prompts__textarea"
+                          value={section.content}
+                          onChange={(event) => handleUpdateSection(section.id, 'content', event.target.value)}
+                        />
                       </div>
                       <button
                         type="button"
                         className="admin-prompts__remove"
-                        onClick={() => handleRemoveMetadata(entry.id)}
+                        onClick={() => handleRemoveSection(section.id)}
+                        aria-label="지침 삭제"
                       >
                         삭제
                       </button>
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <div className="admin-prompts__empty">추가 메타데이터가 없습니다. 필요 시 항목을 추가하세요.</div>
               )}
             </section>
 
-            {status.category === activeCategory && status.message && (
-              <div
-                className={`admin-prompts__status admin-prompts__status--${status.type}`}
-                role={status.type === 'success' ? 'status' : 'note'}
-              >
+            <section className="admin-prompts__group">
+              <h3 className="admin-prompts__group-title">첨부 안내 문구</h3>
+              <div className="admin-prompts__field">
+                <label className="admin-prompts__label" htmlFor="attachmentsHeading">섹션 제목</label>
+                <input
+                  id="attachmentsHeading"
+                  className="admin-prompts__input"
+                  value={activeConfig.scaffolding.attachmentsHeading}
+                  onChange={(event) => handleScaffoldingChange('attachmentsHeading', event.target.value)}
+                />
+              </div>
+              <div className="admin-prompts__field">
+                <label className="admin-prompts__label" htmlFor="attachmentsIntro">소개 문구</label>
+                <textarea
+                  id="attachmentsIntro"
+                  className="admin-prompts__textarea"
+                  value={activeConfig.scaffolding.attachmentsIntro}
+                  onChange={(event) => handleScaffoldingChange('attachmentsIntro', event.target.value)}
+                />
+              </div>
+              <div className="admin-prompts__field">
+                <label className="admin-prompts__label" htmlFor="closingNote">
+                  마무리 문장 ({'{'}context_summary{'}'} 사용 가능)
+                </label>
+                <textarea
+                  id="closingNote"
+                  className="admin-prompts__textarea"
+                  value={activeConfig.scaffolding.closingNote}
+                  onChange={(event) => handleScaffoldingChange('closingNote', event.target.value)}
+                />
+              </div>
+              <div className="admin-prompts__field">
+                <label className="admin-prompts__label" htmlFor="formatWarning">형식 경고</label>
+                <textarea
+                  id="formatWarning"
+                  className="admin-prompts__textarea"
+                  value={activeConfig.scaffolding.formatWarning}
+                  onChange={(event) => handleScaffoldingChange('formatWarning', event.target.value)}
+                />
+              </div>
+            </section>
+
+            <div className="admin-prompts__field">
+              <label className="admin-prompts__label" htmlFor="descriptorTemplate">
+                첨부 설명 템플릿 (사용 가능 키: index, descriptor, label, description, extension, doc_id, notes, source_path)
+              </label>
+              <input
+                id="descriptorTemplate"
+                className="admin-prompts__input"
+                value={activeConfig.attachmentDescriptorTemplate}
+                onChange={(event) => handleDescriptorTemplateChange(event.target.value)}
+              />
+            </div>
+
+            <section className="admin-prompts__group">
+              <header className="admin-prompts__group-header">
+                <h3 className="admin-prompts__group-title">내장 컨텍스트</h3>
+                <button type="button" className="admin-prompts__secondary" onClick={handleAddBuiltinContext}>
+                  + 컨텍스트 추가
+                </button>
+              </header>
+              {activeConfig.builtinContexts.length === 0 ? (
+                <p className="admin-prompts__empty">등록된 내장 컨텍스트가 없습니다.</p>
+              ) : (
+                <ul className="admin-prompts__list">
+                  {activeConfig.builtinContexts.map((context) => (
+                    <li key={context.id} className="admin-prompts__list-item">
+                      <div className="admin-prompts__field">
+                        <label className="admin-prompts__label" htmlFor={`${context.id}-label`}>
+                          이름
+                        </label>
+                        <input
+                          id={`${context.id}-label`}
+                          className="admin-prompts__input"
+                          value={context.label}
+                          onChange={(event) => handleBuiltinContextChange(context.id, 'label', event.target.value)}
+                        />
+                      </div>
+                      <div className="admin-prompts__field">
+                        <label className="admin-prompts__label" htmlFor={`${context.id}-description`}>
+                          설명
+                        </label>
+                        <textarea
+                          id={`${context.id}-description`}
+                          className="admin-prompts__textarea"
+                          value={context.description}
+                          onChange={(event) => handleBuiltinContextChange(context.id, 'description', event.target.value)}
+                        />
+                      </div>
+                      <div className="admin-prompts__field">
+                        <label className="admin-prompts__label" htmlFor={`${context.id}-source`}>
+                          파일 경로
+                        </label>
+                        <input
+                          id={`${context.id}-source`}
+                          className="admin-prompts__input"
+                          value={context.sourcePath}
+                          onChange={(event) => handleBuiltinContextChange(context.id, 'sourcePath', event.target.value)}
+                        />
+                      </div>
+                      <div className="admin-prompts__field">
+                        <label className="admin-prompts__label" htmlFor={`${context.id}-render`}>
+                          렌더링 방식
+                        </label>
+                        <select
+                          id={`${context.id}-render`}
+                          className="admin-prompts__select"
+                          value={context.renderMode}
+                          onChange={(event) => handleBuiltinContextChange(context.id, 'renderMode', event.target.value as PromptBuiltinContext['renderMode'])}
+                        >
+                          <option value="file">파일 그대로</option>
+                          <option value="image">이미지</option>
+                          <option value="xlsx-to-pdf">XLSX → PDF</option>
+                          <option value="text">텍스트</option>
+                        </select>
+                      </div>
+                      <div className="admin-prompts__toggles">
+                        <label className="admin-prompts__switch">
+                          <input
+                            type="checkbox"
+                            checked={context.includeInPrompt}
+                            onChange={(event) => handleToggleBuiltinContext(context.id, 'includeInPrompt', event.target.checked)}
+                          />
+                          <span>첨부에 포함</span>
+                        </label>
+                        <label className="admin-prompts__switch">
+                          <input
+                            type="checkbox"
+                            checked={context.showInAttachmentList}
+                            onChange={(event) => handleToggleBuiltinContext(context.id, 'showInAttachmentList', event.target.checked)}
+                          />
+                          <span>목록에 표시</span>
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        className="admin-prompts__remove"
+                        onClick={() => handleRemoveBuiltinContext(context.id)}
+                        aria-label="내장 컨텍스트 삭제"
+                      >
+                        삭제
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="admin-prompts__group">
+              <h3 className="admin-prompts__group-title">모델 파라미터</h3>
+              <div className="admin-prompts__model-grid">
+                <label className="admin-prompts__model-field">
+                  <span>Temperature</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={activeConfig.modelParameters.temperature}
+                    onChange={(event) => handleModelParameterChange('temperature', Number(event.target.value))}
+                  />
+                </label>
+                <label className="admin-prompts__model-field">
+                  <span>Top-p</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    value={activeConfig.modelParameters.topP}
+                    onChange={(event) => handleModelParameterChange('topP', Number(event.target.value))}
+                  />
+                </label>
+                <label className="admin-prompts__model-field">
+                  <span>Max Output Tokens</span>
+                  <input
+                    type="number"
+                    value={activeConfig.modelParameters.maxOutputTokens}
+                    onChange={(event) => handleModelParameterChange('maxOutputTokens', Number(event.target.value))}
+                  />
+                </label>
+                <label className="admin-prompts__model-field">
+                  <span>Presence Penalty</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={activeConfig.modelParameters.presencePenalty}
+                    onChange={(event) => handleModelParameterChange('presencePenalty', Number(event.target.value))}
+                  />
+                </label>
+                <label className="admin-prompts__model-field">
+                  <span>Frequency Penalty</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={activeConfig.modelParameters.frequencyPenalty}
+                    onChange={(event) => handleModelParameterChange('frequencyPenalty', Number(event.target.value))}
+                  />
+                </label>
+              </div>
+            </section>
+
+            <section className="admin-prompts__group">
+              <h3 className="admin-prompts__group-title">프롬프트 미리보기</h3>
+              <div className="admin-prompts__preview" role="presentation">
+                <pre>{preview || '지침을 입력하면 미리보기가 표시됩니다.'}</pre>
+              </div>
+            </section>
+
+            {status.message && (
+              <div className={`admin-prompts__status admin-prompts__status--${status.type}`}>
                 {status.message}
               </div>
             )}
 
             <div className="admin-prompts__actions">
-              <button type="button" className="admin-prompts__primary" onClick={handleSave}>
-                임시 저장
+              <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
+                {saving ? '저장 중...' : '저장'}
               </button>
-              <button type="button" className="admin-prompts__secondary" onClick={handleReset}>
-                초기값으로 복원
+              <button type="button" className="admin-prompts__secondary" onClick={handleRevert} disabled={saving}>
+                되돌리기
+              </button>
+              <button type="button" className="admin-prompts__secondary" onClick={handleRestoreDefault} disabled={saving}>
+                기본값 적용
               </button>
             </div>
           </section>

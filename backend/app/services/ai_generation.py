@@ -19,6 +19,7 @@ from openai import APIError, OpenAI
 
 from ..config import Settings
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
+from .prompt_config import PromptBuiltinContext, PromptConfigService
 
 
 @dataclass
@@ -45,52 +46,23 @@ class UploadContext:
 class PromptContextPreview:
     descriptor: str
     doc_id: str | None
-
-_PROMPT_TEMPLATES: Dict[str, Dict[str, str]] = {
-    "feature-list": {
-        "system": "당신은 소프트웨어 기획 QA 리드입니다. 업로드된 요구사항을 기반으로 기능 정의서를 작성합니다.",
-        "instruction": (
-            "요구사항 자료에서 주요 기능을 발췌하여 CSV로 정리하세요. "
-            "다음 열을 포함해야 합니다: 대분류, 중분류, 소분류. "
-            "각 열은 템플릿의 계층 구조에 맞춰 핵심 기능을 요약해야 합니다."
-        ),
-    },
-    "testcase-generation": {
-        "system": "당신은 소프트웨어 QA 테스터입니다. 업로드된 요구사항을 읽고 테스트 케이스 초안을 설계합니다.",
-        "instruction": (
-            "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
-            "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
-            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하고, 테스트 결과는 기본값으로 '미실행'을 사용하세요."
-        ),
-    },
-    "defect-report": {
-        "system": "당신은 QA 분석가입니다. 업로드된 테스트 로그와 증적 자료를 바탕으로 결함 요약을 작성합니다.",
-        "instruction": (
-            "자료를 분석해 주요 결함을 요약한 CSV를 작성하세요. 열은 결함 ID, 심각도, 발생 모듈, 현상 요약, 제안 조치입니다. "
-            "결함 ID는 BUG-001 형식을 사용하고, 심각도는 치명/중대/보통/경미 중 하나로 표기합니다."
-        ),
-    },
-    "security-report": {
-        "system": "당신은 보안 컨설턴트입니다. 업로드된 보안 점검 결과를 요약한 리포트를 만듭니다.",
-        "instruction": (
-            "자료를 바탕으로 취약점을 정리한 CSV를 작성하세요. 열은 취약점 ID, 위험도, 영향 영역, 발견 내용, 권장 조치입니다. "
-            "위험도는 높음/중간/낮음 중 하나를 사용합니다."
-        ),
-    },
-    "performance-report": {
-        "system": "당신은 성능 엔지니어입니다. 업로드된 성능 측정 자료를 분석하여 결과를 요약합니다.",
-        "instruction": (
-            "자료를 분석하여 주요 시나리오의 성능을 정리한 CSV를 작성하세요. 열은 시나리오, 평균 응답(ms), 처리량(TPS), 자원 사용 요약, 개선 제안입니다."
-        ),
-    },
-}
+    include_in_attachment_list: bool
+    metadata: Dict[str, Any]
 
 logger = logging.getLogger(__name__)
 
 
 class AIGenerationService:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        prompt_config_service: PromptConfigService | None = None,
+    ):
         self._settings = settings
+        if prompt_config_service is None:
+            storage_path = settings.tokens_path.with_name("prompt_configs.json")
+            prompt_config_service = PromptConfigService(storage_path)
+        self._prompt_config_service = prompt_config_service
         self._client: OpenAI | None = None
 
     def _get_client(self) -> OpenAI:
@@ -102,12 +74,17 @@ class AIGenerationService:
         return self._client
 
     @staticmethod
-    def _descriptor_from_context(context: UploadContext) -> tuple[str, str | None]:
+    def _descriptor_from_context(
+        context: UploadContext,
+    ) -> tuple[str, str | None, bool, Dict[str, Any]]:
         metadata = context.metadata or {}
         role = str(metadata.get("role") or "").strip()
         label = str(
             metadata.get("label") or metadata.get("description") or ""
         ).strip()
+        description = str(metadata.get("description") or "").strip()
+        notes = str(metadata.get("notes") or "").strip()
+        source_path = str(metadata.get("source_path") or "").strip()
 
         extension = AIGenerationService._extension(context.upload)
 
@@ -125,7 +102,17 @@ class AIGenerationService:
         doc_id = (
             str(metadata.get("id")) if role == "required" and metadata.get("id") else None
         )
-        return descriptor, doc_id
+
+        include_in_attachment_list = bool(metadata.get("show_in_attachment_list", True))
+        preview_metadata: Dict[str, Any] = {
+            "label": label or context.upload.name,
+            "description": description,
+            "role": role,
+            "extension": extension,
+            "notes": notes,
+            "source_path": source_path,
+        }
+        return descriptor, doc_id, include_in_attachment_list, preview_metadata
 
     @staticmethod
     def _extension(upload: BufferedUpload) -> str:
@@ -161,36 +148,42 @@ class AIGenerationService:
         return "file"
 
     @staticmethod
-    def _closing_note(menu_id: str, contexts: List[PromptContextPreview]) -> str | None:
+    def _context_summary(menu_id: str, contexts: List[PromptContextPreview]) -> str:
         if not contexts:
-            return None
+            return ""
 
         def describe(preferred_ids: List[str]) -> str:
             ordered: List[str] = []
             for doc_id in preferred_ids:
                 match = next(
-                    (context.descriptor for context in contexts if context.doc_id == doc_id),
+                    (
+                        context.metadata.get("label")
+                        or context.descriptor
+                        for context in contexts
+                        if context.doc_id == doc_id
+                    ),
                     None,
                 )
                 if match:
                     ordered.append(match)
             if len(ordered) == len(preferred_ids):
                 return ", ".join(ordered)
-            return ", ".join(context.descriptor for context in contexts)
+            return ", ".join(
+                context.metadata.get("label") or context.descriptor
+                for context in contexts
+            )
 
         if menu_id == "feature-list":
             description = describe(["user-manual", "configuration", "vendor-feature-list"])
-            return (
-                f"위 자료는 {description}입니다. 이 자료를 활용하여 기능리스트를 작성해 주세요."
-            )
+            return description
 
         if menu_id == "testcase-generation":
             description = describe(["user-manual", "configuration", "vendor-feature-list"])
-            return (
-                f"위 자료는 {description}입니다. 이 자료를 바탕으로 테스트케이스를 작성해 주세요."
-            )
+            return description
 
-        return None
+        return ", ".join(
+            context.metadata.get("label") or context.descriptor for context in contexts
+        )
 
     @staticmethod
     def _build_context_previews(
@@ -198,9 +191,21 @@ class AIGenerationService:
     ) -> List[PromptContextPreview]:
         previews: List[PromptContextPreview] = []
         for context in contexts:
-            descriptor, doc_id = AIGenerationService._descriptor_from_context(context)
+            (
+                descriptor,
+                doc_id,
+                include_in_attachment_list,
+                metadata,
+            ) = AIGenerationService._descriptor_from_context(context)
             cleaned = descriptor.strip() or context.upload.name
-            previews.append(PromptContextPreview(descriptor=cleaned, doc_id=doc_id))
+            previews.append(
+                PromptContextPreview(
+                    descriptor=cleaned,
+                    doc_id=doc_id,
+                    include_in_attachment_list=include_in_attachment_list,
+                    metadata=metadata,
+                )
+            )
         return previews
 
     async def _upload_openai_file(self, client: OpenAI, context: UploadContext) -> str:
@@ -239,9 +244,11 @@ class AIGenerationService:
         return file_id
 
     async def _cleanup_openai_files(
-        self, client: OpenAI, file_ids: Iterable[str]
+        self, client: OpenAI, file_records: Iterable[tuple[str, bool]]
     ) -> None:
-        for file_id in file_ids:
+        for file_id, skip_cleanup in file_records:
+            if skip_cleanup:
+                continue
             try:
                 await asyncio.to_thread(client.files.delete, file_id=file_id)
             except Exception as exc:  # pragma: no cover - 로그 목적
@@ -265,9 +272,12 @@ class AIGenerationService:
         uploads: List[UploadFile],
         metadata: List[Dict[str, Any]] | None = None,
     ) -> GeneratedCsv:
-        prompt = _PROMPT_TEMPLATES.get(menu_id)
-        if not prompt:
-            raise HTTPException(status_code=404, detail="지원하지 않는 생성 메뉴입니다.")
+        try:
+            prompt_config = self._prompt_config_service.get_runtime_prompt(menu_id)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail="지원하지 않는 생성 메뉴입니다."
+            ) from exc
 
         if not uploads:
             raise HTTPException(status_code=422, detail="업로드된 자료가 없습니다. 파일을 추가해 주세요.")
@@ -293,22 +303,39 @@ class AIGenerationService:
             entry = metadata[index] if index < len(metadata) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
-        contexts.extend(self._builtin_attachment_contexts(menu_id))
+        contexts.extend(
+            self._builtin_attachment_contexts(menu_id, prompt_config.builtin_contexts)
+        )
 
         client = self._get_client()
-        uploaded_file_ids: List[str] = []
+        uploaded_file_records: List[tuple[str, bool]] = []
         uploaded_attachments: List[AttachmentMetadata] = []
 
         try:
             context_previews = self._build_context_previews(contexts)
-            closing_note = self._closing_note(menu_id, context_previews)
+            context_summary = self._context_summary(menu_id, context_previews)
 
-            descriptor_lines = [
-                f"{index}. {preview.descriptor}"
-                for index, preview in enumerate(context_previews, start=1)
-                if preview.descriptor.strip()
-            ]
-            descriptor_section = "\n".join(descriptor_lines)
+            descriptor_template = (
+                prompt_config.attachment_descriptor_template or "{{index}}. {{descriptor}}"
+            )
+            descriptor_lines: List[str] = []
+            for index, preview in enumerate(context_previews, start=1):
+                if not preview.include_in_attachment_list:
+                    continue
+                replacements: Dict[str, str] = {
+                    "index": str(index),
+                    "descriptor": preview.descriptor,
+                    "doc_id": preview.doc_id or "",
+                }
+                for key, value in preview.metadata.items():
+                    replacements[key] = str(value) if value is not None else ""
+                line = descriptor_template
+                for key, value in replacements.items():
+                    line = line.replace(f"{{{{{key}}}}}", value)
+                descriptor_lines.append(line.strip())
+            descriptor_section = "\n".join(
+                line for line in descriptor_lines if line.strip()
+            )
 
             for context in contexts:
                 kind = self._attachment_kind(context.upload)
@@ -323,29 +350,59 @@ class AIGenerationService:
                     continue
 
                 file_id = await self._upload_openai_file(client, context)
-                uploaded_file_ids.append(file_id)
+                metadata_entry = context.metadata or {}
+                skip_cleanup = bool(metadata_entry.get("skip_cleanup"))
+                uploaded_file_records.append((file_id, skip_cleanup))
                 uploaded_attachments.append(
                     {"file_id": file_id, "kind": kind}
                 )
 
-            user_prompt_parts = [
-                prompt["instruction"],
-                (
-                    "다음 첨부 파일을 참고하여 요구사항을 분석하고 지침에 맞는 CSV를 작성하세요."
-                ),
-                "각 파일은 업로드된 순서대로 첨부되어 있습니다.",
-            ]
-            if descriptor_section:
-                user_prompt_parts.append("첨부 파일 목록:")
-                user_prompt_parts.append(descriptor_section)
+            user_prompt_parts: List[str] = []
+
+            base_instruction = prompt_config.user_prompt.strip()
+            if base_instruction:
+                user_prompt_parts.append(base_instruction)
+
+            for section in prompt_config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label = section.label.strip()
+                content = section.content.strip()
+                if label and content:
+                    user_prompt_parts.append(f"{label}\n{content}")
+                elif label or content:
+                    user_prompt_parts.append(label or content)
+
+            if contexts:
+                heading = prompt_config.scaffolding.attachments_heading.strip()
+                intro = prompt_config.scaffolding.attachments_intro.strip()
+                if heading:
+                    user_prompt_parts.append(heading)
+                if intro:
+                    user_prompt_parts.append(intro)
+                if descriptor_section:
+                    user_prompt_parts.append(descriptor_section)
+
+            closing_template = prompt_config.scaffolding.closing_note.strip()
+            if closing_template:
+                closing_note = closing_template.replace(
+                    "{{context_summary}}", context_summary
+                ).strip()
+            else:
+                closing_note = context_summary.strip()
             if closing_note:
                 user_prompt_parts.append(closing_note)
-            user_prompt_parts.append("CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.")
+
+            format_warning = prompt_config.scaffolding.format_warning.strip()
+            if format_warning:
+                user_prompt_parts.append(format_warning)
 
             user_prompt = "\n\n".join(part for part in user_prompt_parts if part.strip())
 
             messages = [
-                OpenAIMessageBuilder.text_message("system", prompt["system"]),
+                OpenAIMessageBuilder.text_message(
+                    "system", prompt_config.system_prompt
+                ),
                 OpenAIMessageBuilder.text_message(
                     "user",
                     user_prompt,
@@ -360,18 +417,22 @@ class AIGenerationService:
                 extra={
                     "project_id": project_id,
                     "menu_id": menu_id,
-                    "system_prompt": prompt["system"],
+                    "system_prompt": prompt_config.system_prompt,
                     "user_prompt": user_prompt,
                 },
             )
 
+            params = prompt_config.model_parameters
             try:
                 response = await asyncio.to_thread(
                     client.responses.create,
                     model=self._settings.openai_model,
                     input=normalized_messages,
-                    temperature=0.2,
-                    max_output_tokens=1500,
+                    temperature=params.temperature,
+                    top_p=params.top_p,
+                    max_output_tokens=params.max_output_tokens,
+                    presence_penalty=params.presence_penalty,
+                    frequency_penalty=params.frequency_penalty,
                 )
             except APIError as exc:
                 raise HTTPException(status_code=502, detail=f"OpenAI 호출 중 오류가 발생했습니다: {exc}") from exc
@@ -393,8 +454,8 @@ class AIGenerationService:
 
             return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
         finally:
-            if uploaded_file_ids:
-                await self._cleanup_openai_files(client, uploaded_file_ids)
+            if uploaded_file_records:
+                await self._cleanup_openai_files(client, uploaded_file_records)
 
     @staticmethod
     def _image_data_url(upload: BufferedUpload) -> str:
@@ -410,64 +471,124 @@ class AIGenerationService:
         encoded = base64.b64encode(upload.content).decode("ascii")
         return f"data:{media_type};base64,{encoded}"
 
-    @staticmethod
-    def _builtin_attachment_contexts(menu_id: str) -> List[UploadContext]:
-        if menu_id != "feature-list":
-            return []
+    def _builtin_attachment_contexts(
+        self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]
+    ) -> List[UploadContext]:
+        contexts: List[UploadContext] = []
+        for builtin in builtin_contexts:
+            if not builtin.include_in_prompt:
+                continue
+            upload = self._load_builtin_upload(menu_id, builtin)
+            metadata: Dict[str, Any] = {
+                "role": "additional",
+                "label": builtin.label,
+                "description": builtin.description,
+                "source_path": builtin.source_path,
+                "show_in_attachment_list": builtin.show_in_attachment_list,
+                "skip_cleanup": True,
+            }
+            contexts.append(UploadContext(upload=upload, metadata=metadata))
+        return contexts
 
-        template_path = (
-            Path(__file__).resolve().parents[2]
-            / "template"
-            / "가.계획"
-            / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
+    def _load_builtin_upload(
+        self, menu_id: str, builtin: PromptBuiltinContext
+    ) -> BufferedUpload:
+        base_path = Path(__file__).resolve().parents[2]
+        source_path = (base_path / builtin.source_path).resolve()
+        if builtin.render_mode == "xlsx-to-pdf":
+            return self._load_xlsx_as_pdf(menu_id, source_path, builtin.label)
+
+        try:
+            content = source_path.read_bytes()
+        except FileNotFoundError as exc:
+            logger.error(
+                "내장 컨텍스트 파일을 찾을 수 없습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": str(source_path),
+                    "label": builtin.label,
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="내장 컨텍스트 파일을 찾을 수 없습니다.",
+            ) from exc
+        except OSError as exc:
+            logger.error(
+                "내장 컨텍스트 파일을 읽는 중 오류가 발생했습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": str(source_path),
+                    "label": builtin.label,
+                    "error": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="내장 컨텍스트 파일을 읽는 중 오류가 발생했습니다.",
+            ) from exc
+
+        guessed_type, _ = mimetypes.guess_type(source_path.name)
+        if builtin.render_mode == "text":
+            content_type = "text/plain; charset=utf-8"
+        elif builtin.render_mode == "image":
+            content_type = guessed_type or "image/png"
+        else:
+            content_type = guessed_type or "application/octet-stream"
+
+        return BufferedUpload(
+            name=source_path.name,
+            content=content,
+            content_type=content_type,
         )
 
-        upload = AIGenerationService._load_feature_template_pdf(menu_id, template_path)
-
-        metadata: Dict[str, Any] = {
-            "role": "additional",
-            "label": "기능리스트 예제 양식",
-        }
-
-        return [UploadContext(upload=upload, metadata=metadata)]
-
     @staticmethod
-    def _load_feature_template_pdf(menu_id: str, template_path: Path) -> BufferedUpload:
+    def _load_xlsx_as_pdf(menu_id: str, template_path: Path, label: str) -> BufferedUpload:
         try:
             content = template_path.read_bytes()
         except FileNotFoundError as exc:
             logger.error(
-                "기능리스트 예제 파일을 찾을 수 없습니다.",
-                extra={"menu_id": menu_id, "path": str(template_path)},
+                "내장 XLSX 템플릿을 찾을 수 없습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": str(template_path),
+                    "label": label,
+                },
             )
             raise HTTPException(
                 status_code=500,
-                detail="기능리스트 예제 파일을 찾을 수 없습니다.",
+                detail="내장 XLSX 템플릿을 찾을 수 없습니다.",
             ) from exc
         except OSError as exc:
             logger.error(
-                "기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
-                extra={"menu_id": menu_id, "path": str(template_path), "error": str(exc)},
+                "내장 XLSX 템플릿을 읽는 중 오류가 발생했습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": str(template_path),
+                    "label": label,
+                    "error": str(exc),
+                },
             )
             raise HTTPException(
                 status_code=500,
-                detail="기능리스트 예제 파일을 읽는 중 오류가 발생했습니다.",
+                detail="내장 XLSX 템플릿을 읽는 중 오류가 발생했습니다.",
             ) from exc
 
         try:
             rows = AIGenerationService._parse_xlsx_rows(content)
         except ValueError as exc:
             logger.error(
-                "기능리스트 예제 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+                "내장 XLSX 템플릿을 PDF로 변환하는 중 오류가 발생했습니다.",
                 extra={
                     "menu_id": menu_id,
                     "path": str(template_path),
+                    "label": label,
                     "error": str(exc),
                 },
             )
             raise HTTPException(
                 status_code=500,
-                detail="기능리스트 예제 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+                detail="내장 XLSX 템플릿을 PDF로 변환하는 중 오류가 발생했습니다.",
             ) from exc
 
         pdf_bytes = AIGenerationService._rows_to_pdf(rows)
