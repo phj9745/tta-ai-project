@@ -92,6 +92,22 @@ function cloneModelParameters(parameters: PromptModelParameters): PromptModelPar
   return { ...parameters }
 }
 
+function cloneSection(section: PromptSection): PromptSection {
+  return { ...section }
+}
+
+function cloneScaffolding(scaffolding: PromptScaffolding): PromptScaffolding {
+  return { ...scaffolding }
+}
+
+function cloneBuiltinContext(context: BuiltinContext): BuiltinContext {
+  return { ...context }
+}
+
+function cloneModelParameters(parameters: ModelParameters): ModelParameters {
+  return { ...parameters }
+}
+
 function cloneConfig(config: PromptConfig): PromptConfig {
   return {
     ...config,
