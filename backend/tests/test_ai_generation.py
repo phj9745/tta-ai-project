@@ -112,8 +112,12 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     ]
     assert [entry["name"] for entry in stub_client.files.created] == [
         "사용자_매뉴얼.docx",
-        "GS-B-XX-XXXX 기능리스트 v1.0.xlsx",
+        "GS-B-XX-XXXX 기능리스트 v1.0.csv",
     ]
+
+    template_upload = stub_client.files.created[1]
+    assert isinstance(template_upload["content"], bytes)
+    assert not template_upload["content"].startswith(b"PK")
 
     # The response payload should include input_file parts for each uploaded file.
     assert len(stub_client.responses.calls) == 1
