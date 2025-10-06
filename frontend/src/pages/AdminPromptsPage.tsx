@@ -189,10 +189,11 @@ export function AdminPromptsPage() {
         setConfigs(current)
         setServerConfigs(cloneConfigMap(payload.current))
         setDefaults(fallback)
-      } catch (err) {
+      } catch (caughtError) {
         if (controller.signal.aborted) {
           return
         }
+        console.error(caughtError)
         setError('프롬프트 구성을 불러오는 중 오류가 발생했습니다.')
       } finally {
         setLoading(false)
@@ -456,7 +457,8 @@ export function AdminPromptsPage() {
         return base
       })
       setStatus({ type: 'success', message: '변경 사항을 저장했습니다.' })
-    } catch (err) {
+    } catch (caughtError) {
+      console.error(caughtError)
       setStatus({ type: 'error', message: '저장 중 오류가 발생했습니다. 다시 시도해 주세요.' })
     } finally {
       setSaving(false)
@@ -564,309 +566,333 @@ export function AdminPromptsPage() {
           </nav>
 
           <section className="admin-prompts__content" aria-live="polite">
-            <h2 className="admin-prompts__title">{activeConfig.label}</h2>
-            <p className="admin-prompts__summary">{activeConfig.summary || '설명이 비어 있습니다.'}</p>
+            <header className="admin-prompts__content-header">
+              <h2 className="admin-prompts__title">{activeConfig.label}</h2>
+              <p className="admin-prompts__summary">{activeConfig.summary || '설명이 비어 있습니다.'}</p>
+            </header>
 
-            <div className="admin-prompts__field">
-              <label className="admin-prompts__label" htmlFor="systemPrompt">시스템 프롬프트</label>
-              <textarea
-                id="systemPrompt"
-                className="admin-prompts__textarea"
-                value={activeConfig.systemPrompt}
-                onChange={(event) => handleUpdateConfigField('systemPrompt', event.target.value)}
-              />
-            </div>
-
-            <div className="admin-prompts__field">
-              <label className="admin-prompts__label" htmlFor="userPrompt">기본 사용자 지시</label>
-              <textarea
-                id="userPrompt"
-                className="admin-prompts__textarea"
-                value={activeConfig.userPrompt}
-                onChange={(event) => handleUpdateConfigField('userPrompt', event.target.value)}
-              />
-            </div>
-
-            <section className="admin-prompts__group">
-              <header className="admin-prompts__group-header">
-                <h3 className="admin-prompts__group-title">추가 지침 블록</h3>
-                <button type="button" className="admin-prompts__secondary" onClick={handleAddSection}>
-                  + 지침 추가
-                </button>
-              </header>
-              {activeConfig.userPromptSections.length === 0 ? (
-                <p className="admin-prompts__empty">등록된 지침이 없습니다. 필요한 내용을 추가하세요.</p>
-              ) : (
-                <ul className="admin-prompts__list">
-                  {activeConfig.userPromptSections.map((section) => (
-                    <li key={section.id} className="admin-prompts__list-item">
-                      <div className="admin-prompts__list-row">
-                        <div className="admin-prompts__field admin-prompts__field--half">
-                          <label className="admin-prompts__label" htmlFor={`${section.id}-label`}>
-                            제목
-                          </label>
-                          <input
-                            id={`${section.id}-label`}
-                            className="admin-prompts__input"
-                            value={section.label}
-                            onChange={(event) => handleUpdateSection(section.id, 'label', event.target.value)}
-                          />
-                        </div>
-                        <label className="admin-prompts__switch">
-                          <input
-                            type="checkbox"
-                            checked={section.enabled}
-                            onChange={(event) => handleUpdateSection(section.id, 'enabled', event.target.checked)}
-                          />
-                          <span>활성화</span>
-                        </label>
-                      </div>
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${section.id}-content`}>
-                          내용
-                        </label>
-                        <textarea
-                          id={`${section.id}-content`}
-                          className="admin-prompts__textarea"
-                          value={section.content}
-                          onChange={(event) => handleUpdateSection(section.id, 'content', event.target.value)}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        className="admin-prompts__remove"
-                        onClick={() => handleRemoveSection(section.id)}
-                        aria-label="지침 삭제"
-                      >
-                        삭제
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="admin-prompts__group">
-              <h3 className="admin-prompts__group-title">첨부 안내 문구</h3>
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="attachmentsHeading">섹션 제목</label>
-                <input
-                  id="attachmentsHeading"
-                  className="admin-prompts__input"
-                  value={activeConfig.scaffolding.attachmentsHeading}
-                  onChange={(event) => handleScaffoldingChange('attachmentsHeading', event.target.value)}
-                />
-              </div>
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="attachmentsIntro">소개 문구</label>
-                <textarea
-                  id="attachmentsIntro"
-                  className="admin-prompts__textarea"
-                  value={activeConfig.scaffolding.attachmentsIntro}
-                  onChange={(event) => handleScaffoldingChange('attachmentsIntro', event.target.value)}
-                />
-              </div>
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="closingNote">
-                  마무리 문장 ({'{'}context_summary{'}'} 사용 가능)
-                </label>
-                <textarea
-                  id="closingNote"
-                  className="admin-prompts__textarea"
-                  value={activeConfig.scaffolding.closingNote}
-                  onChange={(event) => handleScaffoldingChange('closingNote', event.target.value)}
-                />
-              </div>
-              <div className="admin-prompts__field">
-                <label className="admin-prompts__label" htmlFor="formatWarning">형식 경고</label>
-                <textarea
-                  id="formatWarning"
-                  className="admin-prompts__textarea"
-                  value={activeConfig.scaffolding.formatWarning}
-                  onChange={(event) => handleScaffoldingChange('formatWarning', event.target.value)}
-                />
-              </div>
-            </section>
-
-            <div className="admin-prompts__field">
-              <label className="admin-prompts__label" htmlFor="descriptorTemplate">
-                첨부 설명 템플릿 (사용 가능 키: index, descriptor, label, description, extension, doc_id, notes, source_path)
-              </label>
-              <input
-                id="descriptorTemplate"
-                className="admin-prompts__input"
-                value={activeConfig.attachmentDescriptorTemplate}
-                onChange={(event) => handleDescriptorTemplateChange(event.target.value)}
-              />
-            </div>
-
-            <section className="admin-prompts__group">
-              <header className="admin-prompts__group-header">
-                <h3 className="admin-prompts__group-title">내장 컨텍스트</h3>
-                <button type="button" className="admin-prompts__secondary" onClick={handleAddBuiltinContext}>
-                  + 컨텍스트 추가
-                </button>
-              </header>
-              {activeConfig.builtinContexts.length === 0 ? (
-                <p className="admin-prompts__empty">등록된 내장 컨텍스트가 없습니다.</p>
-              ) : (
-                <ul className="admin-prompts__list">
-                  {activeConfig.builtinContexts.map((context) => (
-                    <li key={context.id} className="admin-prompts__list-item">
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${context.id}-label`}>
-                          이름
-                        </label>
-                        <input
-                          id={`${context.id}-label`}
-                          className="admin-prompts__input"
-                          value={context.label}
-                          onChange={(event) => handleBuiltinContextChange(context.id, 'label', event.target.value)}
-                        />
-                      </div>
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${context.id}-description`}>
-                          설명
-                        </label>
-                        <textarea
-                          id={`${context.id}-description`}
-                          className="admin-prompts__textarea"
-                          value={context.description}
-                          onChange={(event) => handleBuiltinContextChange(context.id, 'description', event.target.value)}
-                        />
-                      </div>
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${context.id}-source`}>
-                          파일 경로
-                        </label>
-                        <input
-                          id={`${context.id}-source`}
-                          className="admin-prompts__input"
-                          value={context.sourcePath}
-                          onChange={(event) => handleBuiltinContextChange(context.id, 'sourcePath', event.target.value)}
-                        />
-                      </div>
-                      <div className="admin-prompts__field">
-                        <label className="admin-prompts__label" htmlFor={`${context.id}-render`}>
-                          렌더링 방식
-                        </label>
-                        <select
-                          id={`${context.id}-render`}
-                          className="admin-prompts__select"
-                          value={context.renderMode}
-                          onChange={(event) => handleBuiltinContextChange(context.id, 'renderMode', event.target.value as PromptBuiltinContext['renderMode'])}
-                        >
-                          <option value="file">파일 그대로</option>
-                          <option value="image">이미지</option>
-                          <option value="xlsx-to-pdf">XLSX → PDF</option>
-                          <option value="text">텍스트</option>
-                        </select>
-                      </div>
-                      <div className="admin-prompts__toggles">
-                        <label className="admin-prompts__switch">
-                          <input
-                            type="checkbox"
-                            checked={context.includeInPrompt}
-                            onChange={(event) => handleToggleBuiltinContext(context.id, 'includeInPrompt', event.target.checked)}
-                          />
-                          <span>첨부에 포함</span>
-                        </label>
-                        <label className="admin-prompts__switch">
-                          <input
-                            type="checkbox"
-                            checked={context.showInAttachmentList}
-                            onChange={(event) => handleToggleBuiltinContext(context.id, 'showInAttachmentList', event.target.checked)}
-                          />
-                          <span>목록에 표시</span>
-                        </label>
-                      </div>
-                      <button
-                        type="button"
-                        className="admin-prompts__remove"
-                        onClick={() => handleRemoveBuiltinContext(context.id)}
-                        aria-label="내장 컨텍스트 삭제"
-                      >
-                        삭제
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="admin-prompts__group">
-              <h3 className="admin-prompts__group-title">모델 파라미터</h3>
-              <div className="admin-prompts__model-grid">
-                <label className="admin-prompts__model-field">
-                  <span>Temperature</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    value={activeConfig.modelParameters.temperature}
-                    onChange={(event) => handleModelParameterChange('temperature', Number(event.target.value))}
+            <div className="admin-prompts__content-body">
+              <div className="admin-prompts__main">
+                <div className="admin-prompts__field">
+                  <label className="admin-prompts__label" htmlFor="systemPrompt">시스템 프롬프트</label>
+                  <textarea
+                    id="systemPrompt"
+                    className="admin-prompts__textarea"
+                    value={activeConfig.systemPrompt}
+                    onChange={(event) => handleUpdateConfigField('systemPrompt', event.target.value)}
                   />
-                </label>
-                <label className="admin-prompts__model-field">
-                  <span>Top-p</span>
-                  <input
-                    type="number"
-                    step="0.05"
-                    value={activeConfig.modelParameters.topP}
-                    onChange={(event) => handleModelParameterChange('topP', Number(event.target.value))}
-                  />
-                </label>
-                <label className="admin-prompts__model-field">
-                  <span>Max Output Tokens</span>
-                  <input
-                    type="number"
-                    value={activeConfig.modelParameters.maxOutputTokens}
-                    onChange={(event) => handleModelParameterChange('maxOutputTokens', Number(event.target.value))}
-                  />
-                </label>
-                <label className="admin-prompts__model-field">
-                  <span>Presence Penalty</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={activeConfig.modelParameters.presencePenalty}
-                    onChange={(event) => handleModelParameterChange('presencePenalty', Number(event.target.value))}
-                  />
-                </label>
-                <label className="admin-prompts__model-field">
-                  <span>Frequency Penalty</span>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={activeConfig.modelParameters.frequencyPenalty}
-                    onChange={(event) => handleModelParameterChange('frequencyPenalty', Number(event.target.value))}
-                  />
-                </label>
-              </div>
-            </section>
+                </div>
 
-            <section className="admin-prompts__group">
-              <h3 className="admin-prompts__group-title">프롬프트 미리보기</h3>
-              <div className="admin-prompts__preview" role="presentation">
-                <pre>{preview || '지침을 입력하면 미리보기가 표시됩니다.'}</pre>
-              </div>
-            </section>
+                <div className="admin-prompts__field">
+                  <label className="admin-prompts__label" htmlFor="userPrompt">기본 사용자 지시</label>
+                  <textarea
+                    id="userPrompt"
+                    className="admin-prompts__textarea"
+                    value={activeConfig.userPrompt}
+                    onChange={(event) => handleUpdateConfigField('userPrompt', event.target.value)}
+                  />
+                </div>
 
-            {status.message && (
-              <div className={`admin-prompts__status admin-prompts__status--${status.type}`}>
-                {status.message}
-              </div>
-            )}
+                <section className="admin-prompts__group">
+                  <header className="admin-prompts__group-header">
+                    <h3 className="admin-prompts__group-title">추가 지침 블록</h3>
+                    <button type="button" className="admin-prompts__secondary" onClick={handleAddSection}>
+                      + 지침 추가
+                    </button>
+                  </header>
+                  {activeConfig.userPromptSections.length === 0 ? (
+                    <p className="admin-prompts__empty">등록된 지침이 없습니다. 필요한 내용을 추가하세요.</p>
+                  ) : (
+                    <ul className="admin-prompts__list">
+                      {activeConfig.userPromptSections.map((section) => (
+                        <li key={section.id} className="admin-prompts__list-item">
+                          <div className="admin-prompts__list-row">
+                            <div className="admin-prompts__field admin-prompts__field--half">
+                              <label className="admin-prompts__label" htmlFor={`${section.id}-label`}>
+                                제목
+                              </label>
+                              <input
+                                id={`${section.id}-label`}
+                                className="admin-prompts__input"
+                                value={section.label}
+                                onChange={(event) => handleUpdateSection(section.id, 'label', event.target.value)}
+                              />
+                            </div>
+                            <label className="admin-prompts__switch">
+                              <input
+                                type="checkbox"
+                                checked={section.enabled}
+                                onChange={(event) => handleUpdateSection(section.id, 'enabled', event.target.checked)}
+                              />
+                              <span>활성화</span>
+                            </label>
+                          </div>
+                          <div className="admin-prompts__field">
+                            <label className="admin-prompts__label" htmlFor={`${section.id}-content`}>
+                              내용
+                            </label>
+                            <textarea
+                              id={`${section.id}-content`}
+                              className="admin-prompts__textarea"
+                              value={section.content}
+                              onChange={(event) => handleUpdateSection(section.id, 'content', event.target.value)}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            className="admin-prompts__remove"
+                            onClick={() => handleRemoveSection(section.id)}
+                            aria-label="지침 삭제"
+                          >
+                            삭제
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
 
-            <div className="admin-prompts__actions">
-              <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
-                {saving ? '저장 중...' : '저장'}
-              </button>
-              <button type="button" className="admin-prompts__secondary" onClick={handleRevert} disabled={saving}>
-                되돌리기
-              </button>
-              <button type="button" className="admin-prompts__secondary" onClick={handleRestoreDefault} disabled={saving}>
-                기본값 적용
-              </button>
+                <section className="admin-prompts__group">
+                  <h3 className="admin-prompts__group-title">첨부 안내 문구</h3>
+                  <div className="admin-prompts__field-grid">
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="attachmentsHeading">섹션 제목</label>
+                      <input
+                        id="attachmentsHeading"
+                        className="admin-prompts__input"
+                        value={activeConfig.scaffolding.attachmentsHeading}
+                        onChange={(event) => handleScaffoldingChange('attachmentsHeading', event.target.value)}
+                      />
+                    </div>
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="attachmentsIntro">소개 문구</label>
+                      <textarea
+                        id="attachmentsIntro"
+                        className="admin-prompts__textarea"
+                        value={activeConfig.scaffolding.attachmentsIntro}
+                        onChange={(event) => handleScaffoldingChange('attachmentsIntro', event.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="admin-prompts__field-grid">
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="closingNote">
+                        마무리 문장 ({'{'}context_summary{'}'} 사용 가능)
+                      </label>
+                      <textarea
+                        id="closingNote"
+                        className="admin-prompts__textarea"
+                        value={activeConfig.scaffolding.closingNote}
+                        onChange={(event) => handleScaffoldingChange('closingNote', event.target.value)}
+                      />
+                    </div>
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="formatWarning">형식 경고</label>
+                      <textarea
+                        id="formatWarning"
+                        className="admin-prompts__textarea"
+                        value={activeConfig.scaffolding.formatWarning}
+                        onChange={(event) => handleScaffoldingChange('formatWarning', event.target.value)}
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <div className="admin-prompts__field">
+                  <label className="admin-prompts__label" htmlFor="descriptorTemplate">
+                    첨부 설명 템플릿 (사용 가능 키: index, descriptor, label, description, extension, doc_id, notes, source_path)
+                  </label>
+                  <input
+                    id="descriptorTemplate"
+                    className="admin-prompts__input"
+                    value={activeConfig.attachmentDescriptorTemplate}
+                    onChange={(event) => handleDescriptorTemplateChange(event.target.value)}
+                  />
+                </div>
+
+                <section className="admin-prompts__group">
+                  <header className="admin-prompts__group-header">
+                    <h3 className="admin-prompts__group-title">내장 컨텍스트</h3>
+                    <button type="button" className="admin-prompts__secondary" onClick={handleAddBuiltinContext}>
+                      + 컨텍스트 추가
+                    </button>
+                  </header>
+                  {activeConfig.builtinContexts.length === 0 ? (
+                    <p className="admin-prompts__empty">등록된 내장 컨텍스트가 없습니다.</p>
+                  ) : (
+                    <ul className="admin-prompts__list">
+                      {activeConfig.builtinContexts.map((context) => (
+                        <li key={context.id} className="admin-prompts__list-item">
+                          <div className="admin-prompts__field">
+                            <label className="admin-prompts__label" htmlFor={`${context.id}-label`}>
+                              이름
+                            </label>
+                            <input
+                              id={`${context.id}-label`}
+                              className="admin-prompts__input"
+                              value={context.label}
+                              onChange={(event) => handleBuiltinContextChange(context.id, 'label', event.target.value)}
+                            />
+                          </div>
+                          <div className="admin-prompts__field">
+                            <label className="admin-prompts__label" htmlFor={`${context.id}-description`}>
+                              설명
+                            </label>
+                            <textarea
+                              id={`${context.id}-description`}
+                              className="admin-prompts__textarea"
+                              value={context.description}
+                              onChange={(event) => handleBuiltinContextChange(context.id, 'description', event.target.value)}
+                            />
+                          </div>
+                          <div className="admin-prompts__field">
+                            <label className="admin-prompts__label" htmlFor={`${context.id}-source`}>
+                              파일 경로
+                            </label>
+                            <input
+                              id={`${context.id}-source`}
+                              className="admin-prompts__input"
+                              value={context.sourcePath}
+                              onChange={(event) => handleBuiltinContextChange(context.id, 'sourcePath', event.target.value)}
+                            />
+                          </div>
+                          <div className="admin-prompts__field">
+                            <label className="admin-prompts__label" htmlFor={`${context.id}-render`}>
+                              렌더링 방식
+                            </label>
+                            <select
+                              id={`${context.id}-render`}
+                              className="admin-prompts__select"
+                              value={context.renderMode}
+                              onChange={(event) =>
+                                handleBuiltinContextChange(context.id, 'renderMode', event.target.value as PromptBuiltinContext['renderMode'])
+                              }
+                            >
+                              <option value="file">파일 그대로</option>
+                              <option value="image">이미지</option>
+                              <option value="xlsx-to-pdf">XLSX → PDF</option>
+                              <option value="text">텍스트</option>
+                            </select>
+                          </div>
+                          <div className="admin-prompts__toggles">
+                            <label className="admin-prompts__switch">
+                              <input
+                                type="checkbox"
+                                checked={context.includeInPrompt}
+                                onChange={(event) => handleToggleBuiltinContext(context.id, 'includeInPrompt', event.target.checked)}
+                              />
+                              <span>첨부에 포함</span>
+                            </label>
+                            <label className="admin-prompts__switch">
+                              <input
+                                type="checkbox"
+                                checked={context.showInAttachmentList}
+                                onChange={(event) =>
+                                  handleToggleBuiltinContext(context.id, 'showInAttachmentList', event.target.checked)
+                                }
+                              />
+                              <span>목록에 표시</span>
+                            </label>
+                          </div>
+                          <button
+                            type="button"
+                            className="admin-prompts__remove"
+                            onClick={() => handleRemoveBuiltinContext(context.id)}
+                            aria-label="내장 컨텍스트 삭제"
+                          >
+                            삭제
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="admin-prompts__group">
+                  <h3 className="admin-prompts__group-title">모델 파라미터</h3>
+                  <div className="admin-prompts__model-grid">
+                    <label className="admin-prompts__model-field">
+                      <span>Temperature</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        value={activeConfig.modelParameters.temperature}
+                        onChange={(event) => handleModelParameterChange('temperature', Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="admin-prompts__model-field">
+                      <span>Top-p</span>
+                      <input
+                        type="number"
+                        step="0.05"
+                        value={activeConfig.modelParameters.topP}
+                        onChange={(event) => handleModelParameterChange('topP', Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="admin-prompts__model-field">
+                      <span>Max Output Tokens</span>
+                      <input
+                        type="number"
+                        value={activeConfig.modelParameters.maxOutputTokens}
+                        onChange={(event) => handleModelParameterChange('maxOutputTokens', Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="admin-prompts__model-field">
+                      <span>Presence Penalty</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={activeConfig.modelParameters.presencePenalty}
+                        onChange={(event) => handleModelParameterChange('presencePenalty', Number(event.target.value))}
+                      />
+                    </label>
+                    <label className="admin-prompts__model-field">
+                      <span>Frequency Penalty</span>
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={activeConfig.modelParameters.frequencyPenalty}
+                        onChange={(event) => handleModelParameterChange('frequencyPenalty', Number(event.target.value))}
+                      />
+                    </label>
+                  </div>
+                </section>
+
+                {status.message && (
+                  <div className={`admin-prompts__status admin-prompts__status--${status.type}`}>
+                    {status.message}
+                  </div>
+                )}
+
+                <div className="admin-prompts__actions">
+                  <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
+                    {saving ? '저장 중...' : '저장'}
+                  </button>
+                  <button type="button" className="admin-prompts__secondary" onClick={handleRevert} disabled={saving}>
+                    되돌리기
+                  </button>
+                  <button type="button" className="admin-prompts__secondary" onClick={handleRestoreDefault} disabled={saving}>
+                    기본값 적용
+                  </button>
+                </div>
+              </div>
+
+              <aside className="admin-prompts__sidebar">
+                <section className="admin-prompts__group admin-prompts__preview-card">
+                  <h3 className="admin-prompts__group-title">프롬프트 미리보기</h3>
+                  <div className="admin-prompts__preview" role="presentation">
+                    <pre>{preview || '지침을 입력하면 미리보기가 표시됩니다.'}</pre>
+                  </div>
+                </section>
+
+                <section className="admin-prompts__hint">
+                  <h4 className="admin-prompts__hint-title">템플릿 팁</h4>
+                  <p className="admin-prompts__hint-text">
+                    첨부 설명 템플릿에는 {'{'}index{'}'}, {'{'}descriptor{'}'}, {'{'}label{'}'}, {'{'}description{'}'}, {'{'}extension{'}'}, {'{'}doc_id{'}'}, {'{'}notes{'}'},
+                    {'{'}source_path{'}'} 키를 사용할 수 있습니다.
+                  </p>
+                </section>
+              </aside>
             </div>
           </section>
         </div>
