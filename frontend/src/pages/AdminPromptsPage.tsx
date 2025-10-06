@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getBackendUrl } from '../config'
 import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
+import { Modal } from '../components/Modal'
 
 import './AdminPromptsPage.css'
 
@@ -169,6 +170,7 @@ export function AdminPromptsPage() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ type: StatusType; message: string }>({ type: 'idle', message: '' })
+  const [previewOpen, setPreviewOpen] = useState(false)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -865,6 +867,14 @@ export function AdminPromptsPage() {
                 )}
 
                 <div className="admin-prompts__actions">
+                  <button
+                    type="button"
+                    className="admin-prompts__secondary"
+                    onClick={() => setPreviewOpen(true)}
+                    disabled={!activeConfig}
+                  >
+                    미리보기
+                  </button>
                   <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
                     {saving ? '저장 중...' : '저장'}
                   </button>
@@ -878,13 +888,6 @@ export function AdminPromptsPage() {
               </div>
 
               <aside className="admin-prompts__sidebar">
-                <section className="admin-prompts__group admin-prompts__preview-card">
-                  <h3 className="admin-prompts__group-title">프롬프트 미리보기</h3>
-                  <div className="admin-prompts__preview" role="presentation">
-                    <pre>{preview || '지침을 입력하면 미리보기가 표시됩니다.'}</pre>
-                  </div>
-                </section>
-
                 <section className="admin-prompts__hint">
                   <h4 className="admin-prompts__hint-title">템플릿 팁</h4>
                   <p className="admin-prompts__hint-text">
@@ -897,6 +900,21 @@ export function AdminPromptsPage() {
           </section>
         </div>
       </div>
+      <Modal
+        open={previewOpen}
+        title="프롬프트 미리보기"
+        description="현재 입력된 내용으로 생성된 프롬프트입니다."
+        onClose={() => setPreviewOpen(false)}
+      >
+        <div className="admin-prompts__preview-modal" role="presentation">
+          <pre>{preview || '지침을 입력하면 미리보기가 표시됩니다.'}</pre>
+        </div>
+        <footer className="modal__footer">
+          <button type="button" className="modal__button" onClick={() => setPreviewOpen(false)}>
+            닫기
+          </button>
+        </footer>
+      </Modal>
     </PageLayout>
   )
 }

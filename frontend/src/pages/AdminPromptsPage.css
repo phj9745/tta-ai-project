@@ -303,23 +303,6 @@
   border: 1px solid var(--gray-300, #d1d5db);
 }
 
-.admin-prompts__preview {
-  padding: 16px;
-  border-radius: 10px;
-  border: 1px solid var(--gray-200, #e5e7eb);
-  background-color: var(--surface, #fff);
-  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  font-size: 0.9rem;
-  color: var(--gray-800, #1f2937);
-  overflow-x: auto;
-  line-height: 1.6;
-}
-
-.admin-prompts__preview-card {
-  position: sticky;
-  top: 0;
-}
-
 .admin-prompts__hint {
   border-radius: 12px;
   border: 1px solid var(--primary-100, #dbeafe);
@@ -391,8 +374,7 @@
     grid-template-columns: 1fr;
   }
 
-  .admin-prompts__sidebar,
-  .admin-prompts__preview-card {
+  .admin-prompts__sidebar {
     position: static;
   }
 
@@ -426,4 +408,25 @@
   .admin-prompts__primary {
     width: 100%;
   }
+}
+
+.admin-prompts__preview-modal {
+  margin: 0;
+  padding: 0 0 16px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.admin-prompts__preview-modal pre {
+  margin: 0;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--surface, #fff);
+  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: var(--gray-800, #1f2937);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
