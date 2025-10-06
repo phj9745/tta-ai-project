@@ -439,7 +439,7 @@ class AIGenerationService:
             except Exception as exc:  # pragma: no cover - 안전망
                 raise HTTPException(status_code=502, detail="OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다.") from exc
 
-            csv_text = getattr(response, "output_text", None)
+            csv_text = self._extract_response_text(response)
             if not csv_text:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
@@ -456,6 +456,89 @@ class AIGenerationService:
         finally:
             if uploaded_file_records:
                 await self._cleanup_openai_files(client, uploaded_file_records)
+
+    @staticmethod
+    def _extract_response_text(response: Any) -> str | None:
+        """Best-effort extraction of the text payload from the Responses API."""
+
+        def _is_non_empty_text(value: object) -> bool:
+            return isinstance(value, str) and bool(value.strip())
+
+        text_candidate = getattr(response, "output_text", None)
+        if _is_non_empty_text(text_candidate):
+            return str(text_candidate)
+
+        containers: List[object] = []
+        for attr in ("output", "outputs", "data", "messages"):
+            candidate = getattr(response, attr, None)
+            if candidate:
+                containers.append(candidate)
+
+        if isinstance(response, dict):
+            for key in ("output", "outputs", "data", "messages"):
+                candidate = response.get(key)
+                if candidate:
+                    containers.append(candidate)
+
+        for container in containers:
+            if isinstance(container, (list, tuple)):
+                text = AIGenerationService._extract_from_content(container)
+                if text:
+                    return text
+            elif isinstance(container, dict):
+                content = container.get("content")
+                if content:
+                    normalized = content if isinstance(content, (list, tuple)) else [content]
+                    text = AIGenerationService._extract_from_content(normalized)
+                    if text:
+                        return text
+            else:
+                content = getattr(container, "content", None)
+                if content:
+                    normalized = content if isinstance(content, (list, tuple)) else [content]
+                    text = AIGenerationService._extract_from_content(normalized)
+                    if text:
+                        return text
+
+        return None
+
+    @staticmethod
+    def _extract_from_content(items: Iterable[object]) -> str | None:
+        for item in items:
+            content = None
+            if isinstance(item, dict):
+                content = item.get("content")
+            else:
+                content = getattr(item, "content", None)
+
+            if not content or isinstance(content, (str, bytes)):
+                continue
+
+            for part in content:
+                part_type = None
+                text_value = None
+                if isinstance(part, dict):
+                    part_type = part.get("type")
+                    text_value = part.get("text")
+                else:
+                    part_type = getattr(part, "type", None)
+                    text_value = getattr(part, "text", None)
+
+                if part_type in {"output_text", "text", "input_text"} and text_value is not None:
+                    extracted = text_value
+                    if isinstance(text_value, dict):
+                        extracted = text_value.get("value")
+                    elif hasattr(text_value, "get"):
+                        try:
+                            extracted = text_value.get("value")  # type: ignore[attr-defined]
+                        except Exception:  # pragma: no cover - defensive
+                            extracted = text_value
+
+                    text_str = str(extracted).strip() if extracted is not None else ""
+                    if text_str:
+                        return text_str
+
+        return None
 
     @staticmethod
     def _image_data_url(upload: BufferedUpload) -> str:

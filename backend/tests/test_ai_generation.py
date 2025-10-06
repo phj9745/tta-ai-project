@@ -151,6 +151,45 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
 
 @pytest.mark.anyio
+async def test_generate_csv_supports_modern_response_payload() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _modern_response(**kwargs: object) -> SimpleNamespace:
+        stub_client.responses.calls.append(kwargs)
+        return SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            type="output_text",
+                            text={"value": "col1,col2\nvalue1,value2", "annotations": []},
+                        )
+                    ]
+                )
+            ]
+        )
+
+    stub_client.responses.create = _modern_response  # type: ignore[assignment]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-modern",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+    )
+
+    assert result.csv_text == "col1,col2\nvalue1,value2"
+
+
+@pytest.mark.anyio
 async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.MonkeyPatch) -> None:
     service = AIGenerationService(_settings())
     stub_client = _StubClient()
