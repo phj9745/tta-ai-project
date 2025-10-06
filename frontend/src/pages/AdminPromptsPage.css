@@ -27,15 +27,17 @@
 
 .admin-prompts__layout {
   display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 24px;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 28px;
   align-items: start;
 }
 
 .admin-prompts__nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  position: sticky;
+  top: 96px;
 }
 
 .admin-prompts__nav-item {
@@ -77,11 +79,17 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 24px;
+  padding: 28px;
   border: 1px solid var(--gray-200, #e5e7eb);
   border-radius: 16px;
   background-color: var(--surface, #fff);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.admin-prompts__content-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .admin-prompts__title {
@@ -96,6 +104,27 @@
   color: var(--gray-600, #4b5563);
 }
 
+.admin-prompts__content-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.admin-prompts__main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.admin-prompts__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 96px;
+}
+
 .admin-prompts__field {
   display: flex;
   flex-direction: column;
@@ -104,6 +133,13 @@
 
 .admin-prompts__field--half {
   flex: 1 1 50%;
+  min-width: 0;
+}
+
+.admin-prompts__field-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .admin-prompts__label {
@@ -199,10 +235,10 @@
 }
 
 .admin-prompts__list-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
-  flex-wrap: wrap;
 }
 
 .admin-prompts__switch {
@@ -267,15 +303,27 @@
   border: 1px solid var(--gray-300, #d1d5db);
 }
 
-.admin-prompts__preview {
-  padding: 16px;
-  border-radius: 10px;
-  border: 1px solid var(--gray-200, #e5e7eb);
-  background-color: var(--surface, #fff);
-  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+.admin-prompts__hint {
+  border-radius: 12px;
+  border: 1px solid var(--primary-100, #dbeafe);
+  background: linear-gradient(180deg, rgba(219, 234, 254, 0.45) 0%, rgba(219, 234, 254, 0.15) 100%);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--primary-800, #1e3a8a);
+}
+
+.admin-prompts__hint-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.admin-prompts__hint-text {
+  margin: 0;
   font-size: 0.9rem;
-  color: var(--gray-800, #1f2937);
-  overflow-x: auto;
+  line-height: 1.5;
 }
 
 .admin-prompts__status {
@@ -321,6 +369,21 @@
   outline: none;
 }
 
+@media (max-width: 1200px) {
+  .admin-prompts__content-body {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-prompts__sidebar {
+    position: static;
+  }
+
+  .admin-prompts__layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 20px;
+  }
+}
+
 @media (max-width: 960px) {
   .admin-prompts__layout {
     grid-template-columns: 1fr;
@@ -329,4 +392,41 @@
   .admin-prompts__content {
     padding: 20px;
   }
+
+  .admin-prompts__nav {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-prompts__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-prompts__secondary,
+  .admin-prompts__primary {
+    width: 100%;
+  }
+}
+
+.admin-prompts__preview-modal {
+  margin: 0;
+  padding: 0 0 16px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.admin-prompts__preview-modal pre {
+  margin: 0;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--surface, #fff);
+  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: var(--gray-800, #1f2937);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
