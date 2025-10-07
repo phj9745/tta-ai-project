@@ -247,7 +247,7 @@ class OpenAIMessageBuilder:
                     parts.append(
                         {
                             "type": "input_image",
-                            "image_url": {"url": image_url.strip()},
+                            "image_url": image_url.strip(),
                         }
                     )
                     continue
