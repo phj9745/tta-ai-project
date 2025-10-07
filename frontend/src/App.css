@@ -165,6 +165,12 @@
   gap: 2.5rem;
 }
 
+.page--wide {
+  width: min(1280px, 100%);
+  padding: clamp(3rem, 5vw, 4.5rem) clamp(2rem, 4vw, 4rem);
+  gap: 3rem;
+}
+
 .page__header {
   display: flex;
   flex-direction: column;
