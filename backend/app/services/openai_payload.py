@@ -166,44 +166,33 @@ class OpenAIMessageBuilder:
                     if raw_image_url is None and "url" in attachment:
                         raw_image_url = attachment.get("url")
                     if raw_image_url is not None:
-                        if isinstance(raw_image_url, MutableMapping):
-                            candidate = raw_image_url.get("url")
-                            if not isinstance(candidate, str) or not candidate.strip():
-                                cls._log_invalid_attachment(
-                                    role,
-                                    text,
-                                    "image 첨부의 image_url.url은 공백이 아닌 문자열이어야 합니다.",
-                                    attachment,
-                                )
-                                raise ValueError(
-                                    "image 첨부의 image_url.url은 공백이 아닌 문자열이어야 합니다."
-                                )
-                            normalized_attachment["image_url"] = candidate.strip()
-                        elif isinstance(raw_image_url, str):
-                            if not raw_image_url.strip():
-                                cls._log_invalid_attachment(
-                                    role,
-                                    text,
-                                    "image 첨부의 image_url은 공백이 아닌 문자열이어야 합니다.",
-                                    attachment,
-                                )
-                                raise ValueError(
-                                    "image 첨부의 image_url은 공백이 아닌 문자열이어야 합니다."
-                                )
-                            normalized_attachment["image_url"] = raw_image_url.strip()
-                        else:
+                        try:
+                            normalized_attachment["image_url"] = cls._normalize_external_image_url(
+                                raw_image_url,
+                                context=cast(MutableMapping[str, object], attachment),
+                            )
+                        except ValueError:
                             cls._log_invalid_attachment(
                                 role,
                                 text,
-                                "image 첨부의 image_url은 문자열 또는 매핑이어야 합니다.",
+                                "image 첨부의 image_url은 Responses API에서 허용되는 URL이어야 합니다.",
                                 attachment,
                             )
-                            raise ValueError(
-                                "image 첨부의 image_url은 문자열 또는 매핑이어야 합니다."
-                            )
+                            raise
+                    elif "file_id" not in normalized_attachment:
+                        cls._log_invalid_attachment(
+                            role,
+                            text,
+                            "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다.",
+                            attachment,
+                        )
+                        raise ValueError(
+                            "image 첨부에는 image_url 또는 file_id 중 하나가 필요합니다."
+                        )
 
                 if (
-                    "image_url" not in normalized_attachment
+                    kind != "image"
+                    and "image_url" not in normalized_attachment
                     and "file_id" not in normalized_attachment
                 ):
                     cls._log_invalid_attachment(
@@ -243,6 +232,21 @@ class OpenAIMessageBuilder:
                 parts.append({"type": "input_file", "file_id": file_id})
             elif kind == "image":
                 image_url = attachment.get("image_url")
+                if isinstance(image_url, MutableMapping):
+                    try:
+                        image_url = cls._normalize_external_image_url(
+                            image_url,
+                            context=cast(MutableMapping[str, object], attachment),
+                        )
+                    except ValueError:
+                        cls._log_invalid_attachment(
+                            role,
+                            text,
+                            "image 첨부의 image_url은 Responses API에서 허용되는 URL이어야 합니다.",
+                            attachment,
+                        )
+                        raise
+
                 if isinstance(image_url, str) and image_url.strip():
                     parts.append(
                         {

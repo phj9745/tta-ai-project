@@ -234,13 +234,13 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
             message["content"].append(  # type: ignore[index]
                 {
                     "type": "input_image",
-                    "image_url": "data:image/png;base64,abc123",
+                    "image_url": {"url": "data:image/png;base64,abc123"},
                 }
             )
             message["content"].append(  # type: ignore[index]
                 {
                     "type": "input_image",
-                    "image_url": "https://example.com/additional.png",
+                    "image_url": {"url": "https://example.com/additional.png"},
                 }
             )
         return message
