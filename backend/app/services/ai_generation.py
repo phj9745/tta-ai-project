@@ -27,6 +27,7 @@ from openai import (
 from ..config import Settings
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import PromptBuiltinContext, PromptConfigService
+from .prompt_request_log import PromptRequestLogService
 
 
 @dataclass
@@ -64,6 +65,7 @@ class AIGenerationService:
         self,
         settings: Settings,
         prompt_config_service: PromptConfigService | None = None,
+        request_log_service: PromptRequestLogService | None = None,
     ):
         self._settings = settings
         if prompt_config_service is None:
@@ -71,6 +73,7 @@ class AIGenerationService:
             prompt_config_service = PromptConfigService(storage_path)
         self._prompt_config_service = prompt_config_service
         self._client: OpenAI | None = None
+        self._request_log_service = request_log_service
 
     def _get_client(self) -> OpenAI:
         if self._client is None:
@@ -432,6 +435,21 @@ class AIGenerationService:
                     "user_prompt": user_prompt,
                 },
             )
+
+            if self._request_log_service is not None:
+                try:
+                    self._request_log_service.record_request(
+                        project_id=project_id,
+                        menu_id=menu_id,
+                        system_prompt=prompt_config.system_prompt,
+                        user_prompt=user_prompt,
+                        context_summary=context_summary,
+                    )
+                except Exception:  # pragma: no cover - logging must not fail request
+                    logger.exception(
+                        "Failed to record prompt request log",
+                        extra={"project_id": project_id, "menu_id": menu_id},
+                    )
 
             params = prompt_config.model_parameters
             try:
