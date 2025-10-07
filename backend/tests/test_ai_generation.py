@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 from starlette.datastructures import Headers
+import httpx
 
 # Ensure the backend/app package is importable when running tests from the repository root.
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.config import Settings
 from app.services.ai_generation import AIGenerationService
 from app.services.openai_payload import OpenAIMessageBuilder
+from openai import BadRequestError, OpenAIError, RateLimitError
 
 
 class _StubFiles:
@@ -48,6 +51,26 @@ class _StubClient:
     def __init__(self) -> None:
         self.files = _StubFiles()
         self.responses = _StubResponses()
+
+
+def _build_rate_limit_error(message: str = "quota exceeded") -> RateLimitError:
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(
+        429,
+        request=request,
+        json={"error": {"message": message, "code": "insufficient_quota"}},
+    )
+    return RateLimitError(message=message, response=response, body=response.json())
+
+
+def _build_bad_request_error(message: str) -> BadRequestError:
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={"error": {"message": message, "code": "invalid_prompt"}},
+    )
+    return BadRequestError(message=message, response=response, body=response.json())
 
 
 def _settings() -> Settings:
@@ -121,7 +144,12 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
     # The response payload should include input_file parts for each uploaded file.
     assert len(stub_client.responses.calls) == 1
-    messages = stub_client.responses.calls[0]["input"]
+    response_payload = stub_client.responses.calls[0]
+    # Ensure the payload we send to OpenAI is JSON serialisable, mirroring the
+    # client-side validation performed by the OpenAI SDK.
+    json.dumps(response_payload)
+
+    messages = response_payload["input"]
     assert isinstance(messages, list)
     user_message = messages[1]
     file_parts = [
@@ -133,7 +161,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
         {"type": "input_file", "file_id": "file-1"},
         {
             "type": "input_image",
-            "image_url": "data:image/png;base64,SW1hZ2UgYnl0ZXM=",
+            "image_url": {"url": "data:image/png;base64,SW1hZ2UgYnl0ZXM="},
         },
         {"type": "input_file", "file_id": "file-2"},
     ]
@@ -240,10 +268,163 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
     ]
     assert {
         "type": "input_image",
-        "image_url": "data:image/png;base64,abc123",
+        "image_url": {"url": "data:image/png;base64,abc123"},
     } in image_parts
     assert {
         "type": "input_image",
-        "image_url": "https://example.com/additional.png",
+        "image_url": {"url": "https://example.com/additional.png"},
     } in image_parts
+
+
+@pytest.mark.anyio
+async def test_generate_csv_surfaces_openai_response_error() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _raise_response_error(**kwargs: object) -> None:
+        raise OpenAIError("temporary overload")
+
+    stub_client.responses.create = _raise_response_error  # type: ignore[assignment]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-error",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 502
+    assert "OpenAI 호출 중 오류가 발생했습니다" in excinfo.value.detail
+    assert "temporary overload" in excinfo.value.detail
+
+
+@pytest.mark.anyio
+async def test_generate_csv_surfaces_rate_limit_error() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _raise_rate_limit(**kwargs: object) -> None:
+        raise _build_rate_limit_error(
+            "You exceeded your current quota, please check your plan and billing details."
+        )
+
+    stub_client.responses.create = _raise_rate_limit  # type: ignore[assignment]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-rate-limit",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 429
+    assert "OpenAI 사용량 한도를 초과했습니다" in excinfo.value.detail
+    assert "You exceeded your current quota" in excinfo.value.detail
+
+
+@pytest.mark.anyio
+async def test_generate_csv_includes_message_for_unexpected_error() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _raise_type_error(**kwargs: object) -> None:
+        raise TypeError("Object of type bytes is not JSON serializable")
+
+    stub_client.responses.create = _raise_type_error  # type: ignore[assignment]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-type-error",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 502
+    assert "예기치 않은 오류" in excinfo.value.detail
+    assert "Object of type bytes is not JSON serializable" in excinfo.value.detail
+
+
+@pytest.mark.anyio
+async def test_generate_csv_surfaces_bad_request_error_detail() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _raise_bad_request(**kwargs: object) -> None:
+        raise _build_bad_request_error("Invalid prompt format")
+
+    stub_client.responses.create = _raise_bad_request  # type: ignore[assignment]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-bad-request",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 502
+    assert "Invalid prompt format" in excinfo.value.detail
+
+
+@pytest.mark.anyio
+async def test_generate_csv_surfaces_openai_file_upload_error() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _raise_file_error(
+        self, *, file: tuple[str, io.BytesIO], purpose: str
+    ) -> SimpleNamespace:
+        raise OpenAIError("file quota reached")
+
+    stub_client.files.create = MethodType(_raise_file_error, stub_client.files)
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-file-error",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 502
+    assert "OpenAI 파일 업로드 중 오류가 발생했습니다" in excinfo.value.detail
+    assert "file quota reached" in excinfo.value.detail
 

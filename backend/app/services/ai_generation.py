@@ -15,7 +15,14 @@ from typing import Any, Dict, Iterable, List, Literal
 from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
-from openai import APIError, OpenAI
+from openai import (
+    APIError,
+    BadRequestError,
+    OpenAI,
+    OpenAIError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 
 from ..config import Settings
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
@@ -217,12 +224,16 @@ class AIGenerationService:
                 file=(upload.name, stream),
                 purpose="assistants",
             )
-        except APIError as exc:
+        except (APIError, OpenAIError) as exc:
             raise HTTPException(
                 status_code=502,
                 detail=f"OpenAI 파일 업로드 중 오류가 발생했습니다: {exc}",
             ) from exc
         except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error uploading file to OpenAI",
+                extra={"file_name": upload.name},
+            )
             raise HTTPException(
                 status_code=502,
                 detail="OpenAI 파일 업로드 중 예기치 않은 오류가 발생했습니다.",
@@ -434,10 +445,36 @@ class AIGenerationService:
                     presence_penalty=params.presence_penalty,
                     frequency_penalty=params.frequency_penalty,
                 )
-            except APIError as exc:
-                raise HTTPException(status_code=502, detail=f"OpenAI 호출 중 오류가 발생했습니다: {exc}") from exc
+            except RateLimitError as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "OpenAI 사용량 한도를 초과했습니다. "
+                        "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                        f" ({detail})"
+                    ),
+                ) from exc
+            except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                ) from exc
             except Exception as exc:  # pragma: no cover - 안전망
-                raise HTTPException(status_code=502, detail="OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다.") from exc
+                logger.exception(
+                    "Unexpected error while requesting OpenAI response",
+                    extra={"project_id": project_id, "menu_id": menu_id},
+                )
+                message = str(exc).strip()
+                if message:
+                    detail = (
+                        "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: "
+                        f"{message}"
+                    )
+                else:
+                    detail = "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                raise HTTPException(status_code=502, detail=detail) from exc
 
             csv_text = self._extract_response_text(response)
             if not csv_text:
@@ -456,6 +493,34 @@ class AIGenerationService:
         finally:
             if uploaded_file_records:
                 await self._cleanup_openai_files(client, uploaded_file_records)
+
+    @staticmethod
+    def _format_openai_error(exc: OpenAIError) -> str:
+        message = str(exc).strip()
+        details: List[str] = []
+        if message:
+            details.append(message)
+
+        body = getattr(exc, "body", None)
+        if isinstance(body, dict):
+            error = body.get("error")
+            candidates: List[str] = []
+            if isinstance(error, dict):
+                for key in ("message", "code", "type"):
+                    value = error.get(key)
+                    if isinstance(value, str) and value.strip():
+                        candidates.append(value.strip())
+            elif isinstance(error, str) and error.strip():
+                candidates.append(error.strip())
+
+            for value in candidates:
+                if value not in details:
+                    details.append(value)
+
+        if not details:
+            details.append(exc.__class__.__name__)
+
+        return "; ".join(details)
 
     @staticmethod
     def _extract_response_text(response: Any) -> str | None:
