@@ -40,11 +40,17 @@ class InputImageFileContent(TypedDict):
     image: ImageFileReference
 
 
+class ImageURLReference(TypedDict):
+    """Response API image_url payload structure."""
+
+    url: str
+
+
 class InputImageURLContent(TypedDict):
     """Response API image content that references an external URL."""
 
     type: _ImageContentType
-    image_url: str
+    image_url: ImageURLReference
 
 
 class TextContent(TypedDict):
@@ -362,7 +368,7 @@ class OpenAIMessageBuilder:
             external_url = cls._normalize_external_image_url(
                 image_url, context=item
             )
-            return {"type": "input_image", "image_url": external_url}
+            return {"type": "input_image", "image_url": {"url": external_url}}
 
         cls._log_invalid_image_part(
             "input_image 항목에는 image_url이 필요합니다.",

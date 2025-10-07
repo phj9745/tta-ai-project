@@ -164,7 +164,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
         {"type": "input_file", "file_id": "file-1"},
         {
             "type": "input_image",
-            "image_url": "data:image/png;base64,SW1hZ2UgYnl0ZXM=",
+            "image_url": {"url": "data:image/png;base64,SW1hZ2UgYnl0ZXM="},
         },
         {"type": "input_file", "file_id": "file-2"},
     ]
@@ -271,11 +271,11 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
     ]
     assert {
         "type": "input_image",
-        "image_url": "data:image/png;base64,abc123",
+        "image_url": {"url": "data:image/png;base64,abc123"},
     } in image_parts
     assert {
         "type": "input_image",
-        "image_url": "https://example.com/additional.png",
+        "image_url": {"url": "https://example.com/additional.png"},
     } in image_parts
 
 
