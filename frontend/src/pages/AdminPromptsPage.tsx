@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { getBackendUrl } from '../config'
 import { PageHeader } from '../components/layout/PageHeader'
@@ -65,6 +65,30 @@ type PromptConfigResponse = Record<PromptCategory, PromptConfig>
 type PromptResponsePayload = {
   current: Record<string, PromptConfig>
   defaults: Record<string, PromptConfig>
+}
+
+type PromptRequestLogApiEntry = {
+  request_id: string
+  timestamp: string
+  project_id: string
+  menu_id: string
+  system_prompt: string
+  user_prompt: string
+  context_summary: string
+}
+
+type PromptRequestLogEntry = {
+  requestId: string
+  timestamp: string
+  projectId: string
+  menuId: string
+  systemPrompt: string
+  userPrompt: string
+  contextSummary: string
+}
+
+type PromptRequestLogResponse = {
+  logs: PromptRequestLogApiEntry[]
 }
 
 function isPromptCategory(value: string): value is PromptCategory {
@@ -160,6 +184,28 @@ function createUniqueId(prefix: string): string {
   return `${prefix}-${Date.now()}-${uniqueId}`
 }
 
+function formatDateTime(value: string): string {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  try {
+    return new Intl.DateTimeFormat('ko-KR', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
+  } catch (error) {
+    console.error(error)
+    return date.toLocaleString()
+  }
+}
+
 export function AdminPromptsPage() {
   const backendUrl = useMemo(() => getBackendUrl(), [])
   const [configs, setConfigs] = useState<PromptConfigResponse | null>(null)
@@ -171,6 +217,76 @@ export function AdminPromptsPage() {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<{ type: StatusType; message: string }>({ type: 'idle', message: '' })
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [requestLogs, setRequestLogs] = useState<PromptRequestLogEntry[]>([])
+  const [logsLoading, setLogsLoading] = useState(true)
+  const [logsRefreshing, setLogsRefreshing] = useState(false)
+  const [logsError, setLogsError] = useState<string | null>(null)
+
+  const fetchLogs = useCallback(
+    async (signal?: AbortSignal, silent = false) => {
+      if (silent) {
+        setLogsRefreshing(true)
+      } else {
+        setLogsLoading(true)
+        setLogsError(null)
+      }
+      try {
+        const response = await fetch(`${backendUrl}/admin/prompts/logs?limit=50`, {
+          method: 'GET',
+          signal,
+        })
+        if (!response.ok) {
+          throw new Error('failed to fetch logs')
+        }
+        const payload = (await response.json()) as PromptRequestLogResponse
+        const normalized = (payload.logs ?? []).map((entry) => ({
+          requestId: entry.request_id,
+          timestamp: entry.timestamp,
+          projectId: entry.project_id,
+          menuId: entry.menu_id,
+          systemPrompt: entry.system_prompt,
+          userPrompt: entry.user_prompt,
+          contextSummary: entry.context_summary,
+        }))
+        setRequestLogs(normalized)
+        if (!silent) {
+          setLogsError(null)
+        }
+      } catch (caughtError) {
+        if (signal?.aborted) {
+          return
+        }
+        console.error(caughtError)
+        setLogsError('요청 기록을 불러오지 못했습니다. 나중에 다시 시도해 주세요.')
+      } finally {
+        if (silent) {
+          setLogsRefreshing(false)
+        } else {
+          setLogsLoading(false)
+        }
+      }
+    },
+    [backendUrl],
+  )
+
+  const resolveMenuLabel = useCallback(
+    (menuId: string) => {
+      if (configs && isPromptCategory(menuId)) {
+        const label = configs[menuId]?.label
+        if (label) {
+          return label
+        }
+      }
+      if (defaults && isPromptCategory(menuId)) {
+        const label = defaults[menuId]?.label
+        if (label) {
+          return label
+        }
+      }
+      return menuId
+    },
+    [configs, defaults],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -205,6 +321,12 @@ export function AdminPromptsPage() {
     loadConfigs()
     return () => controller.abort()
   }, [backendUrl])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetchLogs(controller.signal)
+    return () => controller.abort()
+  }, [fetchLogs])
 
   const activeConfig = configs ? configs[activeCategory] : null
   const preview = activeConfig ? buildPreview(activeConfig) : ''
@@ -888,6 +1010,64 @@ export function AdminPromptsPage() {
               </div>
 
               <aside className="admin-prompts__sidebar">
+                <section className="admin-prompts__group admin-prompts__logs">
+                  <header className="admin-prompts__group-header">
+                    <h3 className="admin-prompts__group-title">최근 요청 기록</h3>
+                    <button
+                      type="button"
+                      className="admin-prompts__secondary"
+                      onClick={() => {
+                        void fetchLogs(undefined, true)
+                      }}
+                      disabled={logsLoading || logsRefreshing}
+                    >
+                      {logsRefreshing ? '갱신 중...' : '새로고침'}
+                    </button>
+                  </header>
+                  <p className="admin-prompts__logs-caption">
+                    실제 생성 요청이 실행되면 해당 프롬프트 내용을 확인할 수 있습니다. 최근 50건이 표시됩니다.
+                  </p>
+                  {logsLoading ? (
+                    <p className="admin-prompts__empty">요청 기록을 불러오는 중입니다...</p>
+                  ) : logsError ? (
+                    <p className="admin-prompts__empty admin-prompts__empty--error">{logsError}</p>
+                  ) : requestLogs.length === 0 ? (
+                    <p className="admin-prompts__empty">아직 기록된 요청이 없습니다.</p>
+                  ) : (
+                    <ul className="admin-prompts__log-list">
+                      {requestLogs.map((entry) => {
+                        const menuLabel = resolveMenuLabel(entry.menuId)
+                        return (
+                          <li key={entry.requestId} className="admin-prompts__log-item">
+                            <div className="admin-prompts__log-meta">
+                              <span className="admin-prompts__log-menu">{menuLabel}</span>
+                              <span className="admin-prompts__log-time">{formatDateTime(entry.timestamp)}</span>
+                            </div>
+                            {entry.projectId ? (
+                              <p className="admin-prompts__log-project">프로젝트 ID: {entry.projectId}</p>
+                            ) : null}
+                            {entry.contextSummary ? (
+                              <p className="admin-prompts__log-summary">{entry.contextSummary}</p>
+                            ) : null}
+                            <details className="admin-prompts__log-details">
+                              <summary>프롬프트 전문 보기</summary>
+                              <div className="admin-prompts__log-details-content">
+                                <div>
+                                  <h4 className="admin-prompts__log-heading">시스템 프롬프트</h4>
+                                  <pre className="admin-prompts__log-block">{entry.systemPrompt || '내용이 없습니다.'}</pre>
+                                </div>
+                                <div>
+                                  <h4 className="admin-prompts__log-heading">사용자 프롬프트</h4>
+                                  <pre className="admin-prompts__log-block">{entry.userPrompt || '내용이 없습니다.'}</pre>
+                                </div>
+                              </div>
+                            </details>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </section>
                 <section className="admin-prompts__hint">
                   <h4 className="admin-prompts__hint-title">템플릿 팁</h4>
                   <p className="admin-prompts__hint-text">
