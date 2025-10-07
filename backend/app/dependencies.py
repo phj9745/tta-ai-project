@@ -5,6 +5,8 @@ from fastapi import Depends, Request
 from .container import Container
 from .services.ai_generation import AIGenerationService
 from .services.google_drive import GoogleDriveService
+from .services.prompt_config import PromptConfigService
+from .services.prompt_request_log import PromptRequestLogService
 from .services.oauth import GoogleOAuthService
 from .token_store import TokenStorage
 
@@ -32,3 +34,15 @@ def get_ai_generation_service(
     container: Container = Depends(get_container),
 ) -> AIGenerationService:
     return container.ai_generation_service
+
+
+def get_prompt_config_service(
+    container: Container = Depends(get_container),
+) -> PromptConfigService:
+    return container.prompt_config_service
+
+
+def get_prompt_request_log_service(
+    container: Container = Depends(get_container),
+) -> PromptRequestLogService:
+    return container.prompt_request_log_service

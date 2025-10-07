@@ -80,12 +80,12 @@ async def create_drive_project(
     invalid_files: List[str] = []
     for upload in files:
         filename = upload.filename or "업로드된 파일"
-        if not filename.lower().endswith(".pdf"):
+        if not filename.lower().endswith(".docx"):
             invalid_files.append(filename)
 
     if invalid_files:
         detail = ", ".join(invalid_files)
-        raise HTTPException(status_code=422, detail=f"PDF 파일만 업로드할 수 있습니다: {detail}")
+        raise HTTPException(status_code=422, detail=f"DOCX 파일만 업로드할 수 있습니다: {detail}")
 
     return await drive_service.create_project(
         folder_id=folder_id,
@@ -102,7 +102,9 @@ async def generate_project_asset(
     file_metadata: Optional[str] = Form(
         None, description="업로드된 파일에 대한 메타데이터(JSON 배열)"
     ),
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> StreamingResponse:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -195,6 +197,13 @@ async def generate_project_asset(
         menu_id=menu_id,
         uploads=uploads,
         metadata=metadata_entries,
+    )
+
+    await drive_service.apply_csv_to_spreadsheet(
+        project_id=project_id,
+        menu_id=menu_id,
+        csv_text=result.csv_text,
+        google_id=google_id,
     )
 
     headers = {

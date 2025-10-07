@@ -14,7 +14,7 @@ interface ProjectCreationModalProps {
   backendUrl?: string
 }
 
-const PDF_ONLY: FileType[] = ['pdf']
+const DOCX_ONLY: FileType[] = ['docx']
 
 export function ProjectCreationModal({
   open,
@@ -106,7 +106,7 @@ export function ProjectCreationModal({
             업로드한 파일은 생성되는 프로젝트의 ‘0. 사전 자료’ 폴더에 저장됩니다.
           </p>
 
-          <FileUploader allowedTypes={PDF_ONLY} files={files} onChange={setFiles} />
+          <FileUploader allowedTypes={DOCX_ONLY} files={files} onChange={setFiles} />
 
           {formError && (
             <p className="modal__error" role="alert">
