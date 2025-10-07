@@ -38,12 +38,12 @@ def test_text_message_appends_image_parts_from_data_url() -> None:
 
     assert message["role"] == "user"
     assert message["content"][1:] == [
-        {"type": "input_image", "image_url": data_url}
+        {"type": "input_image", "image_url": {"url": data_url}}
     ]
 
     normalized = OpenAIMessageBuilder.normalize_messages([message])
     assert normalized[0]["content"][1:] == [
-        {"type": "input_image", "image_url": data_url}
+        {"type": "input_image", "image_url": {"url": data_url}}
     ]
 
 
@@ -62,7 +62,7 @@ def test_text_message_appends_image_parts_from_image_url() -> None:
     assert message["content"][1:] == [
         {
             "type": "input_image",
-            "image_url": "https://example.com/external.png",
+            "image_url": {"url": "https://example.com/external.png"},
         }
     ]
 
@@ -70,7 +70,7 @@ def test_text_message_appends_image_parts_from_image_url() -> None:
     assert normalized[0]["content"][1:] == [
         {
             "type": "input_image",
-            "image_url": "https://example.com/external.png",
+            "image_url": {"url": "https://example.com/external.png"},
         }
     ]
 
@@ -85,7 +85,7 @@ def test_text_message_accepts_image_url_alias() -> None:
     assert message["content"][1:] == [
         {
             "type": "input_image",
-            "image_url": "https://example.com/from-alias",
+            "image_url": {"url": "https://example.com/from-alias"},
         }
     ]
 
@@ -227,7 +227,7 @@ def test_normalize_messages_preserves_external_image_url() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": "https://example.com/image.png",
+                    "image_url": {"url": "https://example.com/image.png"},
                 },
             ],
         }
@@ -256,7 +256,7 @@ def test_normalize_messages_preserves_data_image_url() -> None:
             "content": [
                 {
                     "type": "input_image",
-                    "image_url": data_url,
+                    "image_url": {"url": data_url},
                 },
             ],
         }
