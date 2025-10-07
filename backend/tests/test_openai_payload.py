@@ -65,6 +65,24 @@ def test_text_message_converts_mapping_image_urls() -> None:
     ]
 
 
+def test_text_message_converts_mapping_image_urls() -> None:
+    data_url = "data:image/png;base64,xyz456"
+    message = OpenAIMessageBuilder.text_message(
+        "user",
+        "see mapping",
+        attachments=[{"image_url": {"url": data_url}, "kind": "image"}],
+    )
+
+    assert message["content"][1:] == [
+        {"type": "input_image", "image_url": data_url}
+    ]
+
+    normalized = OpenAIMessageBuilder.normalize_messages([message])
+    assert normalized[0]["content"][1:] == [
+        {"type": "input_image", "image_url": data_url}
+    ]
+
+
 def test_text_message_appends_image_parts_from_image_url() -> None:
     message = OpenAIMessageBuilder.text_message(
         "user",
@@ -125,7 +143,7 @@ def test_attachments_to_chat_completions_converts_images() -> None:
     assert completion_parts == [
         {
             "type": "input_image",
-            "image_url": {"url": "data:image/png;base64,xyz456"},
+            "image_url": "data:image/png;base64,xyz456",
         }
     ]
 
@@ -142,7 +160,7 @@ def test_attachments_to_chat_completions_prefers_image_url() -> None:
     completion_parts = OpenAIMessageBuilder.attachments_to_chat_completions(attachments)
 
     assert completion_parts == [
-        {"type": "input_image", "image_url": {"url": "data:image/png;base64,abc123"}}
+        {"type": "input_image", "image_url": "data:image/png;base64,abc123"}
     ]
 
 

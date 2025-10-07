@@ -457,7 +457,7 @@ class OpenAIMessageBuilder:
                     completion_parts.append(
                         {
                             "type": "input_image",
-                            "image_url": {"url": raw_url.strip()},
+                            "image_url": raw_url.strip(),
                         }
                     )
                     continue
@@ -466,7 +466,7 @@ class OpenAIMessageBuilder:
                 completion_parts.append(
                     {
                         "type": "input_image",
-                        "image_url": {"url": image_url},
+                        "image_url": image_url,
                     }
                 )
                 continue
