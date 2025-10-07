@@ -435,15 +435,47 @@ class AIGenerationService:
 
             params = prompt_config.model_parameters
             try:
+                response_kwargs: dict[str, object] = {
+                    "model": self._settings.openai_model,
+                    "input": normalized_messages,
+                }
+
+                if params.temperature is not None:
+                    response_kwargs["temperature"] = params.temperature
+                if params.top_p is not None:
+                    response_kwargs["top_p"] = params.top_p
+                if params.max_output_tokens is not None:
+                    response_kwargs["max_output_tokens"] = (
+                        params.max_output_tokens
+                    )
+
+                # The Responses API currently rejects presence/frequency penalties.
+                # Until OpenAI adds support we simply omit them from the request to
+                # avoid TypeError crashes while still honouring other tunables.
+                if params.presence_penalty not in (None, 0):
+                    logger.warning(
+                        "Presence penalty is not supported by the Responses API; "
+                        "value will be ignored.",
+                        extra={
+                            "project_id": project_id,
+                            "menu_id": menu_id,
+                            "presence_penalty": params.presence_penalty,
+                        },
+                    )
+                if params.frequency_penalty not in (None, 0):
+                    logger.warning(
+                        "Frequency penalty is not supported by the Responses API; "
+                        "value will be ignored.",
+                        extra={
+                            "project_id": project_id,
+                            "menu_id": menu_id,
+                            "frequency_penalty": params.frequency_penalty,
+                        },
+                    )
+
                 response = await asyncio.to_thread(
                     client.responses.create,
-                    model=self._settings.openai_model,
-                    input=normalized_messages,
-                    temperature=params.temperature,
-                    top_p=params.top_p,
-                    max_output_tokens=params.max_output_tokens,
-                    presence_penalty=params.presence_penalty,
-                    frequency_penalty=params.frequency_penalty,
+                    **response_kwargs,
                 )
             except RateLimitError as exc:
                 detail = self._format_openai_error(exc)

@@ -149,6 +149,9 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     # client-side validation performed by the OpenAI SDK.
     json.dumps(response_payload)
 
+    assert "presence_penalty" not in response_payload
+    assert "frequency_penalty" not in response_payload
+
     messages = response_payload["input"]
     assert isinstance(messages, list)
     user_message = messages[1]
