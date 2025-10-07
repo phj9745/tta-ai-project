@@ -4,6 +4,7 @@ import { getBackendUrl } from '../config'
 import { PageHeader } from '../components/layout/PageHeader'
 import { PageLayout } from '../components/layout/PageLayout'
 import { Modal } from '../components/Modal'
+import { navigate } from '../navigation'
 
 import './AdminPromptsPage.css'
 
@@ -629,9 +630,13 @@ export function AdminPromptsPage() {
     setStatus({ type: 'success', message: '기본 템플릿을 불러왔습니다.' })
   }
 
+  const handleNavigateProjects = useCallback(() => {
+    navigate('/projects')
+  }, [])
+
   if (loading) {
     return (
-      <PageLayout>
+      <PageLayout variant="wide">
         <div className="admin-prompts admin-prompts--loading">
           <PageHeader
             eyebrow="프롬프트 자산 관리"
@@ -646,7 +651,7 @@ export function AdminPromptsPage() {
 
   if (error || !configs || !activeConfig) {
     return (
-      <PageLayout>
+      <PageLayout variant="wide">
         <div className="admin-prompts admin-prompts--error">
           <PageHeader
             eyebrow="프롬프트 자산 관리"
@@ -660,13 +665,36 @@ export function AdminPromptsPage() {
   }
 
   return (
-    <PageLayout>
+    <PageLayout variant="wide">
       <div className="admin-prompts">
         <PageHeader
           eyebrow="프롬프트 자산 관리"
           title="요청 템플릿 & 첨부 자료 설정"
           subtitle="생성 작업에 사용되는 시스템/사용자 프롬프트와 부가 정보를 실시간으로 조정하세요."
         />
+
+        <div className="admin-prompts__toolbar" role="navigation" aria-label="프롬프트 관리자 작업">
+          <button type="button" className="admin-prompts__back" onClick={handleNavigateProjects}>
+            ← 프로젝트 페이지로 돌아가기
+          </button>
+          <div className="admin-prompts__toolbar-actions">
+            <button type="button" className="admin-prompts__secondary" onClick={handleRestoreDefault} disabled={saving}>
+              기본값 적용
+            </button>
+            <button type="button" className="admin-prompts__secondary" onClick={handleRevert} disabled={saving}>
+              되돌리기
+            </button>
+            <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
+              {saving ? '저장 중...' : '저장'}
+            </button>
+          </div>
+        </div>
+
+        {status.message && (
+          <div className={`admin-prompts__status admin-prompts__status--${status.type}`}>
+            {status.message}
+          </div>
+        )}
 
         <div className="admin-prompts__layout">
           <nav className="admin-prompts__nav" aria-label="프롬프트 카테고리">
@@ -982,34 +1010,28 @@ export function AdminPromptsPage() {
                   </div>
                 </section>
 
-                {status.message && (
-                  <div className={`admin-prompts__status admin-prompts__status--${status.type}`}>
-                    {status.message}
-                  </div>
-                )}
-
-                <div className="admin-prompts__actions">
-                  <button
-                    type="button"
-                    className="admin-prompts__secondary"
-                    onClick={() => setPreviewOpen(true)}
-                    disabled={!activeConfig}
-                  >
-                    미리보기
-                  </button>
-                  <button type="button" className="admin-prompts__primary" onClick={handleSave} disabled={saving}>
-                    {saving ? '저장 중...' : '저장'}
-                  </button>
-                  <button type="button" className="admin-prompts__secondary" onClick={handleRevert} disabled={saving}>
-                    되돌리기
-                  </button>
-                  <button type="button" className="admin-prompts__secondary" onClick={handleRestoreDefault} disabled={saving}>
-                    기본값 적용
-                  </button>
-                </div>
               </div>
 
               <aside className="admin-prompts__sidebar">
+                <section className="admin-prompts__group admin-prompts__preview">
+                  <header className="admin-prompts__group-header">
+                    <h3 className="admin-prompts__group-title">실시간 미리보기</h3>
+                    <button
+                      type="button"
+                      className="admin-prompts__secondary"
+                      onClick={() => setPreviewOpen(true)}
+                      disabled={!preview}
+                    >
+                      전체 화면
+                    </button>
+                  </header>
+                  <p className="admin-prompts__logs-caption admin-prompts__preview-caption">
+                    입력한 내용을 바탕으로 생성되는 프롬프트를 즉시 확인하세요.
+                  </p>
+                  <div className="admin-prompts__preview-body">
+                    <pre>{preview || '프롬프트 지시를 입력하면 미리보기 내용이 표시됩니다.'}</pre>
+                  </div>
+                </section>
                 <section className="admin-prompts__group admin-prompts__logs">
                   <header className="admin-prompts__group-header">
                     <h3 className="admin-prompts__group-title">최근 요청 기록</h3>
