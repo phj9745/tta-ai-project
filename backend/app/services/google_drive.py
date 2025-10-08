@@ -20,35 +20,6 @@ from ..token_store import StoredTokens, TokenStorage
 from .excel_templates import populate_feature_list, populate_testcase_list
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
-class Settings:
-    client_id: str = "test_client_id"
-    client_secret: str = "test_client_secret"
-
-class StoredTokens(TypedDict):
-    google_id: str
-    display_name: str
-    email: str
-    access_token: str
-    refresh_token: Optional[str]
-    scope: str
-    token_type: str
-    expires_in: int
-    saved_at: datetime
-
-class TokenStorage:
-    def load_by_google_id(self, google_id: str) -> Optional[StoredTokens]: return None
-    def list_accounts(self) -> list: return []
-    def save(self, **kwargs) -> StoredTokens: pass
-
-def populate_feature_list(workbook_bytes, csv_text): pass
-def populate_testcase_list(workbook_bytes, csv_text): pass
-
-class GoogleOAuthService:
-    def ensure_credentials(self): pass
-
-GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-
-
 logger = logging.getLogger(__name__)
 
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
@@ -126,16 +97,12 @@ class GoogleDriveService:
                     match = EXAM_NUMBER_PATTERN.search(stripped_value)
                     if match:
                         exam_number = match.group(0)
-                # '신청기업'이 아닌 '제조자' 필드에서 업체명 추출
                 elif normalized_label == "제조자":
                     company_name = stripped_value
-                # '제품명및버전' 필드 처리
                 elif normalized_label.startswith("제품명및버전"):
                     lines = [line.strip() for line in stripped_value.split('\n') if line.strip()]
                     if lines:
-                        # 마지막 줄(영문명)을 기본으로 사용
                         last_line = lines[-1]
-                        # 콜론(:)을 기준으로 실제 제품명만 추출
                         if ":" in last_line:
                             product_name = last_line.split(":", 1)[1].strip()
                         else:
