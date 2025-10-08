@@ -1,34 +1,47 @@
 import './App.css'
-import { useEffect, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 
-import { listen, navigate } from './navigation'
-import { DriveSetupPage } from './pages/DriveSetupPage'
-import { LoginPage } from './pages/LoginPage'
-
-const KNOWN_PATHS = new Set(['/', '/drive'])
+import { AppShell } from './app/components/AppShell'
+import { useAuthStatus } from './app/hooks/useAuthStatus'
+import { usePathname } from './app/hooks/usePathname'
+import { resolvePage } from './app/routing/resolvePage'
+import { useRouteGuards } from './app/routing/useRouteGuards'
+import { clearAuthentication } from './auth'
+import { openGoogleDriveWorkspace } from './drive'
+import { navigate } from './navigation'
 
 function App() {
-  const [pathname, setPathname] = useState<string>(() => window.location.pathname || '/')
+  const authStatus = useAuthStatus()
+  const pathname = usePathname()
 
-  useEffect(() => {
-    const unsubscribe = listen((nextPath) => {
-      setPathname(nextPath)
-    })
-    return unsubscribe
+  useRouteGuards(pathname, authStatus)
+
+  const pageContent = useMemo(() => resolvePage({ pathname, authStatus }), [pathname, authStatus])
+
+  const handleLogout = useCallback(() => {
+    clearAuthentication()
+    navigate('/', { replace: true })
   }, [])
 
-  useEffect(() => {
-    if (!KNOWN_PATHS.has(pathname)) {
-      navigate('/', { replace: true })
-      setPathname('/')
-    }
-  }, [pathname])
+  const handleOpenDrive = useCallback(() => {
+    openGoogleDriveWorkspace()
+  }, [])
 
-  if (pathname === '/drive') {
-    return <DriveSetupPage />
-  }
+  const handleOpenAdmin = useCallback(() => {
+    navigate('/admin/prompts')
+  }, [])
 
-  return <LoginPage />
+  return (
+    <AppShell
+      isAuthenticated={authStatus === 'authenticated'}
+      currentPath={pathname}
+      onLogout={handleLogout}
+      onOpenDrive={handleOpenDrive}
+      onNavigateAdmin={handleOpenAdmin}
+    >
+      {pageContent}
+    </AppShell>
+  )
 }
 
 export default App

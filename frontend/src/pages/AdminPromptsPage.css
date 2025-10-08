@@ -1,0 +1,606 @@
+.admin-prompts {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 0 48px;
+}
+
+.admin-prompts--loading,
+.admin-prompts--error {
+  gap: 32px;
+}
+
+.admin-prompts__placeholder {
+  padding: 48px;
+  border: 1px dashed var(--gray-300, #d1d5db);
+  border-radius: 12px;
+  text-align: center;
+  color: var(--gray-600, #4b5563);
+  background-color: var(--gray-50, #f9fafb);
+}
+
+.admin-prompts__placeholder--error {
+  border-color: var(--rose-300, #fda4af);
+  color: var(--rose-700, #be123c);
+  background-color: var(--rose-50, #fff1f2);
+}
+
+.admin-prompts__layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.admin-prompts__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: sticky;
+  top: 96px;
+}
+
+.admin-prompts__nav-item {
+  text-align: left;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 10px;
+  background-color: var(--surface, #fff);
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.admin-prompts__nav-item:hover,
+.admin-prompts__nav-item:focus-visible {
+  border-color: var(--primary-400, #60a5fa);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.25);
+}
+
+.admin-prompts__nav-item--active {
+  border-color: var(--primary-500, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.35);
+}
+
+.admin-prompts__nav-label {
+  display: block;
+  font-weight: 600;
+  color: var(--gray-900, #111827);
+}
+
+.admin-prompts__nav-summary {
+  margin-top: 4px;
+  display: block;
+  color: var(--gray-600, #4b5563);
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.admin-prompts__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-prompts__toolbar-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-prompts__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border-radius: 999px;
+  border: 1px solid var(--gray-300, #d1d5db);
+  background-color: var(--surface, #fff);
+  color: var(--gray-700, #374151);
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+.admin-prompts__back:hover,
+.admin-prompts__back:focus-visible {
+  outline: none;
+  border-color: var(--primary-400, #60a5fa);
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.35);
+  color: var(--primary-600, #2563eb);
+}
+
+.admin-prompts__content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 28px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 16px;
+  background-color: var(--surface, #fff);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.admin-prompts__content-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-prompts__title {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--gray-900, #111827);
+}
+
+.admin-prompts__summary {
+  margin: 0;
+  color: var(--gray-600, #4b5563);
+}
+
+.admin-prompts__content-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2.1fr) minmax(360px, 1fr);
+  gap: 36px;
+  align-items: start;
+}
+
+.admin-prompts__main {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.admin-prompts__sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  position: sticky;
+  top: 96px;
+}
+
+.admin-prompts__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-prompts__field--half {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.admin-prompts__field-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.admin-prompts__label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--gray-700, #374151);
+}
+
+.admin-prompts__input,
+.admin-prompts__textarea,
+.admin-prompts__select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--gray-300, #d1d5db);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  color: var(--gray-900, #111827);
+  background-color: var(--surface, #fff);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.admin-prompts__textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.admin-prompts__input:focus-visible,
+.admin-prompts__textarea:focus-visible,
+.admin-prompts__select:focus-visible {
+  outline: none;
+  border-color: var(--primary-500, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.admin-prompts__group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 12px;
+  background-color: var(--gray-50, #f9fafb);
+}
+
+.admin-prompts__logs {
+  background-color: var(--surface, #fff);
+}
+
+.admin-prompts__logs-caption {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--gray-600, #4b5563);
+  line-height: 1.5;
+}
+
+.admin-prompts__log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-prompts__log-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--gray-50, #f9fafb);
+}
+
+.admin-prompts__log-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-prompts__log-menu {
+  font-weight: 600;
+  color: var(--gray-800, #1f2937);
+}
+
+.admin-prompts__log-time {
+  font-size: 0.8rem;
+  color: var(--gray-500, #6b7280);
+}
+
+.admin-prompts__log-summary {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--gray-600, #4b5563);
+  line-height: 1.5;
+}
+
+.admin-prompts__log-project {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--gray-500, #6b7280);
+  word-break: break-word;
+}
+
+.admin-prompts__log-details {
+  border-radius: 8px;
+  background-color: var(--surface, #fff);
+  border: 1px solid var(--gray-200, #e5e7eb);
+  padding: 10px 12px;
+}
+
+.admin-prompts__log-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--primary-600, #2563eb);
+  outline: none;
+}
+
+.admin-prompts__log-details-content {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-prompts__log-heading {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--gray-700, #374151);
+}
+
+.admin-prompts__log-block {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--gray-800, #1f2937);
+  background-color: var(--gray-50, #f9fafb);
+  border: 1px solid var(--gray-200, #e5e7eb);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.admin-prompts__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-prompts__group-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--gray-800, #1f2937);
+}
+
+.admin-prompts__secondary {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-500, #3b82f6);
+  background: transparent;
+  color: var(--primary-600, #2563eb);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.admin-prompts__secondary:hover,
+.admin-prompts__secondary:focus-visible {
+  background-color: rgba(37, 99, 235, 0.08);
+  outline: none;
+}
+
+.admin-prompts__secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background-color: transparent;
+}
+
+.admin-prompts__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.admin-prompts__list-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--surface, #fff);
+}
+
+.admin-prompts__list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.admin-prompts__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--gray-700, #374151);
+}
+
+.admin-prompts__switch input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-prompts__remove {
+  align-self: flex-end;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: none;
+  background-color: var(--rose-500, #f43f5e);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.admin-prompts__remove:hover,
+.admin-prompts__remove:focus-visible {
+  background-color: var(--rose-600, #e11d48);
+  outline: none;
+}
+
+.admin-prompts__empty {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--gray-600, #4b5563);
+}
+
+.admin-prompts__empty--error {
+  color: var(--rose-600, #e11d48);
+}
+
+.admin-prompts__toggles {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.admin-prompts__model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.admin-prompts__model-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--gray-700, #374151);
+}
+
+.admin-prompts__model-field input[type='number'] {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--gray-300, #d1d5db);
+}
+
+.admin-prompts__hint {
+  border-radius: 12px;
+  border: 1px solid var(--primary-100, #dbeafe);
+  background: linear-gradient(180deg, rgba(219, 234, 254, 0.45) 0%, rgba(219, 234, 254, 0.15) 100%);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--primary-800, #1e3a8a);
+}
+
+.admin-prompts__hint-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.admin-prompts__hint-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.admin-prompts__preview {
+  gap: 18px;
+}
+
+.admin-prompts__preview-caption {
+  margin: 0;
+}
+
+.admin-prompts__preview-body {
+  border-radius: 12px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--surface, #fff);
+  padding: 16px;
+  max-height: 340px;
+  overflow: auto;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.admin-prompts__preview-body pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  color: var(--gray-800, #1f2937);
+  font-size: 0.9rem;
+}
+
+.admin-prompts__status {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.admin-prompts__status--success {
+  background-color: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.admin-prompts__status--error {
+  background-color: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.admin-prompts__primary {
+  padding: 10px 18px;
+  border-radius: 8px;
+  border: none;
+  background-color: var(--primary-600, #2563eb);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-prompts__primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.admin-prompts__primary:hover:not(:disabled),
+.admin-prompts__primary:focus-visible:not(:disabled) {
+  background-color: var(--primary-700, #1d4ed8);
+  outline: none;
+}
+
+@media (max-width: 1200px) {
+  .admin-prompts__content-body {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-prompts__sidebar {
+    position: static;
+  }
+
+  .admin-prompts__layout {
+    grid-template-columns: 240px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+
+@media (max-width: 960px) {
+  .admin-prompts__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-prompts__content {
+    padding: 20px;
+  }
+
+  .admin-prompts__nav {
+    position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-prompts__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-prompts__toolbar-actions {
+    width: 100%;
+  }
+
+  .admin-prompts__toolbar-actions .admin-prompts__secondary,
+  .admin-prompts__toolbar-actions .admin-prompts__primary {
+    width: 100%;
+  }
+}
+
+.admin-prompts__preview-modal {
+  margin: 0;
+  padding: 0 0 16px;
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.admin-prompts__preview-modal pre {
+  margin: 0;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--gray-200, #e5e7eb);
+  background-color: var(--surface, #fff);
+  font-family: 'Fira Code', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: var(--gray-800, #1f2937);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

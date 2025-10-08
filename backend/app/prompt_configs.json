@@ -1,0 +1,49 @@
+{
+  "feature-list": {
+    "attachmentDescriptorTemplate": "{{index}}. {{descriptor}}",
+    "builtinContexts": [
+      {
+        "description": "내장된 기능리스트 예제 XLSX를 PDF로 변환한 자료. 열 구성 및 표기 예시 참고용.",
+        "id": "feature-template",
+        "includeInPrompt": true,
+        "label": "기능리스트 예제 양식",
+        "renderMode": "xlsx-to-pdf",
+        "showInAttachmentList": true,
+        "sourcePath": "template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
+      }
+    ],
+    "evaluationNotes": "",
+    "label": "기능리스트 생성",
+    "modelParameters": {
+      "frequencyPenalty": 0.0,
+      "maxOutputTokens": 1500,
+      "presencePenalty": 0.0,
+      "temperature": 0.2,
+      "topP": 0.9
+    },
+    "requestDescription": "업로드된 자료에서 주요 기능과 근거를 추출하여 CSV로 정리합니다.",
+    "scaffolding": {
+      "attachmentsHeading": "첨부 파일 목록",
+      "attachmentsIntro": "다음 첨부 파일을 참고하여 요구사항을 분석하고 지침에 맞는 CSV를 작성하세요.\n각 파일은 업로드된 순서대로 첨부되어 있습니다.",
+      "closingNote": "위 자료는 {{context_summary}}입니다. 이 자료를 활용하여 기능리스트를 작성해 주세요.\n\n마지막 자료는 양식이라 마지막 자료의 양식에 맞춰 csv 형식으로 응답해야합니다.",
+      "formatWarning": ""
+    },
+    "summary": "요구사항 문서를 기반으로 신규 프로젝트의 기능 정의서를 작성합니다.",
+    "systemPrompt": "당신은 소프트웨어 기획 QA 리드입니다. 업로드된 요구사항을 기반으로 기능 정의서를 작성합니다.",
+    "userPrompt": "요구사항 자료에서 주요 기능을 발췌하여 CSV로 정리하세요.",
+    "userPromptSections": [
+      {
+        "content": "1. 첨부 자료에서 핵심 요구사항, 비즈니스 규칙, 화면 흐름을 추출하고\n2. 기능을 대·중·소 분류 체계로 재구성",
+        "enabled": true,
+        "id": "feature-analysis",
+        "label": "분석 요청"
+      },
+      {
+        "content": "- 중복된 기능은 병합하고, 이름은 한글 명사형으로 통일합니다.\n- 기능 설명에는 ‘무엇을/왜’를 한 문장씩 포함하고, 정량 기준이 있다면 추가합니다.",
+        "enabled": true,
+        "id": "feature-quality",
+        "label": "품질 기준"
+      }
+    ]
+  }
+}
