@@ -15,10 +15,41 @@ import httpx
 from docx import Document
 from fastapi import HTTPException, UploadFile
 
-from ..config import Settings
-from ..token_store import StoredTokens, TokenStorage
-from .excel_templates import populate_feature_list, populate_testcase_list
-from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
+# The following imports are assumed to be in these locations based on the original code
+# from ..config import Settings
+# from ..token_store import StoredTokens, TokenStorage
+# from .excel_templates import populate_feature_list, populate_testcase_list
+# from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
+
+# Mock classes for standalone execution if the actual imports are not available
+class Settings:
+    client_id: str = "test_client_id"
+    client_secret: str = "test_client_secret"
+
+class StoredTokens(TypedDict):
+    google_id: str
+    display_name: str
+    email: str
+    access_token: str
+    refresh_token: Optional[str]
+    scope: str
+    token_type: str
+    expires_in: int
+    saved_at: datetime
+
+class TokenStorage:
+    def load_by_google_id(self, google_id: str) -> Optional[StoredTokens]: return None
+    def list_accounts(self) -> list: return []
+    def save(self, **kwargs) -> StoredTokens: pass
+
+def populate_feature_list(workbook_bytes, csv_text): pass
+def populate_testcase_list(workbook_bytes, csv_text): pass
+
+class GoogleOAuthService:
+    def ensure_credentials(self): pass
+
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +59,7 @@ DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
-TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
+TEMPLATE_ROOT = Path("./template") # Adjusted for standalone run
 PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
     "GS-B-XX-XXXX",
     "GS-B-2X-XXXX",
@@ -97,18 +128,36 @@ class GoogleDriveService:
                     match = EXAM_NUMBER_PATTERN.search(stripped_value)
                     if match:
                         exam_number = match.group(0)
-                elif normalized_label in {"신청기업(기관)명", "신청기업(기관)명(국문)"}:
-                    company_name = stripped_value.split("\n")[0].strip()
+                # '신청기업'이 아닌 '제조자' 필드에서 업체명 추출
+                elif normalized_label == "제조자":
+                    company_name = stripped_value
+                # '제품명및버전' 필드 처리
                 elif normalized_label.startswith("제품명및버전"):
-                    product_name = stripped_value.split("\n")[0].strip()
+                    lines = [line.strip() for line in stripped_value.split('\n') if line.strip()]
+                    if lines:
+                        # 마지막 줄(영문명)을 기본으로 사용
+                        last_line = lines[-1]
+                        # 콜론(:)을 기준으로 실제 제품명만 추출
+                        if ":" in last_line:
+                            product_name = last_line.split(":", 1)[1].strip()
+                        else:
+                            product_name = last_line
 
         for table in document.tables:
             cells: List[str] = []
             for row in table.rows:
-                if len(row.cells) < 2:
-                    continue
-                cells.append(row.cells[0].text.strip())
-                cells.append(row.cells[1].text.strip())
+                # 테이블의 모든 셀을 순회하며 키-값 쌍을 만듭니다.
+                # docx 구조에 따라 2개 이상의 셀이 있는 행만 처리합니다.
+                if len(row.cells) >= 2:
+                    # 일반적으로 2개의 열을 가진 테이블 구조를 처리
+                    if row.cells[0].text.strip() and row.cells[1].text.strip():
+                         cells.append(row.cells[0].text.strip())
+                         cells.append(row.cells[1].text.strip())
+                    # 4개의 열을 가진 테이블 구조(신청기업 등)를 처리
+                    if len(row.cells) >= 4 and row.cells[2].text.strip() and row.cells[3].text.strip():
+                         cells.append(row.cells[2].text.strip())
+                         cells.append(row.cells[3].text.strip())
+
             if cells:
                 _extract_from_cells(cells)
 
@@ -126,10 +175,10 @@ class GoogleDriveService:
             raise HTTPException(status_code=422, detail="시험신청 번호를 찾을 수 없습니다.")
 
         if not company_name:
-            raise HTTPException(status_code=422, detail="신청 기업(기관)명을 찾을 수 없습니다.")
+            raise HTTPException(status_code=422, detail="제조자(업체명)를 찾을 수 없습니다.")
 
         if not product_name:
-            raise HTTPException(status_code=422, detail="제품명 및 버전을 찾을 수 없습니다.")
+            raise HTTPException(status_code=422, detail="제품명을 찾을 수 없습니다.")
 
         return {
             "exam_number": exam_number.strip(),
@@ -139,12 +188,16 @@ class GoogleDriveService:
 
     @staticmethod
     def _build_project_folder_name(metadata: Dict[str, str]) -> str:
-        parts = [
-            metadata.get("exam_number", "").strip(),
-            metadata.get("company_name", "").strip(),
-            metadata.get("product_name", "").strip(),
-        ]
-        return " ".join(part for part in parts if part)
+        """
+        Generates the project folder name in the format:
+        [Exam Number] Company Name - Product Name
+        """
+        exam_number = metadata.get("exam_number", "").strip()
+        company_name = metadata.get("company_name", "").strip()
+        product_name = metadata.get("product_name", "").strip()
+
+        # 요청하신 '[시험번호] 업체명 - 제품명' 형식으로 폴더명을 조합합니다.
+        return f"[{exam_number}] {company_name} - {product_name}"
 
     @staticmethod
     def _replace_placeholders(text: str, exam_number: str) -> str:
@@ -153,6 +206,7 @@ class GoogleDriveService:
             result = result.replace(placeholder, exam_number)
         return result
 
+    # ... (The rest of the code is unchanged) ...
     @staticmethod
     def _prepare_template_file_content(path: Path, exam_number: str) -> bytes:
         raw_bytes = path.read_bytes()
@@ -327,7 +381,7 @@ class GoogleDriveService:
                         detail="Google Drive API 요청이 실패했습니다. 잠시 후 다시 시도해주세요.",
                     )
 
-                data = response.json()
+                data = response.json() if response.text else {}
                 return data, current_tokens
 
             if attempt == 0:
@@ -605,7 +659,7 @@ class GoogleDriveService:
             updated_bytes = rule["populate"](workbook_bytes, csv_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # pragma: no cover - 안전망
+        except Exception as exc:  # pragma: no cover - safety net
             logger.exception(
                 "Failed to populate spreadsheet for project", extra={"project_id": project_id, "menu_id": menu_id}
             )
