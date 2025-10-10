@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -12,7 +14,7 @@ from fastapi import HTTPException, UploadFile
 from openai import OpenAI
 from thefuzz import process as fuzz_process
 
-from .ai_generation import AIGenerationService
+from .ai_generation import AIGenerationService, GeneratedCsv
 from .google_drive import GoogleDriveService
 
 logger = logging.getLogger(__name__)
@@ -71,12 +73,34 @@ class StandardizedFinding:
     excluded: bool
     raw_details: str
     ai_notes: Dict[str, Any] = field(default_factory=dict)
+    source: str = "criteria"
 
 
 class SecurityReportService:
     def __init__(self, drive_service: GoogleDriveService, openai_client: OpenAI) -> None:
         self._drive_service = drive_service
         self._openai_client = openai_client
+
+    async def generate_csv_report(
+        self,
+        *,
+        invicti_upload: UploadFile,
+        project_id: str,
+        google_id: str | None,
+    ) -> GeneratedCsv:
+        dataframe = await self.process_invicti_report(
+            invicti_upload=invicti_upload,
+            google_id=google_id,
+        )
+        csv_dataframe = self._build_csv_view(dataframe)
+        csv_text = csv_dataframe.to_csv(index=False)
+        encoded = csv_text.encode("utf-8-sig")
+
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
+        filename = f"{safe_project}_security-report_{timestamp}.csv"
+
+        return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
 
     async def process_invicti_report(
         self,
@@ -104,7 +128,7 @@ class SecurityReportService:
         standardized: List[StandardizedFinding] = []
         criteria_modified = False
         for finding in findings:
-            mapped, updated = await self._map_finding_to_standard(finding, criteria_df)
+            mapped, updated = await self._map_finding_to_standard(finding, criteria_df, soup)
             criteria_modified = criteria_modified or updated
             if mapped is None:
                 logger.info(
@@ -196,6 +220,15 @@ class SecurityReportService:
         extracted_rows: List[Dict[str, str]] = []
         tables = soup.find_all("table")
         for table in tables:
+            classes = table.get("class") or []
+            if isinstance(classes, str):
+                classes = [classes]
+            if "detailed-scan" in classes:
+                extracted_rows.extend(self._extract_detailed_scan_rows(table))
+                if extracted_rows:
+                    return extracted_rows
+
+        for table in tables:
             header_cells = table.find_all("th")
             candidate_headers = [cell.get_text(strip=True) for cell in header_cells]
             normalized_headers = [header.lower() for header in candidate_headers]
@@ -238,7 +271,49 @@ class SecurityReportService:
                 extracted_rows.append(values)
             if extracted_rows:
                 break
+        if not extracted_rows:
+            logger.warning("Failed to extract summary rows from Invicti report.")
         return extracted_rows
+
+    def _extract_detailed_scan_rows(self, table: BeautifulSoup) -> List[Dict[str, str]]:
+        rows: List[Dict[str, str]] = []
+        tbody = table.find("tbody")
+        if not tbody:
+            return rows
+
+        for row in tbody.find_all("tr"):
+            cells = row.find_all("td")
+            if not cells or len(cells) < 4:
+                continue
+
+            classes = row.get("class") or []
+            severity = ""
+            for class_name in classes:
+                if class_name.endswith("-severity"):
+                    severity = class_name.rsplit("-", 1)[0]
+                    break
+            severity = self._normalize_severity(severity)
+
+            link = cells[1].find("a")
+            if link is None:
+                continue
+            name = link.get_text(strip=True)
+            if not name:
+                continue
+
+            anchor_raw = link.get("href", "")
+            anchor_id = anchor_raw.lstrip("#") if anchor_raw and anchor_raw.startswith("#") else None
+            path_text = cells[3].get_text(" ", strip=True) if len(cells) >= 4 else ""
+
+            rows.append(
+                {
+                    "name": name,
+                    "severity": severity,
+                    "path": path_text,
+                    "anchor_id": anchor_id,
+                }
+            )
+        return rows
 
     def _extract_detail_section(
         self,
@@ -275,6 +350,7 @@ class SecurityReportService:
         self,
         finding: InvictiFinding,
         criteria_df: pd.DataFrame,
+        soup: BeautifulSoup,
     ) -> Tuple[Optional[StandardizedFinding], bool]:
         best_match = self._find_best_criteria(finding.name, criteria_df["Invicti 결과"])
         if best_match is None:
@@ -286,16 +362,19 @@ class SecurityReportService:
 
         match_value, score, row_index = best_match
         record = criteria_df.iloc[row_index]
-        excluded = str(record["결함 제외 여부"]).strip() == "1"
+        excluded = self._is_excluded(record.get("결함 제외 여부"))
 
-        description_template = str(record["결함 설명"] or "")
-        if self._has_placeholders(description_template):
-            description_text = await self._fill_template_with_ai(
-                template=description_template,
-                finding=finding,
-            )
-        else:
-            description_text = description_template
+        if excluded:
+            return None, False
+
+        summary_template = str(record.get("결함 요약") or match_value)
+        summary_text = await self._render_template_field(summary_template, finding, soup)
+
+        description_template = str(record.get("결함 설명") or "")
+        description_text = await self._render_template_field(description_template, finding, soup)
+
+        recommendation_template = self._determine_recommendation(record)
+        recommendation_text = await self._render_template_field(recommendation_template, finding, soup)
 
         return StandardizedFinding(
             invicti_name=finding.name,
@@ -303,17 +382,18 @@ class SecurityReportService:
             severity=finding.severity,
             severity_rank=finding.severity_rank,
             anchor_id=finding.anchor_id,
-            summary=str(record["결함 요약"] or match_value),
-            recommendation=self._determine_recommendation(record),
-            category=str(record["품질특성"] or ""),
-            occurrence=str(record["발생빈도"] or ""),
+            summary=summary_text or match_value,
+            recommendation=recommendation_text,
+            category=str(record.get("품질특성") or ""),
+            occurrence=str(record.get("발생빈도") or ""),
             description=description_text,
-            excluded=excluded,
+            excluded=False,
             raw_details=finding.description_text,
             ai_notes={
                 "match_score": score,
                 "matched_criteria": match_value,
             },
+            source="criteria",
         ), False
 
     def _find_best_criteria(
@@ -370,6 +450,7 @@ class SecurityReportService:
             excluded=False,
             raw_details=finding.description_text,
             ai_notes={"generated": True},
+            source="ai",
         )
 
     async def _fill_template_with_ai(
@@ -412,7 +493,8 @@ class SecurityReportService:
             return {}
 
         try:
-            response = self._openai_client.responses.create(
+            response = await asyncio.to_thread(
+                self._openai_client.responses.create,
                 model="gpt-4.1-mini",
                 input=prompts,
                 response_format={"type": "json_object"},
@@ -474,6 +556,178 @@ class SecurityReportService:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
+
+    def _is_excluded(self, value: Any) -> bool:
+        text = str(value or "").strip().lower()
+        return text in {"1", "true", "yes", "y", "t", "on"}
+
+    async def _render_template_field(
+        self,
+        template: str,
+        finding: InvictiFinding,
+        soup: BeautifulSoup,
+    ) -> str:
+        if not template or not self._has_placeholders(template):
+            return template
+
+        filled, remaining = self._fill_template_with_known_placeholders(
+            template,
+            finding,
+            soup,
+        )
+        if not remaining:
+            return filled
+
+        ai_filled = await self._fill_template_with_ai(
+            template=filled,
+            finding=finding,
+            placeholders=remaining,
+        )
+        return ai_filled if ai_filled else filled
+
+    def _fill_template_with_known_placeholders(
+        self,
+        template: str,
+        finding: InvictiFinding,
+        soup: BeautifulSoup,
+    ) -> Tuple[str, List[str]]:
+        placeholders = self._extract_placeholders(template)
+        if not placeholders:
+            return template, []
+
+        values = self._build_placeholder_values(finding, soup)
+        result = template
+        unresolved: List[str] = []
+        for key in placeholders:
+            token = f"[{key}]"
+            if key in values:
+                value = values[key]
+                replacement = str(value).strip()
+                result = result.replace(token, replacement)
+            else:
+                unresolved.append(key)
+        return result, unresolved
+
+    def _build_placeholder_values(
+        self,
+        finding: InvictiFinding,
+        soup: BeautifulSoup,
+    ) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+
+        program_name = self._derive_program_name(finding)
+        if program_name:
+            values["프로그램 명"] = program_name
+
+        versions = self._extract_version_details(soup, finding.anchor_id)
+        if versions.get("current"):
+            values["현재 버전"] = versions["current"]
+        if versions.get("latest"):
+            values["최신 버전"] = versions["latest"]
+
+        weak_ciphers = self._extract_weak_ciphers(soup, finding.anchor_id)
+        if weak_ciphers:
+            values["암호화 목록"] = weak_ciphers
+
+        if finding.path:
+            values["URL"] = finding.path
+
+        return values
+
+    def _extract_version_details(
+        self,
+        soup: BeautifulSoup,
+        anchor_id: str | None,
+    ) -> Dict[str, str]:
+        details = {"current": "", "latest": ""}
+        if not anchor_id:
+            return details
+
+        target_id = anchor_id.lstrip("#")
+        h2_tag = soup.find("h2", id=target_id)
+        if not h2_tag:
+            return details
+
+        vuln_desc_div = h2_tag.find_parent(class_="vuln-desc")
+        if not vuln_desc_div:
+            return details
+
+        vulns_div = vuln_desc_div.find_next_sibling("div", class_="vulns")
+        if not vulns_div:
+            return details
+
+        vuln_detail_div = vulns_div.find("div", class_="vuln-detail")
+        if not vuln_detail_div:
+            return details
+
+        inner_div = vuln_detail_div.find("div")
+        if not inner_div:
+            return details
+
+        for h4 in inner_div.find_all("h4"):
+            aria_label = h4.get("aria-label", "").strip()
+            if not aria_label:
+                continue
+            ul = h4.find_next_sibling("ul")
+            if ul is None:
+                continue
+            li = ul.find("li")
+            if li is None:
+                continue
+            version_text = li.get_text(strip=True).split("(")[0].strip()
+            if aria_label == "확인된 버전":
+                details["current"] = version_text
+            elif aria_label == "최신 버전":
+                details["latest"] = version_text
+        return details
+
+    def _extract_weak_ciphers(
+        self,
+        soup: BeautifulSoup,
+        anchor_id: str | None,
+    ) -> str:
+        if not anchor_id:
+            return ""
+
+        target_id = anchor_id.lstrip("#")
+        h2_tag = soup.find("h2", id=target_id)
+        if not h2_tag:
+            return ""
+
+        vuln_desc_div = h2_tag.find_parent(class_="vuln-desc")
+        if not vuln_desc_div:
+            return ""
+
+        vulns_div = vuln_desc_div.find_next_sibling("div", class_="vulns")
+        if not vulns_div:
+            return ""
+
+        vuln_detail_div = vulns_div.find("div", class_="vuln-detail")
+        if not vuln_detail_div:
+            return ""
+
+        inner_div = vuln_detail_div.find("div")
+        if not inner_div:
+            return ""
+
+        for h4 in inner_div.find_all("h4"):
+            aria_label = h4.get("aria-label", "").strip()
+            if aria_label != "지원되는 약한 암호 목록":
+                continue
+            ul_tag = h4.find_next_sibling("ul")
+            if not ul_tag:
+                return ""
+            ciphers = [li.get_text(strip=True) for li in ul_tag.find_all("li")]
+            return "\n".join(cipher for cipher in ciphers if cipher)
+        return ""
+
+    def _derive_program_name(self, finding: InvictiFinding) -> str:
+        if not finding.name:
+            return ""
+        match = re.search(r"\(([^)]+)\)", finding.name)
+        if match:
+            return match.group(1).strip()
+        return ""
 
     def _safe_json_loads(self, payload: str) -> Dict[str, Any]:
         import json
@@ -537,6 +791,7 @@ class SecurityReportService:
                     "anchor_id": finding.anchor_id or "",
                     "원본 세부내용": finding.raw_details,
                     "AI 메모": finding.ai_notes,
+                    "매핑 유형": "AI 생성" if finding.source == "ai" else "기준표 매칭",
                 }
             )
         dataframe = pd.DataFrame(rows)
@@ -551,6 +806,77 @@ class SecurityReportService:
             "조치 가이드",
             "anchor_id",
             "원본 세부내용",
+            "매핑 유형",
             "AI 메모",
         ]
         return dataframe.reindex(columns=columns)
+
+    def _build_csv_view(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        if dataframe.empty:
+            return pd.DataFrame(
+                columns=[
+                    "순번",
+                    "시험환경 OS",
+                    "결함 요약",
+                    "결함 정도",
+                    "발생 빈도",
+                    "품질 특성",
+                    "결함 설명",
+                    "업체 응답",
+                    "수정여부",
+                    "비고",
+                    "Invicti 결과",
+                    "위험도",
+                    "발생경로",
+                    "조치 가이드",
+                    "원본 세부내용",
+                    "매핑 유형",
+                ]
+            )
+
+        output = dataframe.copy()
+        output.insert(0, "순번", [str(index) for index in range(1, len(output) + 1)])
+        output.insert(1, "시험환경 OS", ["시험환경 모든 OS"] * len(output))
+
+        severity_map = {
+            "Critical": "H",
+            "High": "H",
+            "Medium": "M",
+            "Low": "L",
+            "Info": "L",
+            "Informational": "L",
+        }
+        output["위험도"] = output["결함정도"].fillna("").astype(str)
+        output["결함 정도"] = output["위험도"].map(severity_map).fillna("M")
+        output["발생 빈도"] = output["발생빈도"].fillna("").astype(str)
+        output["품질 특성"] = output["품질특성"].fillna("").astype(str)
+        output["결함 설명"] = output["결함 설명"].fillna("").astype(str)
+        output["결함 요약"] = output["결함 요약"].fillna("").astype(str)
+        output["조치 가이드"] = output["조치 가이드"].fillna("").astype(str)
+        output["발생경로"] = output["발생경로"].fillna("").astype(str)
+        output["Invicti 결과"] = output["Invicti 결과"].fillna("").astype(str)
+        output["원본 세부내용"] = output["원본 세부내용"].fillna("").astype(str)
+
+        output["업체 응답"] = ""
+        output["수정여부"] = ""
+        output["비고"] = "보안성 시험 결과 참고"
+
+        columns = [
+            "순번",
+            "시험환경 OS",
+            "결함 요약",
+            "결함 정도",
+            "발생 빈도",
+            "품질 특성",
+            "결함 설명",
+            "업체 응답",
+            "수정여부",
+            "비고",
+            "Invicti 결과",
+            "위험도",
+            "발생경로",
+            "조치 가이드",
+            "원본 세부내용",
+            "매핑 유형",
+        ]
+        return output.reindex(columns=columns)
