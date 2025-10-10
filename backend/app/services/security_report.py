@@ -359,7 +359,7 @@ class SecurityReportService:
     ) -> Tuple[Optional[StandardizedFinding], bool]:
         best_match = self._find_best_criteria(finding.name, criteria_df["Invicti 결과"])
         if best_match is None:
-            generated = await self._generate_new_standard(finding)
+            generated = await self._generate_new_standard(finding, soup)
             if generated is None:
                 return None, False
             self._append_generated_rule(criteria_df, generated)
@@ -372,14 +372,34 @@ class SecurityReportService:
         if excluded:
             return None, False
 
+        context_values = self._build_placeholder_values(finding, soup)
         summary_template = str(record.get("결함 요약") or match_value)
-        summary_text = await self._render_template_field(summary_template, finding, soup)
+        summary_text = await self._render_template_field(
+            summary_template,
+            finding,
+            soup,
+            context=context_values,
+        )
 
         description_template = str(record.get("결함 설명") or "")
-        description_text = await self._render_template_field(description_template, finding, soup)
+        description_text = await self._render_template_field(
+            description_template,
+            finding,
+            soup,
+            context=context_values,
+        )
 
         recommendation_template = self._determine_recommendation(record)
-        recommendation_text = await self._render_template_field(recommendation_template, finding, soup)
+        recommendation_text = await self._render_template_field(
+            recommendation_template,
+            finding,
+            soup,
+            context=context_values,
+        )
+
+        summary_final = self._finalize_summary(summary_text or match_value, finding, context_values)
+        description_final = self._finalize_description(description_text, finding, context_values)
+        recommendation_final = self._finalize_recommendation(recommendation_text)
 
         return StandardizedFinding(
             invicti_name=finding.name,
@@ -387,11 +407,11 @@ class SecurityReportService:
             severity=finding.severity,
             severity_rank=finding.severity_rank,
             anchor_id=finding.anchor_id,
-            summary=summary_text or match_value,
-            recommendation=recommendation_text,
-            category=str(record.get("품질특성") or ""),
-            occurrence=str(record.get("발생빈도") or ""),
-            description=description_text,
+            summary=summary_final,
+            recommendation=recommendation_final,
+            category="보안성",
+            occurrence="A",
+            description=description_final,
             excluded=False,
             raw_details=finding.description_text,
             ai_notes={
@@ -426,10 +446,16 @@ class SecurityReportService:
             return None
         return value, score, index
 
-    async def _generate_new_standard(self, finding: InvictiFinding) -> Optional[StandardizedFinding]:
+    async def _generate_new_standard(
+        self,
+        finding: InvictiFinding,
+        soup: BeautifulSoup,
+    ) -> Optional[StandardizedFinding]:
+        context_values = self._build_placeholder_values(finding, soup)
         prompt_payload = await self._call_openai_for_json(
             prompt_id="security-new-finding",
             finding=finding,
+            context_data=context_values,
         )
         if not prompt_payload:
             logger.warning(
@@ -438,11 +464,13 @@ class SecurityReportService:
             )
             prompt_payload = {}
 
-        summary = prompt_payload.get("summary") or finding.name
-        description = prompt_payload.get("description") or finding.description_text
+        summary = prompt_payload.get("summary") or ""
+        description = prompt_payload.get("description") or ""
         recommendation = prompt_payload.get("recommendation") or ""
-        category = prompt_payload.get("category") or ""
-        occurrence = prompt_payload.get("occurrence") or ""
+
+        summary_final = self._finalize_summary(summary, finding, context_values)
+        description_final = self._finalize_description(description, finding, context_values)
+        recommendation_final = self._finalize_recommendation(recommendation)
 
         return StandardizedFinding(
             invicti_name=finding.name,
@@ -450,11 +478,11 @@ class SecurityReportService:
             severity=finding.severity,
             severity_rank=finding.severity_rank,
             anchor_id=finding.anchor_id,
-            summary=summary,
-            recommendation=recommendation,
-            category=category,
-            occurrence=occurrence,
-            description=description,
+            summary=summary_final,
+            recommendation=recommendation_final,
+            category="보안성",
+            occurrence="A",
+            description=description_final,
             excluded=False,
             raw_details=finding.description_text,
             ai_notes={"generated": True},
@@ -466,8 +494,9 @@ class SecurityReportService:
         *,
         template: str,
         finding: InvictiFinding,
+        placeholders: Iterable[str],
+        context: Dict[str, str] | None = None,
     ) -> str:
-        placeholders = self._extract_placeholders(template)
         if not placeholders:
             return template
 
@@ -475,6 +504,7 @@ class SecurityReportService:
             prompt_id="security-template-fill",
             finding=finding,
             placeholders=placeholders,
+            context_data=context,
         )
         if not prompt_payload:
             return template
@@ -491,11 +521,13 @@ class SecurityReportService:
         prompt_id: str,
         finding: InvictiFinding,
         placeholders: Iterable[str] | None = None,
+        context_data: Dict[str, str] | None = None,
     ) -> Dict[str, Any]:
         _ = prompts = self._build_prompt(
             prompt_id=prompt_id,
             finding=finding,
             placeholders=placeholders,
+            context_data=context_data,
         )
         if prompts is None:
             return {}
@@ -525,10 +557,20 @@ class SecurityReportService:
         prompt_id: str,
         finding: InvictiFinding,
         placeholders: Iterable[str] | None,
+        context_data: Dict[str, str] | None,
     ) -> List[Dict[str, str]] | None:
         placeholder_text = ""
         if placeholders:
             placeholder_text = ", ".join(sorted(placeholders))
+
+        context_lines = ""
+        if context_data:
+            entries = [
+                f"- {key}: {value}"
+                for key, value in context_data.items()
+                if isinstance(value, str) and value.strip()
+            ]
+            context_lines = "\n".join(entries)
 
         if prompt_id == "security-new-finding":
             system = (
@@ -542,7 +584,14 @@ class SecurityReportService:
                 "recommendation(조치 가이드), category(품질 특성), occurrence(발생 빈도 권장 값). "
                 f"\n\n제목: {finding.name}\n위험도: {finding.severity}\n경로: {finding.path}\n"
                 f"상세 설명:\n{finding.description_text}\n"
-                f"증적:\n{finding.evidence_text or '없음'}"
+                f"증적:\n{finding.evidence_text or '없음'}\n"
+                "추가 참고 정보:\n"
+                f"{context_lines or '- (제공된 추가 정보 없음)'}\n\n"
+                "작성 지침:\n"
+                "- summary는 6~18자의 한국어 명사구로 작성하고 번호, 괄호, 문장 부호를 사용하지 마세요.\n"
+                "- description은 2~3문장으로 문제 원인, 영향 경로, 개선 방향을 자연스럽게 설명하세요.\n"
+                "- 번호나 목록 대신 문장으로 작성하고, 불필요한 인용부호나 HTML 표기를 제거하세요.\n"
+                "- '암호화 목록' 정보가 제공되면 마지막 문장에 \"취약한 암호화 목록: ...\" 형식으로 그대로 포함하세요."
             )
         elif prompt_id == "security-template-fill":
             system = (
@@ -555,7 +604,10 @@ class SecurityReportService:
                 f"플레이스홀더: {placeholder_text}\n\n"
                 f"제목: {finding.name}\n위험도: {finding.severity}\n경로: {finding.path}\n"
                 f"상세 설명:\n{finding.description_text}\n"
-                f"증적:\n{finding.evidence_text or '없음'}"
+                f"증적:\n{finding.evidence_text or '없음'}\n"
+                "추가 참고 정보:\n"
+                f"{context_lines or '- (제공된 추가 정보 없음)'}\n"
+                "출력 값에는 번호나 장식 문자를 포함하지 마세요."
             )
         else:
             return None
@@ -574,14 +626,19 @@ class SecurityReportService:
         template: str,
         finding: InvictiFinding,
         soup: BeautifulSoup,
+        context: Dict[str, str] | None = None,
     ) -> str:
-        if not template or not self._has_placeholders(template):
+        if not template:
+            return template
+
+        if not self._has_placeholders(template):
             return template
 
         filled, remaining = self._fill_template_with_known_placeholders(
             template,
             finding,
             soup,
+            context_values=context,
         )
         if not remaining:
             return filled
@@ -590,6 +647,7 @@ class SecurityReportService:
             template=filled,
             finding=finding,
             placeholders=remaining,
+            context=context,
         )
         return ai_filled if ai_filled else filled
 
@@ -598,12 +656,13 @@ class SecurityReportService:
         template: str,
         finding: InvictiFinding,
         soup: BeautifulSoup,
+        context_values: Dict[str, str] | None = None,
     ) -> Tuple[str, List[str]]:
         placeholders = self._extract_placeholders(template)
         if not placeholders:
             return template, []
 
-        values = self._build_placeholder_values(finding, soup)
+        values = context_values if context_values is not None else self._build_placeholder_values(finding, soup)
         result = template
         unresolved: List[str] = []
         for key in placeholders:
@@ -741,6 +800,144 @@ class SecurityReportService:
         if match:
             return match.group(1).strip()
         return ""
+
+    def _finalize_summary(
+        self,
+        summary: str,
+        finding: InvictiFinding,
+        context: Dict[str, str] | None,
+    ) -> str:
+        cleaned = self._clean_summary(summary)
+        cleaned = self._normalize_summary_phrase(cleaned)
+        if cleaned:
+            return cleaned
+        return self._fallback_summary(finding)
+
+    def _clean_summary(self, text: str) -> str:
+        if not text:
+            return ""
+        cleaned = re.sub(r"[\r\n]+", " ", str(text)).strip()
+        cleaned = re.sub(r"^[\d\.\)\-\s]+", "", cleaned)
+        cleaned = cleaned.strip(" .")
+        if len(cleaned) > 20:
+            cleaned = cleaned[:20].rstrip(". ")
+        return cleaned
+
+    def _fallback_summary(self, finding: InvictiFinding) -> str:
+        name = finding.name.lower()
+        if "cipher" in name or "암호" in finding.name:
+            return "약한 암호 활성화"
+        if "tls" in name:
+            return "TLS 취약 설정"
+        if "hsts" in name:
+            return "HSTS 미적용"
+        cleaned = re.sub(r"\[.*?\]", "", finding.name)
+        cleaned = re.sub(r"\(.*?\)", "", cleaned)
+        cleaned = re.sub(r"[^가-힣A-Za-z0-9\s]", " ", cleaned).strip()
+        if len(cleaned) > 20:
+            cleaned = cleaned.split()[0]
+        return cleaned or "보안 취약점"
+
+    def _normalize_summary_phrase(self, summary: str) -> str:
+        if not summary:
+            return ""
+        lower = summary.lower()
+        if "cipher" in lower or "암호" in summary:
+            return "약한 암호 활성화"
+        if "tls" in lower:
+            return "TLS 취약 설정"
+        if "hsts" in lower:
+            return "HSTS 미적용"
+        return summary
+
+    def _finalize_description(
+        self,
+        description: str,
+        finding: InvictiFinding,
+        context: Dict[str, str] | None,
+    ) -> str:
+        context_map = context or {}
+        cleaned = self._clean_description(description)
+        if not cleaned:
+            cleaned = self._fallback_description(finding, context_map)
+        return self._ensure_description_context(cleaned, finding, context_map)
+
+    def _clean_description(self, text: str) -> str:
+        if not text:
+            return ""
+        lines: List[str] = []
+        for raw in str(text).splitlines():
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            stripped = re.sub(r"^[\d\.\)\-\s]+", "", stripped)
+            if stripped:
+                lines.append(stripped)
+        cleaned = " ".join(lines)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        return cleaned
+
+    def _ensure_description_context(
+        self,
+        description: str,
+        finding: InvictiFinding,
+        context: Dict[str, str],
+    ) -> str:
+        segments: List[str] = [description] if description else []
+
+        if finding.path and finding.path not in description:
+            segments.append(f"대상 경로: {finding.path}")
+
+        current_version = context.get("현재 버전") or context.get("현재버전")
+        latest_version = context.get("최신 버전") or context.get("최신버전")
+        if current_version and f"현재 버전" not in description and current_version not in description:
+            segments.append(f"현재 버전: {current_version}")
+        if latest_version and f"최신 버전" not in description and latest_version not in description:
+            segments.append(f"최신 버전: {latest_version}")
+
+        weak_list = context.get("암호화 목록") or context.get("암호화목록")
+        if weak_list and weak_list not in description:
+            segments.append(f"취약한 암호화 목록: {weak_list}")
+
+        if finding.evidence_text and finding.evidence_text not in description:
+            segments.append(f"Invicti 증적 요약: {finding.evidence_text}")
+
+        combined = "\n".join(segment for segment in segments if segment)
+        return combined.strip()
+
+    def _fallback_description(
+        self,
+        finding: InvictiFinding,
+        context: Dict[str, str],
+    ) -> str:
+        lines = [f"{finding.name} 취약점이 확인되었습니다."]
+        if finding.path:
+            lines.append(f"대상 경로: {finding.path}")
+        current_version = context.get("현재 버전") or context.get("현재버전")
+        latest_version = context.get("최신 버전") or context.get("최신버전")
+        weak_list = context.get("암호화 목록") or context.get("암호화목록")
+        if current_version:
+            lines.append(f"현재 버전: {current_version}")
+        if latest_version:
+            lines.append(f"최신 버전: {latest_version}")
+        if weak_list:
+            lines.append(f"취약한 암호화 목록: {weak_list}")
+        elif finding.evidence_text:
+            lines.append(f"Invicti 증적 요약: {finding.evidence_text}")
+        return "\n".join(lines)
+
+    def _finalize_recommendation(self, recommendation: str) -> str:
+        cleaned = self._clean_sentence(recommendation)
+        if cleaned:
+            return cleaned
+        return "취약점을 제거하기 위한 보안 구성을 즉시 적용하고 재검증을 수행하세요."
+
+    def _clean_sentence(self, text: str) -> str:
+        if not text:
+            return ""
+        cleaned = re.sub(r"[\r\n]+", " ", str(text)).strip()
+        cleaned = re.sub(r"^[\d\.\)\-\s]+", "", cleaned)
+        return cleaned.strip()
 
     def _safe_json_loads(self, payload: str) -> Dict[str, Any]:
         import json

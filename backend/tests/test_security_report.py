@@ -147,6 +147,7 @@ async def test_generate_csv_report_builds_expected_rows() -> None:
     assert "High" in result.csv_text
     assert "기준표 매칭" in result.csv_text
     assert result.filename.startswith("invicti_security-report_")
+    assert "A,보안성" in result.csv_text
 
 
 @pytest.mark.anyio
@@ -202,5 +203,6 @@ async def test_generate_csv_report_uses_ai_when_no_match() -> None:
         google_id="user-456",
     )
 
-    assert "약한 암호 취약점" in result.csv_text
+    assert "약한 암호 활성화" in result.csv_text
     assert "AI 생성" in result.csv_text
+    assert "A,보안성" in result.csv_text

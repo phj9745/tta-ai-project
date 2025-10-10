@@ -3,11 +3,12 @@ from __future__ import annotations
 import csv
 import io
 import re
+import copy
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 from xml.etree import ElementTree as ET
 import zipfile
-from copy import copy
+from copy import copy as clone_style
 
 from openpyxl import load_workbook
 
@@ -373,12 +374,12 @@ def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
             cell = worksheet[f"{spec.letter}{row_index}"]
             template_cell = template_cells.get(spec.letter)
             if template_cell is not None and template_cell.has_style:
-                cell.font = copy(template_cell.font)
-                cell.fill = copy(template_cell.fill)
-                cell.border = copy(template_cell.border)
-                cell.alignment = copy(template_cell.alignment)
+                cell.font = clone_style(template_cell.font)
+                cell.fill = clone_style(template_cell.fill)
+                cell.border = clone_style(template_cell.border)
+                cell.alignment = clone_style(template_cell.alignment)
                 cell.number_format = template_cell.number_format
-                cell.protection = copy(template_cell.protection)
+                cell.protection = clone_style(template_cell.protection)
 
             cell.value = normalized_record.get(spec.key, "")
 
