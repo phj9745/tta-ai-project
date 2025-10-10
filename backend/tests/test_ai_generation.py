@@ -182,6 +182,35 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
 
 @pytest.mark.anyio
+async def test_generate_csv_converts_html_to_pdf_before_upload() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    html_body = b"<html><body><h1>Invicti Finding</h1><p>Detail paragraph.</p></body></html>"
+    upload = UploadFile(
+        file=io.BytesIO(html_body),
+        filename="invicti-report.html",
+        headers=Headers({"content-type": "text/html"}),
+    )
+
+    await service.generate_csv(
+        project_id="proj-456",
+        menu_id="security-report",
+        uploads=[upload],
+        metadata=[],
+    )
+
+    created = stub_client.files.created
+    assert len(created) == 1
+    assert created[0]["name"] == "invicti-report.pdf"
+    content = created[0]["content"]
+    assert isinstance(content, bytes)
+    assert content.startswith(b"%PDF")
+    assert b"<h1>" not in content[:200]
+
+
+@pytest.mark.anyio
 async def test_generate_csv_supports_modern_response_payload() -> None:
     service = AIGenerationService(_settings())
     stub_client = _StubClient()

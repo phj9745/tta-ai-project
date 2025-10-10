@@ -17,7 +17,11 @@ from fastapi import HTTPException, UploadFile
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
-from .excel_templates import populate_feature_list, populate_testcase_list
+from .excel_templates import (
+    populate_feature_list,
+    populate_security_report,
+    populate_testcase_list,
+)
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -53,6 +57,11 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
         "folder_name": "나.설계",
         "file_suffix": "테스트케이스.xlsx",
         "populate": populate_testcase_list,
+    },
+    "security-report": {
+        "folder_name": "다.수행",
+        "file_suffix": "결함리포트 v1.0.xlsx",
+        "populate": populate_security_report,
     },
 }
 
@@ -631,6 +640,59 @@ class GoogleDriveService:
         logger.info(
             "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
         )
+
+    async def download_shared_security_criteria(
+        self,
+        *,
+        google_id: Optional[str],
+        file_name: str,
+    ) -> bytes:
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        folder, active_tokens = await self._find_root_folder(active_tokens, folder_name="gs")
+        if folder is None:
+            folder, active_tokens = await self._create_root_folder(active_tokens, folder_name="gs")
+        gs_folder_id = str(folder["id"])
+
+        file_entry, active_tokens = await self._find_file_by_name(
+            active_tokens,
+            parent_id=gs_folder_id,
+            name=file_name,
+            mime_type=XLSX_MIME_TYPE,
+        )
+
+        if file_entry is None:
+            template_path = TEMPLATE_ROOT / file_name
+            if template_path.exists():
+                content = template_path.read_bytes()
+                _, active_tokens = await self._upload_file_to_folder(
+                    active_tokens,
+                    file_name=file_name,
+                    parent_id=gs_folder_id,
+                    content=content,
+                    content_type=XLSX_MIME_TYPE,
+                )
+                logger.info("Uploaded shared criteria template to gs folder: %s", file_name)
+                return content
+
+            logger.error("Shared criteria file %s not found in Drive or template folder.", file_name)
+            raise HTTPException(
+                status_code=404,
+                detail="공유 결함 판단 기준표를 찾을 수 없습니다.",
+            )
+
+        file_id = file_entry.get("id")
+        if not isinstance(file_id, str):
+            logger.error("Shared criteria entry missing id: %s", file_entry)
+            raise HTTPException(status_code=502, detail="공유 결함 판단 기준표 ID를 확인할 수 없습니다.")
+
+        content, _ = await self._download_file_content(
+            active_tokens,
+            file_id=file_id,
+        )
+        return content
 
     async def _list_child_folders(
         self,
