@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import csv
 import io
 import re
@@ -8,6 +7,9 @@ from dataclasses import dataclass
 from typing import Dict, List, Sequence
 from xml.etree import ElementTree as ET
 import zipfile
+from copy import copy
+
+from openpyxl import load_workbook
 
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _XML_NS = "http://www.w3.org/XML/1998/namespace"
@@ -339,8 +341,47 @@ SECURITY_REPORT_EXPECTED_HEADERS: Sequence[str] = [
 
 def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
     records = _parse_csv_records(csv_text, SECURITY_REPORT_EXPECTED_HEADERS)
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
-    populator = WorksheetPopulator(sheet_bytes, start_row=6, columns=SECURITY_REPORT_COLUMNS)
-    populator.populate(records)
-    return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+    if not records:
+        return workbook_bytes
+
+    workbook = load_workbook(io.BytesIO(workbook_bytes))
+    worksheet = workbook.active
+
+    start_row = 6
+
+    # Determine existing populated rows by inspecting 결함 요약 열 (C)
+    current_row = start_row
+    while True:
+        cell_value = worksheet.cell(row=current_row, column=_column_to_index("C")).value
+        if cell_value is None or str(cell_value).strip() == "":
+            break
+        current_row += 1
+
+    existing_count = current_row - start_row
+
+    template_cells = {
+        spec.letter: worksheet[f"{spec.letter}{start_row}"] for spec in SECURITY_REPORT_COLUMNS
+    }
+
+    for index, record in enumerate(records, start=1):
+        row_index = current_row + index - 1
+        record_index = existing_count + index
+        normalized_record = dict(record)
+        normalized_record["순번"] = str(record_index)
+
+        for spec in SECURITY_REPORT_COLUMNS:
+            cell = worksheet[f"{spec.letter}{row_index}"]
+            template_cell = template_cells.get(spec.letter)
+            if template_cell is not None and template_cell.has_style:
+                cell.font = copy(template_cell.font)
+                cell.fill = copy(template_cell.fill)
+                cell.border = copy(template_cell.border)
+                cell.alignment = copy(template_cell.alignment)
+                cell.number_format = template_cell.number_format
+                cell.protection = copy(template_cell.protection)
+
+            cell.value = normalized_record.get(spec.key, "")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

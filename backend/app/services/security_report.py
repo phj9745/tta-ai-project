@@ -6,6 +6,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -88,6 +89,7 @@ class SecurityReportService:
         project_id: str,
         google_id: str | None,
     ) -> GeneratedCsv:
+        source_filename = invicti_upload.filename or "invicti-report.html"
         dataframe = await self.process_invicti_report(
             invicti_upload=invicti_upload,
             google_id=google_id,
@@ -97,8 +99,11 @@ class SecurityReportService:
         encoded = csv_text.encode("utf-8-sig")
 
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
-        filename = f"{safe_project}_security-report_{timestamp}.csv"
+        stem = Path(source_filename).stem
+        if not stem:
+            stem = "invicti-report"
+        safe_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "invicti-report"
+        filename = f"{safe_stem}_security-report_{timestamp}.csv"
 
         return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
 
@@ -165,7 +170,7 @@ class SecurityReportService:
             criteria_df = pd.read_excel(io.BytesIO(criteria_bytes))
         except Exception as exc:  # pragma: no cover - pandas error path
             logger.exception("Failed to load shared security criteria spreadsheet.")
-            raise HTTPException(status_code=500, detail="공유 결함 기준표를 읽지 못했습니다.") from exc
+            raise HTTPException(status_code=500, detail="결함 판단 기준표를 읽지 못했습니다.") from exc
 
         missing_columns = [
             column for column in _CRITERIA_REQUIRED_COLUMNS if column not in criteria_df.columns
@@ -175,7 +180,7 @@ class SecurityReportService:
                 "Security criteria spreadsheet missing required columns: %s",
                 ", ".join(missing_columns),
             )
-            raise HTTPException(status_code=500, detail="공유 결함 기준표 형식이 올바르지 않습니다.")
+            raise HTTPException(status_code=500, detail="결함 판단 기준표 형식이 올바르지 않습니다.")
 
         criteria_df = criteria_df.copy()
         criteria_df["Invicti 결과"] = criteria_df["Invicti 결과"].astype(str).str.strip()
@@ -427,8 +432,11 @@ class SecurityReportService:
             finding=finding,
         )
         if not prompt_payload:
-            logger.warning("AI prompt for new finding returned no data; skipping.")
-            return None
+            logger.warning(
+                "AI prompt for new finding returned no data; using fallback.",
+                extra={"finding": finding.name},
+            )
+            prompt_payload = {}
 
         summary = prompt_payload.get("summary") or finding.name
         description = prompt_payload.get("description") or finding.description_text
@@ -618,19 +626,24 @@ class SecurityReportService:
         program_name = self._derive_program_name(finding)
         if program_name:
             values["프로그램 명"] = program_name
+            values["프로그램명"] = program_name
 
         versions = self._extract_version_details(soup, finding.anchor_id)
         if versions.get("current"):
             values["현재 버전"] = versions["current"]
+            values["현재버전"] = versions["current"]
         if versions.get("latest"):
             values["최신 버전"] = versions["latest"]
+            values["최신버전"] = versions["latest"]
 
         weak_ciphers = self._extract_weak_ciphers(soup, finding.anchor_id)
         if weak_ciphers:
             values["암호화 목록"] = weak_ciphers
+            values["암호화목록"] = weak_ciphers
 
         if finding.path:
             values["URL"] = finding.path
+            values["Url"] = finding.path
 
         return values
 

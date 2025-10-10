@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import sys
+import json
 from pathlib import Path
 from typing import Any, Dict
+from types import SimpleNamespace
 
 import pytest
 from fastapi import UploadFile
@@ -43,6 +45,21 @@ class _StubResponses:
 class _StubOpenAI:
     def __init__(self) -> None:
         self.responses = _StubResponses()
+
+
+class _SuccessfulOpenAI:
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.responses = _AIResponsesSuccess(payload)
+
+
+class _AIResponsesSuccess:
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.payload = payload
+        self.calls: list[Dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> SimpleNamespace:
+        self.calls.append(kwargs)
+        return SimpleNamespace(output_text=json.dumps(self.payload))
 
 
 def _criteria_workbook_bytes() -> bytes:
@@ -129,4 +146,61 @@ async def test_generate_csv_report_builds_expected_rows() -> None:
     assert "SQL Injection" in result.csv_text
     assert "High" in result.csv_text
     assert "기준표 매칭" in result.csv_text
-    assert "_security-report_" in result.filename
+    assert result.filename.startswith("invicti_security-report_")
+
+
+@pytest.mark.anyio
+async def test_generate_csv_report_uses_ai_when_no_match() -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(list(_CRITERIA_REQUIRED_COLUMNS))
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+
+    ai_payload = {
+        "summary": "약한 암호 취약점",
+        "description": "약한 암호가 사용되고 있습니다.",
+        "recommendation": "강한 암호를 사용하세요",
+        "category": "보안성",
+        "occurrence": "A",
+    }
+
+    drive = _StubDriveService(buffer.getvalue())
+    ai_client = _SuccessfulOpenAI(ai_payload)
+    service = SecurityReportService(drive_service=drive, openai_client=ai_client)  # type: ignore[arg-type]
+
+    html_report = """
+    <html>
+      <body>
+        <table class=\"detailed-scan\">
+          <thead>
+            <tr><th>Severity</th><th>Name</th><th>Path</th><th>Status</th><th>Parameter</th></tr>
+          </thead>
+          <tbody>
+            <tr class=\"high-severity\">
+              <td>High</td>
+              <td><a href=\"#WeakCipherSuite\">Weak Cipher Suite Supported</a></td>
+              <td>/secure</td>
+              <td>Confirmed</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        <div id=\"WeakCipherSuite\">
+          <h2>Details</h2>
+          <p>Weak cipher list.</p>
+        </div>
+      </body>
+    </html>
+    """
+
+    upload = _build_upload(html_report)
+
+    result = await service.generate_csv_report(
+        invicti_upload=upload,
+        project_id="proj-002",
+        google_id="user-456",
+    )
+
+    assert "약한 암호 취약점" in result.csv_text
+    assert "AI 생성" in result.csv_text
