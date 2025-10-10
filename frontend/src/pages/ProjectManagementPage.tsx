@@ -184,12 +184,13 @@ const MENU_ITEMS: MenuItemContent[] = [
     id: 'security-report',
     label: '보안성 리포트',
     eyebrow: '보안성 분석',
-    title: '보안성 분석 리포트 생성',
+    title: 'Invicti HTML 보고서 정규화',
     description:
-      '보안 점검 결과와 취약점 목록을 업로드하면 AI가 요약과 개선 권고안을 정리합니다.',
-    helper: '취약점 점검표, 분석 보고서, 스크린샷 등을 첨부해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
-    buttonLabel: '보안성 리포트 생성하기',
-    allowedTypes: ['pdf', 'txt', 'csv'],
+      'Invicti에서 추출한 HTML 결과를 업로드하면 AI가 TTA 기준표에 맞춘 표준 결함 목록을 생성합니다.',
+    helper:
+      'Invicti HTML 결과 파일(.html/.htm)을 1개 업로드하세요. 보고서에 포함된 Medium 이상 취약점만 분석됩니다.',
+    buttonLabel: 'Invicti 보고서 분석하기',
+    allowedTypes: ['html'],
     maxFiles: 1,
     hideDropzoneWhenFilled: true,
   },

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import copy
 import csv
 import io
 import re
+import copy
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
 from xml.etree import ElementTree as ET
 import zipfile
+from copy import copy as clone_style
+
+from openpyxl import load_workbook
 
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _XML_NS = "http://www.w3.org/XML/1998/namespace"
@@ -308,3 +311,78 @@ def populate_testcase_list(workbook_bytes: bytes, csv_text: str) -> bytes:
     populator = WorksheetPopulator(sheet_bytes, start_row=6, columns=TESTCASE_COLUMNS)
     populator.populate(records)
     return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+
+
+SECURITY_REPORT_COLUMNS: Sequence[ColumnSpec] = (
+    ColumnSpec(key="순번", letter="A", style="24"),
+    ColumnSpec(key="시험환경 OS", letter="B", style="25"),
+    ColumnSpec(key="결함 요약", letter="C", style="10"),
+    ColumnSpec(key="결함 정도", letter="D", style="26"),
+    ColumnSpec(key="발생 빈도", letter="E", style="26"),
+    ColumnSpec(key="품질 특성", letter="F", style="25"),
+    ColumnSpec(key="결함 설명", letter="G", style="23"),
+    ColumnSpec(key="업체 응답", letter="H", style="10"),
+    ColumnSpec(key="수정여부", letter="I", style="10"),
+    ColumnSpec(key="비고", letter="J", style="11"),
+)
+
+SECURITY_REPORT_EXPECTED_HEADERS: Sequence[str] = [
+    "순번",
+    "시험환경 OS",
+    "결함 요약",
+    "결함 정도",
+    "발생 빈도",
+    "품질 특성",
+    "결함 설명",
+    "업체 응답",
+    "수정여부",
+    "비고",
+]
+
+
+def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
+    records = _parse_csv_records(csv_text, SECURITY_REPORT_EXPECTED_HEADERS)
+    if not records:
+        return workbook_bytes
+
+    workbook = load_workbook(io.BytesIO(workbook_bytes))
+    worksheet = workbook.active
+
+    start_row = 6
+
+    # Determine existing populated rows by inspecting 결함 요약 열 (C)
+    current_row = start_row
+    while True:
+        cell_value = worksheet.cell(row=current_row, column=_column_to_index("C")).value
+        if cell_value is None or str(cell_value).strip() == "":
+            break
+        current_row += 1
+
+    existing_count = current_row - start_row
+
+    template_cells = {
+        spec.letter: worksheet[f"{spec.letter}{start_row}"] for spec in SECURITY_REPORT_COLUMNS
+    }
+
+    for index, record in enumerate(records, start=1):
+        row_index = current_row + index - 1
+        record_index = existing_count + index
+        normalized_record = dict(record)
+        normalized_record["순번"] = str(record_index)
+
+        for spec in SECURITY_REPORT_COLUMNS:
+            cell = worksheet[f"{spec.letter}{row_index}"]
+            template_cell = template_cells.get(spec.letter)
+            if template_cell is not None and template_cell.has_style:
+                cell.font = clone_style(template_cell.font)
+                cell.fill = clone_style(template_cell.fill)
+                cell.border = clone_style(template_cell.border)
+                cell.alignment = clone_style(template_cell.alignment)
+                cell.number_format = template_cell.number_format
+                cell.protection = clone_style(template_cell.protection)
+
+            cell.value = normalized_record.get(spec.key, "")
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

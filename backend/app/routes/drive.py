@@ -7,9 +7,14 @@ from typing import Any, Dict, List, Optional, TypedDict
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..dependencies import get_ai_generation_service, get_drive_service
+from ..dependencies import (
+    get_ai_generation_service,
+    get_drive_service,
+    get_security_report_service,
+)
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
+from ..services.security_report import SecurityReportService
 
 router = APIRouter()
 
@@ -105,6 +110,7 @@ async def generate_project_asset(
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     drive_service: GoogleDriveService = Depends(get_drive_service),
+    security_report_service: SecurityReportService = Depends(get_security_report_service),
 ) -> StreamingResponse:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -124,6 +130,36 @@ async def generate_project_asset(
 
     if metadata_entries and len(metadata_entries) != len(uploads):
         raise HTTPException(status_code=422, detail="파일 메타데이터와 업로드된 파일 수가 일치하지 않습니다.")
+
+    if menu_id == "security-report":
+        if metadata_entries:
+            raise HTTPException(status_code=422, detail="보안성 리포트에는 추가 파일 정보를 입력할 수 없습니다.")
+        if len(uploads) != 1:
+            raise HTTPException(status_code=422, detail="Invicti HTML 결과 파일을 1개 업로드해 주세요.")
+        upload = uploads[0]
+        filename = (upload.filename or "invicti-report").lower()
+        if not filename.endswith(".html") and not filename.endswith(".htm"):
+            raise HTTPException(status_code=422, detail="Invicti HTML 결과 파일만 업로드할 수 있습니다.")
+
+        result = await security_report_service.generate_csv_report(
+            invicti_upload=upload,
+            project_id=project_id,
+            google_id=google_id,
+        )
+
+        await drive_service.apply_csv_to_spreadsheet(
+            project_id=project_id,
+            menu_id=menu_id,
+            csv_text=result.csv_text,
+            google_id=google_id,
+        )
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Cache-Control": "no-store",
+        }
+
+        return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
 
     required_docs = _REQUIRED_MENU_DOCUMENTS.get(menu_id, [])
     if required_docs:

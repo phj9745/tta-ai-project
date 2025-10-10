@@ -15,8 +15,10 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
+    SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
     populate_feature_list,
+    populate_security_report,
     populate_testcase_list,
 )
 
@@ -115,3 +117,45 @@ def test_populate_testcase_list_validates_headers() -> None:
 
     with pytest.raises(ValueError):
         populate_testcase_list(template_bytes, csv_text)
+
+
+def test_populate_security_report_fills_rows() -> None:
+    template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_header = ",".join(
+        SECURITY_REPORT_EXPECTED_HEADERS
+        + ["Invicti 결과", "위험도", "발생경로", "조치 가이드", "원본 세부내용", "매핑 유형"]
+    )
+    csv_row = ",".join(
+        [
+            "1",
+            "시험환경 모든 OS",
+            "요약",
+            "H",
+            "A",
+            "보안성",
+            "상세 설명",
+            "",
+            "",
+            "비고",
+            "SQL Injection",
+            "High",
+            "/login",
+            "가이드",
+            "세부",
+            "기준표 매칭",
+        ]
+    )
+    csv_text = f"{csv_header}\n{csv_row}"
+
+    updated = populate_security_report(template_bytes, csv_text)
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "A6") == "1"
+    assert _cell_text(root, "B6") == "시험환경 모든 OS"
+    assert _cell_text(root, "C6") == "요약"
+    assert _cell_text(root, "D6") == "H"
+    assert _cell_text(root, "E6") == "A"
+    assert _cell_text(root, "G6") == "상세 설명"
+    assert _cell_text(root, "J6") == "비고"
