@@ -182,6 +182,37 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
 
 @pytest.mark.anyio
+async def test_generate_csv_includes_testcase_template() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Requirement body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-testcase",
+        menu_id="testcase-generation",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "사용자 설명서"}],
+    )
+
+    assert [entry["name"] for entry in stub_client.files.created] == [
+        "요구사항.docx",
+        "GS-B-XX-XXXX 테스트케이스.pdf",
+    ]
+
+    template_upload = stub_client.files.created[1]
+    assert isinstance(template_upload["content"], bytes)
+    assert template_upload["content"].startswith(b"%PDF")
+
+    assert result.csv_text == "col1,col2\nvalue1,value2"
+
+
+@pytest.mark.anyio
 async def test_generate_csv_supports_modern_response_payload() -> None:
     service = AIGenerationService(_settings())
     stub_client = _StubClient()
