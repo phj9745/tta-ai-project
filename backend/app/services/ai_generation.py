@@ -436,21 +436,6 @@ class AIGenerationService:
                 },
             )
 
-            if self._request_log_service is not None:
-                try:
-                    self._request_log_service.record_request(
-                        project_id=project_id,
-                        menu_id=menu_id,
-                        system_prompt=prompt_config.system_prompt,
-                        user_prompt=user_prompt,
-                        context_summary=context_summary,
-                    )
-                except Exception:  # pragma: no cover - logging must not fail request
-                    logger.exception(
-                        "Failed to record prompt request log",
-                        extra={"project_id": project_id, "menu_id": menu_id},
-                    )
-
             params = prompt_config.model_parameters
             try:
                 response_kwargs: dict[str, object] = {
@@ -526,11 +511,28 @@ class AIGenerationService:
                     detail = "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
                 raise HTTPException(status_code=502, detail=detail) from exc
 
-            csv_text = self._extract_response_text(response)
-            if not csv_text:
+            response_text = self._extract_response_text(response) or ""
+
+            if self._request_log_service is not None:
+                try:
+                    self._request_log_service.record_request(
+                        project_id=project_id,
+                        menu_id=menu_id,
+                        system_prompt=prompt_config.system_prompt,
+                        user_prompt=user_prompt,
+                        context_summary=context_summary,
+                        response_text=response_text,
+                    )
+                except Exception:  # pragma: no cover - logging must not fail request
+                    logger.exception(
+                        "Failed to record prompt request log",
+                        extra={"project_id": project_id, "menu_id": menu_id},
+                    )
+
+            if not response_text:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
-            sanitized = self._sanitize_csv(csv_text)
+            sanitized = self._sanitize_csv(response_text)
             if not sanitized:
                 raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 

@@ -16,7 +16,7 @@ router = APIRouter(prefix="/admin/prompts", tags=["prompt-config"])
 
 @router.get("/logs")
 def list_prompt_request_logs(
-    limit: int = Query(50, ge=1, le=200, description="가져올 로그 수"),
+    limit: int = Query(5, ge=1, le=5, description="가져올 로그 수"),
     log_service: PromptRequestLogService = Depends(get_prompt_request_log_service),
 ) -> Dict[str, list[dict[str, str]]]:
     entries = log_service.list_recent(limit=limit)
@@ -67,7 +67,7 @@ def update_prompt_config(
 
 @router.get("/logs")
 def list_prompt_request_logs(
-    limit: int = Query(50, ge=1, le=200, description="가져올 로그 수"),
+    limit: int = Query(5, ge=1, le=5, description="가져올 로그 수"),
     log_service: PromptRequestLogService = Depends(get_prompt_request_log_service),
 ) -> Dict[str, list[dict[str, str]]]:
     entries = log_service.list_recent(limit=limit)

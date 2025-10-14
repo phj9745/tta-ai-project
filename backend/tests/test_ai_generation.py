@@ -53,6 +53,33 @@ class _StubClient:
         self.responses = _StubResponses()
 
 
+class _SpyRequestLogService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def record_request(
+        self,
+        *,
+        project_id: str,
+        menu_id: str,
+        system_prompt: str,
+        user_prompt: str,
+        context_summary: str | None = None,
+        response_text: str | None = None,
+    ) -> SimpleNamespace:
+        self.calls.append(
+            {
+                "project_id": project_id,
+                "menu_id": menu_id,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "context_summary": context_summary,
+                "response_text": response_text,
+            }
+        )
+        return SimpleNamespace()
+
+
 def _build_rate_limit_error(message: str = "quota exceeded") -> RateLimitError:
     request = httpx.Request("POST", "https://api.openai.com/v1/responses")
     response = httpx.Response(
@@ -177,6 +204,37 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
     # Temporary files should be cleaned up after the request completes.
     assert stub_client.files.deleted == ["file-1"]
+
+    assert result.csv_text == "col1,col2\nvalue1,value2"
+
+
+@pytest.mark.anyio
+async def test_generate_csv_includes_testcase_template() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Requirement body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-testcase",
+        menu_id="testcase-generation",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "사용자 설명서"}],
+    )
+
+    assert [entry["name"] for entry in stub_client.files.created] == [
+        "요구사항.docx",
+        "GS-B-XX-XXXX 테스트케이스.pdf",
+    ]
+
+    template_upload = stub_client.files.created[1]
+    assert isinstance(template_upload["content"], bytes)
+    assert template_upload["content"].startswith(b"%PDF")
 
     assert result.csv_text == "col1,col2\nvalue1,value2"
 
@@ -398,6 +456,44 @@ async def test_generate_csv_surfaces_bad_request_error_detail() -> None:
 
     assert excinfo.value.status_code == 502
     assert "Invalid prompt format" in excinfo.value.detail
+
+
+@pytest.mark.anyio
+async def test_generate_csv_logs_response_when_csv_invalid() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    def _empty_csv_response(**kwargs: object) -> SimpleNamespace:
+        stub_client.responses.calls.append(kwargs)
+        return SimpleNamespace(output_text="```csv\n\n```")
+
+    stub_client.responses.create = _empty_csv_response  # type: ignore[assignment]
+
+    spy_log = _SpyRequestLogService()
+    service._request_log_service = spy_log  # type: ignore[attr-defined]
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Primary document"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await service.generate_csv(
+            project_id="proj-error",
+            menu_id="feature-list",
+            uploads=[upload],
+            metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
+        )
+
+    assert excinfo.value.status_code == 502
+    assert "생성된 CSV 내용이 비어 있습니다." in str(excinfo.value.detail)
+    assert spy_log.calls
+    last_call = spy_log.calls[-1]
+    assert last_call["project_id"] == "proj-error"
+    assert last_call["menu_id"] == "feature-list"
+    assert last_call["response_text"] == "```csv\n\n```"
 
 
 @pytest.mark.anyio
