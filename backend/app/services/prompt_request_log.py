@@ -20,6 +20,7 @@ class PromptRequestLogEntry:
     system_prompt: str
     user_prompt: str
     context_summary: str
+    response_text: str
 
     def to_dict(self) -> dict[str, str]:
         return asdict(self)
@@ -34,6 +35,7 @@ class PromptRequestLogEntry:
             system_prompt = str(payload.get("system_prompt", ""))
             user_prompt = str(payload.get("user_prompt", ""))
             context_summary = str(payload.get("context_summary", ""))
+            response_text = str(payload.get("response_text", ""))
         except (KeyError, TypeError, ValueError):
             return None
 
@@ -45,6 +47,7 @@ class PromptRequestLogEntry:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             context_summary=context_summary,
+            response_text=response_text,
         )
 
 
@@ -65,6 +68,7 @@ class PromptRequestLogService:
         system_prompt: str,
         user_prompt: str,
         context_summary: str | None = None,
+        response_text: str | None = None,
     ) -> PromptRequestLogEntry:
         entry = PromptRequestLogEntry(
             request_id=uuid.uuid4().hex,
@@ -74,6 +78,7 @@ class PromptRequestLogService:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             context_summary=context_summary or "",
+            response_text=(response_text or ""),
         )
         payload = json.dumps(entry.to_dict(), ensure_ascii=False)
         with self._lock:
@@ -81,7 +86,7 @@ class PromptRequestLogService:
                 file.write(payload + "\n")
         return entry
 
-    def list_recent(self, limit: int = 50) -> List[PromptRequestLogEntry]:
+    def list_recent(self, limit: int = 5) -> List[PromptRequestLogEntry]:
         if limit <= 0:
             return []
 
