@@ -50,11 +50,12 @@ export function openGoogleDriveWorkspace() {
     return
   }
 
-  window.open(GOOGLE_DRIVE_HOME_URL, 'ttaGoogleDriveHome', DRIVE_WINDOW_FEATURES)
-
   const folderId = readDriveRootFolderId()
   if (folderId) {
     const folderUrl = getDriveFolderUrl(folderId)
     window.open(folderUrl, 'ttaGoogleDriveGs', DRIVE_WINDOW_FEATURES)
+    return
   }
+
+  window.open(GOOGLE_DRIVE_HOME_URL, 'ttaGoogleDriveHome', DRIVE_WINDOW_FEATURES)
 }
