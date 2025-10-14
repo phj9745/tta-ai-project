@@ -76,6 +76,7 @@ type PromptRequestLogApiEntry = {
   system_prompt: string
   user_prompt: string
   context_summary: string
+  response_text: string
 }
 
 type PromptRequestLogEntry = {
@@ -86,6 +87,7 @@ type PromptRequestLogEntry = {
   systemPrompt: string
   userPrompt: string
   contextSummary: string
+  responseText: string
 }
 
 type PromptRequestLogResponse = {
@@ -232,7 +234,7 @@ export function AdminPromptsPage() {
         setLogsError(null)
       }
       try {
-        const response = await fetch(`${backendUrl}/admin/prompts/logs?limit=50`, {
+        const response = await fetch(`${backendUrl}/admin/prompts/logs?limit=5`, {
           method: 'GET',
           signal,
         })
@@ -248,6 +250,7 @@ export function AdminPromptsPage() {
           systemPrompt: entry.system_prompt,
           userPrompt: entry.user_prompt,
           contextSummary: entry.context_summary,
+          responseText: entry.response_text,
         }))
         setRequestLogs(normalized)
         if (!silent) {
@@ -1034,7 +1037,7 @@ export function AdminPromptsPage() {
                 </section>
                 <section className="admin-prompts__group admin-prompts__logs">
                   <header className="admin-prompts__group-header">
-                    <h3 className="admin-prompts__group-title">최근 요청 기록</h3>
+                    <h3 className="admin-prompts__group-title">최근 요청 및 응답 기록</h3>
                     <button
                       type="button"
                       className="admin-prompts__secondary"
@@ -1047,7 +1050,7 @@ export function AdminPromptsPage() {
                     </button>
                   </header>
                   <p className="admin-prompts__logs-caption">
-                    실제 생성 요청이 실행되면 해당 프롬프트 내용을 확인할 수 있습니다. 최근 50건이 표시됩니다.
+                    실제 생성 요청이 실행되면 해당 프롬프트와 AI 응답 내용을 확인할 수 있습니다. 최근 5건이 표시됩니다.
                   </p>
                   {logsLoading ? (
                     <p className="admin-prompts__empty">요청 기록을 불러오는 중입니다...</p>
@@ -1072,7 +1075,7 @@ export function AdminPromptsPage() {
                               <p className="admin-prompts__log-summary">{entry.contextSummary}</p>
                             ) : null}
                             <details className="admin-prompts__log-details">
-                              <summary>프롬프트 전문 보기</summary>
+                              <summary>요청 및 응답 자세히 보기</summary>
                               <div className="admin-prompts__log-details-content">
                                 <div>
                                   <h4 className="admin-prompts__log-heading">시스템 프롬프트</h4>
@@ -1081,6 +1084,10 @@ export function AdminPromptsPage() {
                                 <div>
                                   <h4 className="admin-prompts__log-heading">사용자 프롬프트</h4>
                                   <pre className="admin-prompts__log-block">{entry.userPrompt || '내용이 없습니다.'}</pre>
+                                </div>
+                                <div>
+                                  <h4 className="admin-prompts__log-heading">AI 응답</h4>
+                                  <pre className="admin-prompts__log-block">{entry.responseText || '응답이 없습니다.'}</pre>
                                 </div>
                               </div>
                             </details>
