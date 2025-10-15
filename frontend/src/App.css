@@ -758,18 +758,24 @@
 }
 
 .file-uploader__preview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 0.65rem;
   flex: 1 1 auto;
+  display: grid;
+  grid-auto-flow: row dense;
+  grid-auto-rows: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 0.55rem;
+  align-items: stretch;
+  justify-items: stretch;
+  align-content: stretch;
+  height: 100%;
+  width: 100%;
   min-height: 0;
-  overflow-y: auto;
-  padding-right: 0.15rem;
 }
 
 .file-uploader__preview-item {
   position: relative;
   width: 100%;
+  height: 100%;
   aspect-ratio: 1 / 1;
   border-radius: 12px;
   overflow: hidden;
@@ -794,14 +800,19 @@
 
 .file-uploader__preview-remove {
   position: absolute;
-  bottom: 0.5rem;
-  right: 0.5rem;
+  top: 0.4rem;
+  right: 0.4rem;
   border: none;
   border-radius: 999px;
-  background: rgba(15, 23, 42, 0.7);
+  background: rgba(15, 23, 42, 0.75);
   color: #fff;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  padding: 0.2rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: background 0.15s ease, transform 0.15s ease;
 }
