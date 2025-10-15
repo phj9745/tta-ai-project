@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Literal
 from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
+from docx import Document
 from openai import (
     APIError,
     BadRequestError,
@@ -279,6 +280,161 @@ class AIGenerationService:
             cleaned = fence_match.group(1).strip()
         return cleaned
 
+    def _convert_required_documents_to_pdf(
+        self,
+        uploads: List[BufferedUpload],
+        metadata_entries: List[Dict[str, Any]],
+    ) -> List[BufferedUpload]:
+        if not metadata_entries:
+            return uploads
+
+        converted = list(uploads)
+        for index, upload in enumerate(uploads):
+            metadata = metadata_entries[index] if index < len(metadata_entries) else None
+            if not isinstance(metadata, dict):
+                continue
+
+            role = str(metadata.get("role") or "").strip().lower()
+            if role != "required":
+                continue
+
+            doc_id = str(metadata.get("id") or "").strip()
+            if doc_id not in {"user-manual", "vendor-feature-list"}:
+                continue
+
+            converted_upload = self._convert_single_required_document_to_pdf(
+                upload, metadata
+            )
+            if converted_upload is not upload:
+                converted[index] = converted_upload
+
+        return converted
+
+    def _convert_single_required_document_to_pdf(
+        self, upload: BufferedUpload, metadata: Dict[str, Any]
+    ) -> BufferedUpload:
+        extension = self._detect_raw_extension(upload)
+        if extension == "pdf":
+            return upload
+
+        label = str(
+            metadata.get("label")
+            or metadata.get("description")
+            or metadata.get("id")
+            or "문서"
+        ).strip()
+
+        original_extension = extension.upper() if extension else ""
+
+        if extension == "docx":
+            converted = self._convert_docx_upload_to_pdf(upload, label)
+        elif extension == "xlsx":
+            converted = self._convert_xlsx_upload_to_pdf(upload, label)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label}은(는) PDF 또는 지원되는 문서 형식(DOCX, XLSX)이어야 합니다.",
+            )
+
+        self._append_conversion_note(metadata, label, original_extension)
+        return converted
+
+    @staticmethod
+    def _append_conversion_note(
+        metadata: Dict[str, Any], label: str, original_extension: str
+    ) -> None:
+        if not original_extension:
+            return
+
+        note = f"{label} {original_extension} 파일을 PDF로 변환했습니다."
+        existing = str(metadata.get("notes") or "").strip()
+        metadata["notes"] = f"{existing}\n{note}".strip() if existing else note
+        metadata["originalExtension"] = original_extension
+        metadata["convertedToPdf"] = True
+
+    @staticmethod
+    def _detect_raw_extension(upload: BufferedUpload) -> str:
+        extension = os.path.splitext(upload.name)[1].lstrip(".").lower()
+        if extension:
+            return extension
+
+        content_type = (upload.content_type or "").split(";")[0].strip()
+        if content_type:
+            guessed = mimetypes.guess_extension(content_type)
+            if guessed:
+                return guessed.lstrip(".").lower()
+
+        return ""
+
+    @staticmethod
+    def _pdf_file_name(original_name: str) -> str:
+        base = os.path.splitext(original_name)[0] or "converted"
+        return f"{base}.pdf"
+
+    @staticmethod
+    def _build_pdf_upload(
+        original: BufferedUpload, rows: List[List[str]]
+    ) -> BufferedUpload:
+        pdf_bytes = AIGenerationService._rows_to_pdf(rows)
+        return BufferedUpload(
+            name=AIGenerationService._pdf_file_name(original.name),
+            content=pdf_bytes,
+            content_type="application/pdf",
+        )
+
+    @staticmethod
+    def _convert_docx_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        try:
+            document = Document(io.BytesIO(upload.content))
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse DOCX for PDF conversion; falling back to plain text",
+                extra={"label": label, "error": str(exc)},
+            )
+            decoded = upload.content.decode("utf-8", errors="ignore")
+            if not decoded.strip():
+                decoded = upload.content.decode("latin-1", errors="ignore")
+            lines = decoded.splitlines() or [decoded]
+            rows = [[line.strip()] for line in lines]
+            return AIGenerationService._build_pdf_upload(upload, rows)
+
+        rows: List[List[str]] = []
+
+        for paragraph in document.paragraphs:
+            text = paragraph.text.strip()
+            rows.append([text] if text else [])
+
+        if document.paragraphs and document.tables:
+            rows.append([])
+
+        for table in document.tables:
+            for row in table.rows:
+                cell_values = [cell.text.strip() for cell in row.cells]
+                if any(cell_values):
+                    rows.append(cell_values)
+            rows.append([])
+
+        if rows and not rows[-1]:
+            rows.pop()
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
+
+    @staticmethod
+    def _convert_xlsx_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        try:
+            rows = AIGenerationService._parse_xlsx_rows(upload.content)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} XLSX 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
+
     async def generate_csv(
         self,
         project_id: str,
@@ -311,10 +467,20 @@ class AIGenerationService:
             finally:
                 await upload.close()
 
+        metadata_entries: List[Dict[str, Any]] = []
+        if metadata:
+            metadata_entries = [
+                dict(entry) if isinstance(entry, dict) else {}
+                for entry in metadata
+            ]
+
+        buffered = self._convert_required_documents_to_pdf(
+            buffered, metadata_entries
+        )
+
         contexts: List[UploadContext] = []
-        metadata = metadata or []
         for index, upload in enumerate(buffered):
-            entry = metadata[index] if index < len(metadata) else None
+            entry = metadata_entries[index] if index < len(metadata_entries) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
         contexts.extend(

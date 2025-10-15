@@ -161,7 +161,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
         "assistants",
     ]
     assert [entry["name"] for entry in stub_client.files.created] == [
-        "사용자_매뉴얼.docx",
+        "사용자_매뉴얼.pdf",
         "GS-B-XX-XXXX 기능리스트 v1.0.pdf",
     ]
 
@@ -228,7 +228,7 @@ async def test_generate_csv_includes_testcase_template() -> None:
     )
 
     assert [entry["name"] for entry in stub_client.files.created] == [
-        "요구사항.docx",
+        "요구사항.pdf",
         "GS-B-XX-XXXX 테스트케이스.pdf",
     ]
 
