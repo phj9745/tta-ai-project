@@ -308,3 +308,39 @@ def populate_testcase_list(workbook_bytes: bytes, csv_text: str) -> bytes:
     populator = WorksheetPopulator(sheet_bytes, start_row=6, columns=TESTCASE_COLUMNS)
     populator.populate(records)
     return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+
+
+DEFECT_REPORT_COLUMNS: Sequence[ColumnSpec] = (
+    ColumnSpec(key="순번", letter="A", style="24"),
+    ColumnSpec(key="시험환경(OS)", letter="B", style="25"),
+    ColumnSpec(key="결함요약", letter="C", style="10"),
+    ColumnSpec(key="결함정도", letter="D", style="26"),
+    ColumnSpec(key="발생빈도", letter="E", style="26"),
+    ColumnSpec(key="품질특성", letter="F", style="25"),
+    ColumnSpec(key="결함 설명", letter="G", style="23"),
+    ColumnSpec(key="업체 응답", letter="H", style="10"),
+    ColumnSpec(key="수정여부", letter="I", style="10"),
+    ColumnSpec(key="비고", letter="J", style="11"),
+)
+
+DEFECT_REPORT_EXPECTED_HEADERS: Sequence[str] = [
+    "순번",
+    "시험환경(OS)",
+    "결함요약",
+    "결함정도",
+    "발생빈도",
+    "품질특성",
+    "결함 설명",
+    "업체 응답",
+    "수정여부",
+    "비고",
+]
+
+
+def populate_defect_report(workbook_bytes: bytes, csv_text: str) -> bytes:
+    records = _parse_csv_records(csv_text, DEFECT_REPORT_EXPECTED_HEADERS)
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
+        sheet_bytes = source.read(_XLSX_SHEET_PATH)
+    populator = WorksheetPopulator(sheet_bytes, start_row=6, columns=DEFECT_REPORT_COLUMNS)
+    populator.populate(records)
+    return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())

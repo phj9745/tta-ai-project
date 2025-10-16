@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
-from typing import Any, Dict, List, Optional, TypedDict
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, TypedDict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -10,6 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..dependencies import get_ai_generation_service, get_drive_service
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
+from ..services.excel_templates import populate_defect_report
 
 router = APIRouter()
 
@@ -57,6 +60,46 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
     ],
 }
 
+_TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
+_DEFECT_REPORT_TEMPLATE = _TEMPLATE_ROOT / "다.수행" / "GS-B-2X-XXXX 결함리포트 v1.0.xlsx"
+
+
+def _decode_text(raw: bytes) -> str:
+    for encoding in ("utf-8", "cp949"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
+_DEFECT_PATTERN = re.compile(r"(?:^|\n)\s*(\d+)\.(.*?)(?=(?:\n\s*\d+\.)|\Z)", re.S)
+
+
+def _extract_defect_entries(text: str) -> List[Dict[str, str]]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+
+    matches = list(_DEFECT_PATTERN.finditer(stripped))
+    entries: List[Dict[str, str]] = []
+    if matches:
+        for match in matches:
+            index_str, body = match.groups()
+            try:
+                index_value = int(index_str)
+            except ValueError:
+                continue
+            cleaned = " ".join(body.strip().split())
+            if not cleaned:
+                continue
+            entries.append({"index": index_value, "text": cleaned})
+    else:
+        lines: Sequence[str] = [line.strip() for line in stripped.splitlines() if line.strip()]
+        for idx, line in enumerate(lines, start=1):
+            entries.append({"index": idx, "text": line})
+    return entries
+
 
 @router.post("/drive/gs/setup")
 async def ensure_gs_folder(
@@ -92,6 +135,47 @@ async def create_drive_project(
         files=files,
         google_id=google_id,
     )
+
+
+@router.post("/drive/projects/{project_id}/defect-report/formalize")
+async def formalize_defect_report(
+    project_id: str,
+    file: UploadFile = File(..., description="결함 메모 TXT 파일"),
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> Dict[str, Any]:
+    try:
+        raw_bytes = await file.read()
+    finally:
+        await file.close()
+
+    if not raw_bytes:
+        raise HTTPException(status_code=422, detail="업로드된 파일이 비어 있습니다.")
+
+    decoded = _decode_text(raw_bytes)
+    entries = _extract_defect_entries(decoded)
+    if not entries:
+        raise HTTPException(
+            status_code=422,
+            detail="결함 목록을 찾을 수 없습니다. '1. 항목' 형태로 작성된 TXT 파일을 업로드해 주세요.",
+        )
+
+    normalized = await ai_generation_service.formalize_defect_notes(
+        project_id=project_id,
+        entries=entries,
+    )
+
+    normalized.sort(key=lambda item: item.index)
+
+    return {
+        "defects": [
+            {
+                "index": item.index,
+                "originalText": item.original_text,
+                "polishedText": item.polished_text,
+            }
+            for item in normalized
+        ]
+    }
 
 
 @router.post("/drive/projects/{project_id}/generate")
@@ -205,6 +289,32 @@ async def generate_project_asset(
         csv_text=result.csv_text,
         google_id=google_id,
     )
+
+    if menu_id == "defect-report":
+        if not _DEFECT_REPORT_TEMPLATE.exists():
+            raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 찾을 수 없습니다.")
+
+        try:
+            template_bytes = _DEFECT_REPORT_TEMPLATE.read_bytes()
+        except FileNotFoundError as exc:  # pragma: no cover - unexpected
+            raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 읽을 수 없습니다.") from exc
+
+        try:
+            workbook_bytes = populate_defect_report(template_bytes, result.csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        safe_stem = Path(result.filename).stem or "defect-report"
+        download_name = f"{safe_stem}.xlsx"
+        headers = {
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "Cache-Control": "no-store",
+        }
+        return StreamingResponse(
+            io.BytesIO(workbook_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
 
     headers = {
         "Content-Disposition": f'attachment; filename="{result.filename}"',
