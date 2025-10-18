@@ -228,18 +228,41 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
     ),
     "security-report": PromptConfig(
         label="보안성 리포트",
-        summary="보안 점검 결과와 취약점 목록을 요약합니다.",
-        request_description="발견된 취약점을 위험도와 함께 정리합니다.",
-        system_prompt="당신은 보안 컨설턴트입니다. 업로드된 보안 점검 결과를 요약한 리포트를 만듭니다.",
+        summary="Invicti HTML 보고서를 기반으로 결함 요약과 조치 지침을 생성합니다.",
+        request_description="결함 요약(JSON)과 템플릿 자동 작성에 필요한 지시를 관리합니다.",
+        system_prompt=(
+            "당신은 Invicti HTML 보고서를 분석하여 보안 결함을 표준 템플릿에 맞게 요약하는 한국어 보안 분석가입니다. "
+            "응답은 항상 JSON 형식이어야 합니다."
+        ),
         user_prompt=(
-            "자료를 바탕으로 취약점을 정리한 CSV를 작성하세요. 열은 취약점 ID, 위험도, 영향 영역, 발견 내용, 권장 조치입니다. "
-            "위험도는 높음/중간/낮음 중 하나를 사용합니다."
+            "다음 Invicti 결함 정보를 검토하고 요구된 필드를 포함하는 JSON 객체를 작성하세요. "
+            "필수 필드: summary(간단 요약), description(3문장 이상 상세 설명), "
+            "recommendation(조치 가이드), category(품질 특성), occurrence(발생 빈도 권장 값).\n\n"
+            "{{finding_details_block}}\n\n"
+            "추가 참고 정보:\n{{context_block}}"
         ),
         scaffolding=PromptScaffolding(
-            attachments_heading="첨부 파일 목록",
-            attachments_intro="다음 자료를 확인하고 취약점을 정리하세요.",
-            format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
+            attachments_heading="",
+            attachments_intro="",
+            closing_note=(
+                "다음 결함 설명을 읽고 지정된 플레이스홀더에 맞는 값을 JSON으로 추출하세요.\n"
+                "플레이스홀더 목록: {{placeholder_list}}\n"
+                "첨부 정보가 없으면 빈 문자열을 사용하고, 번호나 장식 문자는 제거하세요."
+            ),
+            format_warning="응답은 JSON 객체 하나로만 반환하세요.",
         ),
+        user_prompt_sections=[
+            PromptSection(
+                id="security-guidelines",
+                label="작성 지침",
+                content=(
+                    "- summary는 6~18자의 한국어 명사구로 작성하고 번호, 괄호, 문장 부호를 사용하지 마세요.\n"
+                    "- description은 2~3문장으로 문제 원인, 영향 경로, 개선 방향을 자연스럽게 설명하세요.\n"
+                    "- 번호나 목록 대신 문장으로 작성하고, 불필요한 인용부호나 HTML 표기를 제거하세요.\n"
+                    '- "암호화 목록" 정보가 제공되면 마지막 문장에 "취약한 암호화 목록: ..." 형식으로 그대로 포함하세요.'
+                ),
+            )
+        ],
     ),
     "performance-report": PromptConfig(
         label="성능 평가 리포트",
