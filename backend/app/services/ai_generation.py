@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import base64
 import io
 import json
@@ -483,10 +484,12 @@ class AIGenerationService:
             converted = self._convert_docx_upload_to_pdf(upload, label)
         elif extension == "xlsx":
             converted = self._convert_xlsx_upload_to_pdf(upload, label)
+        elif extension == "csv":
+            converted = self._convert_csv_upload_to_pdf(upload, label)
         else:
             raise HTTPException(
                 status_code=422,
-                detail=f"{label}은(는) PDF 또는 지원되는 문서 형식(DOCX, XLSX)이어야 합니다.",
+                detail=f"{label}은(는) PDF 또는 지원되는 문서 형식(DOCX, XLSX, CSV)이어야 합니다.",
             )
 
         self._append_conversion_note(metadata, label, original_extension)
@@ -584,6 +587,36 @@ class AIGenerationService:
             raise HTTPException(
                 status_code=422,
                 detail=f"{label} XLSX 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
+
+    @staticmethod
+    def _convert_csv_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        decoded: str | None = None
+        last_error: Exception | None = None
+        for encoding in ("utf-8-sig", "utf-8", "cp949", "latin-1"):
+            try:
+                decoded = upload.content.decode(encoding)
+                break
+            except UnicodeDecodeError as exc:
+                last_error = exc
+
+        if decoded is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} CSV 파일을 읽는 중 오류가 발생했습니다.",
+            ) from last_error
+
+        try:
+            reader = csv.reader(io.StringIO(decoded))
+            rows = [[cell.strip() for cell in row] for row in reader]
+        except csv.Error as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} CSV 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
             ) from exc
 
         return AIGenerationService._build_pdf_upload(upload, rows)
