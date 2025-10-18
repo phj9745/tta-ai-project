@@ -697,102 +697,105 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           </div>
 
           {activeState.status !== 'success' && (
-          {isDefectReport ? (
-            <DefectReportWorkflow backendUrl={backendUrl} projectId={projectId} />
-          ) : hasRequiredDocuments ? (
-            <>
-              <section
-                aria-labelledby="required-upload-section"
-                className="project-management-content__section"
-              >
-                <h2 id="required-upload-section" className="project-management-content__section-title">
-                  필수 문서 업로드
-                </h2>
-                <div className="project-management-required__list">
-                  {(activeContent.requiredDocuments ?? []).map((doc) => {
-                    const fileList = activeState.requiredFiles[doc.id] ?? []
-                    const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
-                    const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
+            isDefectReport ? (
+              <DefectReportWorkflow backendUrl={backendUrl} projectId={projectId} />
+            ) : hasRequiredDocuments ? (
+              <>
+                <section
+                  aria-labelledby="required-upload-section"
+                  className="project-management-content__section"
+                >
+                  <h2
+                    id="required-upload-section"
+                    className="project-management-content__section-title"
+                  >
+                    필수 문서 업로드
+                  </h2>
+                  <div className="project-management-required__list">
+                    {(activeContent.requiredDocuments ?? []).map((doc) => {
+                      const fileList = activeState.requiredFiles[doc.id] ?? []
+                      const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
+                      const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
 
-                    return (
-                      <div key={doc.id} className="project-management-required__item">
-                        <span className="project-management-required__label">{doc.label}</span>
-                        <FileUploader
-                          allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
-                          files={fileList}
-                          onChange={(nextFiles) =>
-                            handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
-                          }
-                          disabled={activeState.status === 'loading'}
-                          multiple={allowMultiple}
-                          hideDropzoneWhenFilled
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-
-                <div className="project-management-additional project-management-additional--inline">
-                  <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
-                  <FileUploader
-                    allowedTypes={activeContent.allowedTypes}
-                    files={[]}
-                    onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
-                    disabled={activeState.status === 'loading'}
-                  />
-                  {activeState.additionalFiles.length > 0 && (
-                    <ul className="project-management-additional__list">
-                      {activeState.additionalFiles.map((entry) => (
-                        <li key={entry.id} className="project-management-additional__item">
-                          <div className="project-management-additional__file">{entry.file.name}</div>
-                          <label className="project-management-additional__description">
-                            <span>문서 종류</span>
-                            <input
-                              type="text"
-                              value={entry.description}
-                              onChange={(event) =>
-                                handleUpdateAdditionalDescription(
-                                  activeContent.id,
-                                  entry.id,
-                                  event.target.value,
-                                )
-                              }
-                              placeholder="예: 테스트 보고서"
-                              disabled={activeState.status === 'loading'}
-                            />
-                          </label>
-                          <button
-                            type="button"
-                            className="project-management-additional__remove"
-                            onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
+                      return (
+                        <div key={doc.id} className="project-management-required__item">
+                          <span className="project-management-required__label">{doc.label}</span>
+                          <FileUploader
+                            allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
+                            files={fileList}
+                            onChange={(nextFiles) =>
+                              handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
+                            }
                             disabled={activeState.status === 'loading'}
-                          >
-                            제거
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                            multiple={allowMultiple}
+                            hideDropzoneWhenFilled
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div className="project-management-additional project-management-additional--inline">
+                    <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
+                    <FileUploader
+                      allowedTypes={activeContent.allowedTypes}
+                      files={[]}
+                      onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
+                      disabled={activeState.status === 'loading'}
+                    />
+                    {activeState.additionalFiles.length > 0 && (
+                      <ul className="project-management-additional__list">
+                        {activeState.additionalFiles.map((entry) => (
+                          <li key={entry.id} className="project-management-additional__item">
+                            <div className="project-management-additional__file">{entry.file.name}</div>
+                            <label className="project-management-additional__description">
+                              <span>문서 종류</span>
+                              <input
+                                type="text"
+                                value={entry.description}
+                                onChange={(event) =>
+                                  handleUpdateAdditionalDescription(
+                                    activeContent.id,
+                                    entry.id,
+                                    event.target.value,
+                                  )
+                                }
+                                placeholder="예: 테스트 보고서"
+                                disabled={activeState.status === 'loading'}
+                              />
+                            </label>
+                            <button
+                              type="button"
+                              className="project-management-additional__remove"
+                              onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
+                              disabled={activeState.status === 'loading'}
+                            >
+                              제거
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </section>
+              </>
+            ) : (
+              <section aria-labelledby="upload-section" className="project-management-content__section">
+                <h2 id="upload-section" className="project-management-content__section-title">
+                  자료 업로드
+                </h2>
+                <p className="project-management-content__helper">{activeContent.helper}</p>
+                <FileUploader
+                  allowedTypes={activeContent.allowedTypes}
+                  files={activeState.files}
+                  onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
+                  disabled={activeState.status === 'loading'}
+                  maxFiles={activeContent.maxFiles}
+                  hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
+                  variant={activeContent.uploaderVariant}
+                />
               </section>
-            </>
-          ) : (
-            <section aria-labelledby="upload-section" className="project-management-content__section">
-              <h2 id="upload-section" className="project-management-content__section-title">
-                자료 업로드
-              </h2>
-              <p className="project-management-content__helper">{activeContent.helper}</p>
-              <FileUploader
-                allowedTypes={activeContent.allowedTypes}
-                files={activeState.files}
-                onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
-                disabled={activeState.status === 'loading'}
-                maxFiles={activeContent.maxFiles}
-                hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
-                variant={activeContent.uploaderVariant}
-              />
-            </section>
-          )}
+            )
           )}
 
           {!isDefectReport && (
