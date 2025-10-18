@@ -66,6 +66,18 @@ _SHARED_CRITERIA_NORMALIZED_NAMES = {
 _PREFERRED_SHARED_CRITERIA_FILE_NAME = _SHARED_CRITERIA_FILE_CANDIDATES[0]
 
 
+def _is_shared_criteria_candidate(filename: str) -> bool:
+    """
+    템플릿 파일명이 공유 결함판단기준표 후보들과 동일(공백/대소문자/확장자 무시)한지 판정.
+    프로젝트 폴더 복사에서 제외하기 위해 사용.
+    """
+    try:
+        normalized = _normalize_shared_criteria_name(filename)
+    except Exception:
+        return False
+    return normalized in _SHARED_CRITERIA_NORMALIZED_NAMES
+
+
 class _SpreadsheetRule(TypedDict):
     folder_name: str
     file_suffix: str
@@ -282,6 +294,11 @@ class GoogleDriveService:
                 path_to_folder_id[local_dir] = str(folder["id"])
 
             for filename in sorted(filenames):
+                # ✅ 공유 결함판단기준표는 프로젝트 폴더에 복사하지 않음
+                if _is_shared_criteria_candidate(filename):
+                    logger.info("Skip copying shared criteria into project: %s", filename)
+                    continue
+
                 local_file = current_path / filename
                 target_name = self._replace_placeholders(filename, exam_number)
                 content = self._prepare_template_file_content(local_file, exam_number)

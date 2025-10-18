@@ -156,6 +156,9 @@ class SecurityReportService:
         if not standardized:
             raise HTTPException(status_code=422, detail="매칭된 결함이 없어 리포트를 생성할 수 없습니다.")
 
+        # 병합: 동일 유형은 대표 항목(첫 경로)만 남기고 병합
+        standardized = self._merge_similar_findings(standardized)
+
         if criteria_modified:
             logger.info("Security criteria augmented with AI-generated rules during processing.")
 
@@ -800,6 +803,32 @@ class SecurityReportService:
         if match:
             return match.group(1).strip()
         return ""
+    
+    def _weak_list_already_present(self, description: str, weak_list: str) -> bool:
+        if not description or not weak_list:
+            return False
+
+        def _norm(s: str) -> str:
+            return re.sub(r"\s+", " ", s).strip().lower()
+
+        # 1) 전체 문자열 정규화 비교
+        if _norm(weak_list) in _norm(description):
+            return True
+
+        # 2) 목록 항목들 중 앞쪽 2~3개가 본문에 동시에 존재하면 포함된 것으로 간주
+        items = [ln.strip() for ln in weak_list.splitlines() if ln.strip()]
+        if not items:
+            return False
+        probe = items[:3]  # 앞에서 최대 3개까지 확인
+        hits = sum(1 for it in probe if it and it in description)
+        if hits >= 2:
+            return True
+
+        # 3) 헤더 문구 + 첫 항목 조합 체크
+        if ("취약한 암호화 목록" in description or "취약한 암호화 알고리즘 목록" in description) and items[0] in description:
+            return True
+
+        return False
 
     def _finalize_summary(
         self,
@@ -896,8 +925,8 @@ class SecurityReportService:
             segments.append(f"최신 버전: {latest_version}")
 
         weak_list = context.get("암호화 목록") or context.get("암호화목록")
-        if weak_list and weak_list not in description:
-            segments.append(f"취약한 암호화 목록: {weak_list}")
+        if weak_list and not self._weak_list_already_present(description, weak_list):
+            segments.append(f"취약한 암호화 목록: \n{weak_list}")
 
         if finding.evidence_text and finding.evidence_text not in description:
             segments.append(f"Invicti 증적 요약: {finding.evidence_text}")
@@ -985,6 +1014,63 @@ class SecurityReportService:
         }
         criteria_df.loc[len(criteria_df)] = new_row
 
+    def _merge_similar_findings(
+        self,
+        findings: Sequence[StandardizedFinding],
+    ) -> List[StandardizedFinding]:
+        """
+        동일 취약 유형(같은 Invicti 결과/요약/위험도레벨/조치 가이드)에서 URL/파라미터만 다른 항목을 하나로 합칩니다.
+        병합 시 대표 path는 해당 그룹에서 처음 등장한 path(맨 앞 항목의 path)만 사용합니다.
+        결함 설명은 대표 항목의 description을 그대로 유지합니다.
+        """
+        merged_map: Dict[Tuple[str, str, int, str], StandardizedFinding] = {}
+        first_path_seen: Dict[Tuple[str, str, int, str], str] = {}
+
+        for f in findings:
+            key = (
+                (f.invicti_name or "").strip().lower(),
+                (f.summary or "").strip(),
+                int(f.severity_rank),
+                (f.recommendation or "").strip(),
+            )
+            if key not in merged_map:
+                # 첫 항목을 대표로 그대로 보관
+                merged_map[key] = f
+                first_path_seen[key] = f.path or ""
+            else:
+                # 이미 존재하면 ai_notes 병합(선택적) 및 대표 path 보존 (변경하지 않음)
+                existing = merged_map[key]
+                # preserve existing.ai_notes but add info that another occurrence existed
+                existing.ai_notes = dict(existing.ai_notes or {})
+                # 증거로서 간단히 카운트/기록 추가 (기존 값 유지)
+                existing.ai_notes.setdefault("merged_count", 1)
+                existing.ai_notes["merged_count"] = existing.ai_notes.get("merged_count", 1) + 1
+                merged_map[key] = existing
+
+        # 반환 시, path는 그룹에서 첫으로 본 path만 사용
+        result: List[StandardizedFinding] = []
+        for key, base in merged_map.items():
+            rep_path = first_path_seen.get(key, base.path)
+            result.append(
+                StandardizedFinding(
+                    invicti_name=base.invicti_name,
+                    path=rep_path,
+                    severity=base.severity,
+                    severity_rank=base.severity_rank,
+                    anchor_id=base.anchor_id,
+                    summary=base.summary,
+                    recommendation=base.recommendation,
+                    category=base.category,
+                    occurrence=base.occurrence,
+                    description=base.description,
+                    excluded=base.excluded,
+                    raw_details=base.raw_details,
+                    ai_notes=base.ai_notes,
+                    source=base.source,
+                )
+            )
+        return result
+
     def _build_dataframe(self, findings: Sequence[StandardizedFinding]) -> pd.DataFrame:
         rows = []
         for finding in findings:
@@ -1023,6 +1109,7 @@ class SecurityReportService:
 
     def _build_csv_view(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         if dataframe.empty:
+            # 빈 경우에도 요구된 최종 컬럼 세트만 노출
             return pd.DataFrame(
                 columns=[
                     "순번",
@@ -1035,11 +1122,8 @@ class SecurityReportService:
                     "업체 응답",
                     "수정여부",
                     "비고",
-                    "Invicti 결과",
-                    "위험도",
-                    "발생경로",
-                    "조치 가이드",
-                    "원본 세부내용",
+                    # 요청에 따라 아래 컬럼은 CSV에서 제거됨:
+                    # "Invicti 결과", "위험도", "발생경로", "조치 가이드", "원본 세부내용",
                     "매핑 유형",
                 ]
             )
@@ -1048,6 +1132,7 @@ class SecurityReportService:
         output.insert(0, "순번", [str(index) for index in range(1, len(output) + 1)])
         output.insert(1, "시험환경 OS", ["시험환경 모든 OS"] * len(output))
 
+        # '결함정도'에서 직접 매핑하여 최종 '결함 정도' 생성 (중간 '위험도' 컬럼 생성하지 않음)
         severity_map = {
             "Critical": "H",
             "High": "H",
@@ -1056,21 +1141,29 @@ class SecurityReportService:
             "Info": "L",
             "Informational": "L",
         }
-        output["위험도"] = output["결함정도"].fillna("").astype(str)
-        output["결함 정도"] = output["위험도"].map(severity_map).fillna("M")
+        raw_sev = output["결함정도"].fillna("").astype(str)
+        output["결함 정도"] = raw_sev.map(severity_map).fillna("M")
+
         output["발생 빈도"] = output["발생빈도"].fillna("").astype(str)
         output["품질 특성"] = output["품질특성"].fillna("").astype(str)
         output["결함 설명"] = output["결함 설명"].fillna("").astype(str)
         output["결함 요약"] = output["결함 요약"].fillna("").astype(str)
-        output["조치 가이드"] = output["조치 가이드"].fillna("").astype(str)
-        output["발생경로"] = output["발생경로"].fillna("").astype(str)
-        output["Invicti 결과"] = output["Invicti 결과"].fillna("").astype(str)
-        output["원본 세부내용"] = output["원본 세부내용"].fillna("").astype(str)
+
+        # 내부적으로는 존재하더라도 CSV에 포함하지 않을 특정 컬럼들에 대해 안전하게 처리
+        if "조치 가이드" in output.columns:
+            output["조치 가이드"] = output["조치 가이드"].fillna("").astype(str)
+        if "발생경로" in output.columns:
+            output["발생경로"] = output["발생경로"].fillna("").astype(str)
+        if "Invicti 결과" in output.columns:
+            output["Invicti 결과"] = output["Invicti 결과"].fillna("").astype(str)
+        if "원본 세부내용" in output.columns:
+            output["원본 세부내용"] = output["원본 세부내용"].fillna("").astype(str)
 
         output["업체 응답"] = ""
         output["수정여부"] = ""
         output["비고"] = "보안성 시험 결과 참고"
 
+        # 최종 CSV 컬럼: 요청된 5개는 제외
         columns = [
             "순번",
             "시험환경 OS",
@@ -1082,11 +1175,6 @@ class SecurityReportService:
             "업체 응답",
             "수정여부",
             "비고",
-            "Invicti 결과",
-            "위험도",
-            "발생경로",
-            "조치 가이드",
-            "원본 세부내용",
             "매핑 유형",
         ]
         return output.reindex(columns=columns)
