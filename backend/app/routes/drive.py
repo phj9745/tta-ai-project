@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from typing import Any, Dict, List, Optional, TypedDict
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -61,6 +63,14 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
         },
     ],
 }
+
+
+def _build_attachment_header(filename: str) -> str:
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+    if not ascii_fallback or not re.search(r"[A-Za-z0-9]", ascii_fallback):
+        ascii_fallback = "security-report.csv"
+    quoted = quote(filename)
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
 
 
 @router.post("/drive/gs/setup")
@@ -155,7 +165,7 @@ async def generate_project_asset(
         )
 
         headers = {
-            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Content-Disposition": _build_attachment_header(result.filename),
             "Cache-Control": "no-store",
         }
 

@@ -717,10 +717,40 @@ class GoogleDriveService:
             content=updated_bytes,
             content_type=XLSX_MIME_TYPE,
         )
-
         logger.info(
             "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
         )
+
+    async def get_project_exam_number(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> str:
+        """
+        Retrieve the exam number (e.g. GS-B-12-3456) from the Drive project folder name.
+        """
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        params = {"fields": "id,name"}
+        data, _ = await self._drive_request(
+            active_tokens,
+            method="GET",
+            path=f"{DRIVE_FILES_ENDPOINT}/{project_id}",
+            params=params,
+        )
+
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=404, detail="프로젝트 폴더를 찾을 수 없습니다.")
+
+        match = EXAM_NUMBER_PATTERN.search(name)
+        if not match:
+            raise HTTPException(status_code=404, detail="프로젝트 이름에서 시험신청 번호를 찾을 수 없습니다.")
+
+        return match.group(0)
 
     async def _ensure_shared_criteria_file(
         self,

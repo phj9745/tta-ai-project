@@ -5,8 +5,6 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -89,7 +87,6 @@ class SecurityReportService:
         project_id: str,
         google_id: str | None,
     ) -> GeneratedCsv:
-        source_filename = invicti_upload.filename or "invicti-report.html"
         dataframe = await self.process_invicti_report(
             invicti_upload=invicti_upload,
             google_id=google_id,
@@ -98,12 +95,11 @@ class SecurityReportService:
         csv_text = csv_dataframe.to_csv(index=False)
         encoded = csv_text.encode("utf-8-sig")
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        stem = Path(source_filename).stem
-        if not stem:
-            stem = "invicti-report"
-        safe_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "invicti-report"
-        filename = f"{safe_stem}_security-report_{timestamp}.csv"
+        project_number = await self._drive_service.get_project_exam_number(
+            project_id=project_id,
+            google_id=google_id,
+        )
+        filename = f"{project_number} 보안성 결함리포트 v1.0.csv"
 
         return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
 
