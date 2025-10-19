@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import csv
 import io
 import json
 import re
@@ -8,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..dependencies import get_ai_generation_service, get_drive_service
 from ..services.ai_generation import AIGenerationService
@@ -26,6 +29,24 @@ class RequiredDocument(TypedDict, total=False):
     id: str
     label: str
     allowed_extensions: List[str]
+
+
+class DefectCellRewriteRequest(BaseModel):
+    column_key: str = Field(..., alias="columnKey", description="수정할 열 식별자")
+    column_label: str | None = Field(
+        None, alias="columnLabel", description="열 표시 이름 (선택)"
+    )
+    original_value: str | None = Field(
+        None, alias="originalValue", description="현재 셀 값"
+    )
+    instructions: str = Field(..., description="GPT에게 전달할 수정 지시")
+    row_values: Dict[str, str] | None = Field(
+        None,
+        alias="rowValues",
+        description="해당 행의 다른 셀 값",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
@@ -382,6 +403,7 @@ async def generate_project_asset(
         headers = {
             "Content-Disposition": f'attachment; filename="{download_name}"',
             "Cache-Control": "no-store",
+            "X-Defect-Table": base64.b64encode(result.csv_text.encode("utf-8")).decode("ascii"),
         }
         return StreamingResponse(
             io.BytesIO(workbook_bytes),
@@ -395,3 +417,139 @@ async def generate_project_asset(
     }
 
     return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
+
+
+@router.post("/drive/projects/{project_id}/defect-report/rewrite")
+async def rewrite_defect_report_cell(
+    project_id: str,
+    payload: DefectCellRewriteRequest,
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> Dict[str, str]:
+    updated = await ai_generation_service.rewrite_defect_report_cell(
+        project_id=project_id,
+        column_key=payload.column_key,
+        column_label=payload.column_label,
+        original_value=payload.original_value,
+        instructions=payload.instructions,
+        row_values=payload.row_values,
+    )
+
+    return {"updatedText": updated}
+
+
+@router.post("/drive/projects/{project_id}/defect-report/compile")
+async def compile_defect_report(
+    project_id: str,
+    rows: str = Form(..., description="결함 리포트 행 데이터(JSON 배열)"),
+    attachments: Optional[List[UploadFile]] = File(
+        None, description="결함 이미지 첨부 파일"
+    ),
+    attachment_metadata: Optional[str] = Form(
+        None, description="첨부 파일 메타데이터(JSON 배열)"
+    ),
+) -> StreamingResponse:
+    try:
+        parsed_rows = json.loads(rows)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="행 데이터 형식이 올바르지 않습니다.") from exc
+
+    if not isinstance(parsed_rows, list):
+        raise HTTPException(status_code=422, detail="행 데이터 형식이 올바르지 않습니다.")
+
+    normalized_rows: List[Dict[str, str]] = []
+    for index, entry in enumerate(parsed_rows, start=1):
+        if not isinstance(entry, dict):
+            raise HTTPException(
+                status_code=422,
+                detail=f"{index}번째 행 데이터 형식이 올바르지 않습니다.",
+            )
+        record: Dict[str, str] = {}
+        for column in DEFECT_REPORT_EXPECTED_HEADERS:
+            value = entry.get(column)
+            record[column] = "" if value is None else str(value)
+        normalized_rows.append(record)
+
+    if not normalized_rows:
+        raise HTTPException(status_code=422, detail="최소 한 개의 행 데이터가 필요합니다.")
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=DEFECT_REPORT_EXPECTED_HEADERS)
+    writer.writeheader()
+    writer.writerows(normalized_rows)
+    csv_text = buffer.getvalue()
+
+    uploads = attachments or []
+    metadata_entries: List[Dict[str, Any]] = []
+
+    if uploads:
+        if not attachment_metadata:
+            raise HTTPException(status_code=422, detail="첨부 메타데이터 형식이 올바르지 않습니다.")
+        try:
+            parsed_metadata = json.loads(attachment_metadata)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="첨부 메타데이터 형식이 올바르지 않습니다.") from exc
+        if not isinstance(parsed_metadata, list) or len(parsed_metadata) != len(uploads):
+            raise HTTPException(status_code=422, detail="첨부 메타데이터 형식이 올바르지 않습니다.")
+        metadata_entries = parsed_metadata
+
+    image_map: Dict[int, List[DefectReportImage]] = {}
+    notes_map: Dict[int, List[str]] = {}
+
+    for upload, metadata in zip(uploads, metadata_entries):
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=422, detail="첨부 메타데이터 형식이 올바르지 않습니다.")
+
+        defect_index = metadata.get("defect_index")
+        try:
+            normalized_index = int(defect_index)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="첨부 파일의 결함 순번이 올바르지 않습니다.")
+
+        try:
+            content = await upload.read()
+        finally:
+            await upload.close()
+
+        if not content:
+            continue
+
+        file_name = upload.filename or metadata.get("originalFileName") or "attachment"
+        image = DefectReportImage(
+            file_name=file_name,
+            content=content,
+            content_type=upload.content_type,
+        )
+        image_map.setdefault(normalized_index, []).append(image)
+        notes_map.setdefault(normalized_index, []).append(file_name)
+
+    if not _DEFECT_REPORT_TEMPLATE.exists():
+        raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 찾을 수 없습니다.")
+
+    try:
+        template_bytes = _DEFECT_REPORT_TEMPLATE.read_bytes()
+    except FileNotFoundError as exc:  # pragma: no cover - unexpected
+        raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 읽을 수 없습니다.") from exc
+
+    try:
+        workbook_bytes = populate_defect_report(
+            template_bytes,
+            csv_text,
+            images=image_map if image_map else None,
+            attachment_notes=notes_map if notes_map else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id) or "defect-report"
+    download_name = f"{safe_project}_defect-report.xlsx"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{download_name}"',
+        "Cache-Control": "no-store",
+        "X-Defect-Table": base64.b64encode(csv_text.encode("utf-8")).decode("ascii"),
+    }
+
+    return StreamingResponse(
+        io.BytesIO(workbook_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )

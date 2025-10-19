@@ -14,7 +14,7 @@ from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Literal
+from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
@@ -443,6 +443,130 @@ class AIGenerationService:
             raise HTTPException(status_code=502, detail="정제된 결함 결과가 비어 있습니다.")
 
         return results
+
+    async def rewrite_defect_report_cell(
+        self,
+        *,
+        project_id: str,
+        column_key: str,
+        column_label: str | None,
+        original_value: str | None,
+        instructions: str,
+        row_values: Mapping[str, str] | None = None,
+    ) -> str:
+        normalized_instructions = (instructions or "").strip()
+        if not normalized_instructions:
+            raise HTTPException(status_code=422, detail="변경 요청 내용을 입력해 주세요.")
+
+        normalized_column = (column_key or "").strip()
+        if not normalized_column:
+            raise HTTPException(status_code=422, detail="수정할 열 정보를 확인할 수 없습니다.")
+
+        display_label = (column_label or "").strip() or normalized_column
+        current_value = (original_value or "").strip()
+
+        context_lines: List[str] = []
+        if row_values:
+            for key, value in row_values.items():
+                if not isinstance(key, str) or key.strip() == "":
+                    continue
+                if key == normalized_column:
+                    continue
+                value_text = "" if value is None else str(value)
+                value_text = value_text.strip()
+                if not value_text:
+                    continue
+                context_lines.append(f"- {key}: {value_text}")
+
+        system_prompt = (
+            "당신은 소프트웨어 시험 결과를 정리하는 결함 리포트 편집자입니다. "
+            "각 항목은 명확하고 공문서에 적합한 어조를 유지해야 합니다."
+        )
+
+        prompt_parts: List[str] = []
+        if context_lines:
+            prompt_parts.append("행의 다른 항목:\n" + "\n".join(context_lines))
+        prompt_parts.append(f"현재 '{display_label}' 값: {current_value or '없음'}")
+        prompt_parts.append(f"사용자 요청: {normalized_instructions}")
+        prompt_parts.append(
+            "위 정보를 바탕으로 해당 셀에 들어갈 문장을 공문서 어조로 작성해 주세요.\n"
+            "- 출력은 수정된 셀 내용만 제공하세요.\n"
+            "- 필요 시 존댓말을 사용하고 문장은 간결하게 유지하세요."
+        )
+
+        user_prompt = "\n\n".join(prompt_parts)
+
+        client = self._get_client()
+        messages = [
+            OpenAIMessageBuilder.text_message("system", system_prompt),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=messages,
+                temperature=0.2,
+                top_p=0.9,
+                max_output_tokens=400,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while requesting OpenAI response",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "defect-report-rewrite",
+                    "column": normalized_column,
+                },
+            )
+            message = str(exc).strip()
+            detail = (
+                "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                if not message
+                else f"OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
+            )
+            raise HTTPException(status_code=502, detail=detail) from exc
+
+        response_text = self._extract_response_text(response) or ""
+
+        if self._request_log_service is not None:
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="defect-report-rewrite",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary=f"{display_label} 셀 수정",
+                    response_text=response_text,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={"project_id": project_id, "menu_id": "defect-report-rewrite"},
+                )
+
+        updated_value = response_text.strip()
+        if not updated_value:
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 수정된 텍스트를 찾을 수 없습니다.")
+
+        return updated_value
 
     @staticmethod
     def _sanitize_csv(text: str) -> str:

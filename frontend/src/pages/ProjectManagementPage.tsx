@@ -862,7 +862,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     className="project-management-content__button project-management-content__download"
                     download={activeState.downloadName ?? undefined}
                   >
-                    xlsx 다운로드
+                    CSV 다운로드
                   </a>
                   <button
                     type="button"
