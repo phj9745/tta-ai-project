@@ -4,13 +4,16 @@ import csv
 import io
 import logging
 import math
+import posixpath
 import re
+import zipfile
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
 
@@ -307,6 +310,7 @@ class PerformanceReportBuilder:
         self._template_bytes = template_bytes
         self._workbook = load_workbook(io.BytesIO(template_bytes))
         self._remove_external_links()
+        self._chart_reference_jobs: List[Tuple[str, str]] = []
 
     @property
     def workbook(self):
@@ -324,12 +328,17 @@ class PerformanceReportBuilder:
 
         for os_type, entries in grouped.items():
             template_sheet = self._workbook[os_type.sheet_name]
-            sheet_clones = self._clone_os_sheets(template_sheet, count=len(entries))
+            sheet_clones = self._clone_os_sheets(
+                template_sheet,
+                count=len(entries),
+                base_title=os_type.sheet_name,
+            )
             for index, (sheet, dataset) in enumerate(zip(sheet_clones, entries), start=1):
                 original_title = sheet.title
                 sheet.title = f"{os_type.display_name} #{index}"
                 if original_title != sheet.title:
                     self._rename_defined_names(original_title, sheet.title)
+                self._chart_reference_jobs.append((sheet.title, os_type.sheet_name))
                 logger.info(
                     "Filling sheet",
                     extra={"sheet": sheet.title, "records": len(dataset.records), "file": dataset.filename},
@@ -342,8 +351,15 @@ class PerformanceReportBuilder:
         buffer = io.BytesIO()
         self._workbook.save(buffer)
         buffer.seek(0)
+        raw_bytes = buffer.getvalue()
+        rename_targets = {
+            (new_title, base_title)
+            for new_title, base_title in self._chart_reference_jobs
+            if new_title != base_title
+        }
+        updated_bytes = _rewrite_chart_references(raw_bytes, rename_targets)
         logger.info("Performance workbook assembled", extra={"sheets": self._workbook.sheetnames})
-        return buffer.getvalue()
+        return updated_bytes
 
     def _prepare_sheets(self, grouped: Dict[OSType, List[RawDataset]]) -> None:
         for os_type, datasets in grouped.items():
@@ -355,7 +371,7 @@ class PerformanceReportBuilder:
             template_sheet = self._workbook[os_type.sheet_name]
             self._ensure_chart_templates(template_sheet)
 
-    def _clone_os_sheets(self, template_sheet: Worksheet, count: int) -> List[Worksheet]:
+    def _clone_os_sheets(self, template_sheet: Worksheet, count: int, *, base_title: str) -> List[Worksheet]:
         sheets: List[Worksheet] = []
         if count <= 0:
             return sheets
@@ -613,6 +629,12 @@ class PerformanceReportService:
             google_id=google_id,
         )
 
+        await self._drive_service.delete_files_by_name(
+            parent_id=target_folder_id,
+            name="GS-X-XX-XXXX 성능시험.xlsx",
+            google_id=google_id,
+        )
+
         upload_result = await self._drive_service.upload_file_to_folder(
             parent_id=target_folder_id,
             file_name=filename,
@@ -641,3 +663,146 @@ class PerformanceReportService:
             if candidate.value.lower() == lowered:
                 return candidate
         raise HTTPException(status_code=422, detail=f"지원하지 않는 운영체제 지정입니다: {normalized}")
+
+
+def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tuple[str, str]]) -> bytes:
+    targets = [target for target in rename_targets if target[0] != target[1]]
+    if not targets:
+        return workbook_bytes
+
+    source_buffer = io.BytesIO(workbook_bytes)
+    output_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(source_buffer, "r") as zin:
+        if "xl/workbook.xml" not in zin.namelist() or "xl/_rels/workbook.xml.rels" not in zin.namelist():
+            return workbook_bytes
+
+        workbook_tree = ET.fromstring(zin.read("xl/workbook.xml"))
+        rel_tree = ET.fromstring(zin.read("xl/_rels/workbook.xml.rels"))
+        ns = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        rel_ns = {"rel": "http://schemas.openxmlformats.org/package/2006/relationships"}
+
+        id_to_target: Dict[str, str] = {}
+        for rel in rel_tree.findall("rel:Relationship", rel_ns):
+            r_id = rel.get("Id")
+            target = rel.get("Target")
+            if r_id and target:
+                id_to_target[r_id] = target
+
+        sheet_to_path: Dict[str, str] = {}
+        sheets_elem = workbook_tree.find("s:sheets", ns)
+        if sheets_elem is None:
+            return workbook_bytes
+        for sheet in sheets_elem.findall("s:sheet", ns):
+            name = sheet.get("name")
+            r_id = sheet.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+            if name and r_id and r_id in id_to_target:
+                sheet_to_path[name] = id_to_target[r_id]
+
+        chart_overrides: Dict[str, bytes] = {}
+
+        for new_title, base_title in targets:
+            sheet_rel_path = sheet_to_path.get(new_title)
+            if not sheet_rel_path:
+                continue
+            sheet_xml_path = _normalize_zip_path(f"xl/{sheet_rel_path}")
+            rel_path = _sheet_relationship_path(sheet_xml_path)
+            if rel_path not in zin.namelist():
+                continue
+            sheet_rel_tree = ET.fromstring(zin.read(rel_path))
+            drawing_targets: List[str] = []
+            for rel in sheet_rel_tree.findall("rel:Relationship", rel_ns):
+                rel_type = rel.get("Type")
+                if rel_type == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing":
+                    target = rel.get("Target")
+                    if target:
+                        drawing_targets.append(_normalize_zip_path(posixpath.join(posixpath.dirname(rel_path), target)))
+
+            for drawing_path in drawing_targets:
+                if drawing_path not in zin.namelist():
+                    continue
+                drawing_tree = ET.fromstring(zin.read(drawing_path))
+                drawing_rel_path = _drawing_relationship_path(drawing_path)
+                if drawing_rel_path not in zin.namelist():
+                    continue
+                drawing_rel_tree = ET.fromstring(zin.read(drawing_rel_path))
+                chart_id_to_target: Dict[str, str] = {}
+                for rel in drawing_rel_tree.findall("rel:Relationship", rel_ns):
+                    rel_type = rel.get("Type")
+                    if rel_type == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart":
+                        r_id = rel.get("Id")
+                        target = rel.get("Target")
+                        if r_id and target:
+                            chart_id_to_target[r_id] = target
+
+                chart_ns = {
+                    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+                    "c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
+                    "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+                }
+                for anchor in drawing_tree.findall("xdr:twoCellAnchor", chart_ns):
+                    chart_elem = anchor.find(".//c:chart", chart_ns)
+                    if chart_elem is None:
+                        continue
+                    r_id = chart_elem.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+                    if not r_id or r_id not in chart_id_to_target:
+                        continue
+                    chart_target = _normalize_zip_path(
+                        posixpath.join(posixpath.dirname(drawing_rel_path), chart_id_to_target[r_id])
+                    )
+                    if chart_target not in zin.namelist():
+                        continue
+                    original_xml = chart_overrides.get(chart_target)
+                    if original_xml is None:
+                        original_xml = zin.read(chart_target)
+                    updated_xml = _replace_sheet_references_in_xml(original_xml, base_title, new_title)
+                    chart_overrides[chart_target] = updated_xml
+
+        if not chart_overrides:
+            return workbook_bytes
+
+        with zipfile.ZipFile(output_buffer, "w") as zout:
+            for info in zin.infolist():
+                data = zin.read(info.filename)
+                if info.filename in chart_overrides:
+                    data = chart_overrides[info.filename]
+                zout.writestr(info, data)
+
+    return output_buffer.getvalue()
+
+
+def _sheet_relationship_path(sheet_xml_path: str) -> str:
+    directory, filename = posixpath.split(sheet_xml_path)
+    rel_directory = posixpath.join(directory, "_rels")
+    return posixpath.join(rel_directory, f"{filename}.rels")
+
+
+def _drawing_relationship_path(drawing_xml_path: str) -> str:
+    directory, filename = posixpath.split(drawing_xml_path)
+    rel_directory = posixpath.join(directory, "_rels")
+    return posixpath.join(rel_directory, f"{filename}.rels")
+
+
+def _normalize_zip_path(path: str) -> str:
+    parts: List[str] = []
+    for segment in path.replace("\\", "/").split("/"):
+        if segment in ("", "."):
+            continue
+        if segment == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(segment)
+    return "/".join(parts)
+
+
+def _replace_sheet_references_in_xml(content: bytes, base_title: str, new_title: str) -> bytes:
+    text = content.decode("utf-8")
+    quoted_new = quote_sheetname(new_title)
+    replacements = [
+        (f"{base_title}!", f"{quoted_new}!"),
+        (f"{quote_sheetname(base_title)}!", f"{quoted_new}!"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text.encode("utf-8")

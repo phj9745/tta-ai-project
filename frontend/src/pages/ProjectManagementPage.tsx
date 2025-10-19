@@ -563,7 +563,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           filename: file.name,
           os: current.osSelection[index] ?? null,
         }))
-        metadataEntries.splice(0, metadataEntries.length, ...osMetadata)
+        metadataEntries.push(...osMetadata)
       }
 
       setItemStates((prev) => ({

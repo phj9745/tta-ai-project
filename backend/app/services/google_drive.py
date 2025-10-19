@@ -849,6 +849,37 @@ class GoogleDriveService:
 
         return current_id
 
+    async def delete_files_by_name(
+        self,
+        *,
+        parent_id: str,
+        name: str,
+        google_id: Optional[str],
+    ) -> None:
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        files, active_tokens = await self._list_child_files(
+            active_tokens,
+            parent_id=parent_id,
+        )
+
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            entry_name = entry.get("name")
+            if entry_name != name:
+                continue
+            file_id = entry.get("id")
+            if not isinstance(file_id, str):
+                continue
+            _, active_tokens = await self._drive_request(
+                active_tokens,
+                method="DELETE",
+                path=f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+            )
+
     async def _ensure_shared_criteria_file(
         self,
         tokens: StoredTokens,
