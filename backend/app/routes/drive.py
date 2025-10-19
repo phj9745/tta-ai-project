@@ -4,7 +4,7 @@ import io
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -12,7 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..dependencies import get_ai_generation_service, get_drive_service
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
-from ..services.excel_templates import DefectReportImage, populate_defect_report
+from ..services.excel_templates import (
+    DefectReportImage,
+    populate_defect_report,
+    populate_feature_list,
+    populate_testcase_list,
+)
 
 router = APIRouter()
 
@@ -62,6 +67,13 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
 
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
 _DEFECT_REPORT_TEMPLATE = _TEMPLATE_ROOT / "다.수행" / "GS-B-2X-XXXX 결함리포트 v1.0.xlsx"
+_FEATURE_LIST_TEMPLATE = _TEMPLATE_ROOT / "가.계획" / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
+_TESTCASE_TEMPLATE = _TEMPLATE_ROOT / "나.설계" / "GS-B-XX-XXXX 테스트케이스.xlsx"
+
+_STANDARD_TEMPLATE_POPULATORS: Dict[str, tuple[Path, Callable[[bytes, str], bytes]]] = {
+    "feature-list": (_FEATURE_LIST_TEMPLATE, populate_feature_list),
+    "testcase-generation": (_TESTCASE_TEMPLATE, populate_testcase_list),
+}
 
 
 def _decode_text(raw: bytes) -> str:
@@ -289,6 +301,35 @@ async def generate_project_asset(
         csv_text=result.csv_text,
         google_id=google_id,
     )
+
+    if menu_id in _STANDARD_TEMPLATE_POPULATORS:
+        template_path, populate_template = _STANDARD_TEMPLATE_POPULATORS[menu_id]
+        if not template_path.exists():
+            raise HTTPException(status_code=500, detail="생성 결과 템플릿을 찾을 수 없습니다.")
+
+        try:
+            template_bytes = template_path.read_bytes()
+        except FileNotFoundError as exc:  # pragma: no cover - unexpected
+            raise HTTPException(status_code=500, detail="템플릿 파일을 읽을 수 없습니다.") from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="템플릿 파일을 읽는 중 오류가 발생했습니다.") from exc
+
+        try:
+            workbook_bytes = populate_template(template_bytes, result.csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        safe_stem = Path(result.filename).stem or menu_id
+        download_name = f"{safe_stem}.xlsx"
+        headers = {
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "Cache-Control": "no-store",
+        }
+        return StreamingResponse(
+            io.BytesIO(workbook_bytes),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
 
     if menu_id == "defect-report":
         if not _DEFECT_REPORT_TEMPLATE.exists():

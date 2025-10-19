@@ -110,6 +110,12 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_')
 }
 
+const XLSX_RESULT_MENUS: Set<MenuItemId> = new Set([
+  'feature-list',
+  'testcase-generation',
+  'defect-report',
+])
+
 const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'feature-list',
@@ -558,7 +564,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
         const disposition = response.headers.get('content-disposition')
         const parsedName = parseFileNameFromDisposition(disposition)
-        const safeName = sanitizeFileName(parsedName ?? `${id}-result.csv`)
+        const contentType = response.headers.get('content-type') ?? ''
+        const expectsXlsx =
+          XLSX_RESULT_MENUS.has(id) || contentType.includes('spreadsheetml')
+
+        let effectiveName = parsedName?.trim() ?? ''
+        if (!effectiveName) {
+          effectiveName = `${id}-result`
+        }
+
+        if (expectsXlsx) {
+          if (!effectiveName.toLowerCase().endsWith('.xlsx')) {
+            const withoutExtension = effectiveName.replace(/\.[^./\\]+$/, '')
+            effectiveName = `${withoutExtension}.xlsx`
+          }
+        } else if (!effectiveName.includes('.')) {
+          effectiveName = `${effectiveName}.csv`
+        }
+
+        const safeName = sanitizeFileName(effectiveName)
         const objectUrl = URL.createObjectURL(blob)
 
         setItemStates((prev) => {
