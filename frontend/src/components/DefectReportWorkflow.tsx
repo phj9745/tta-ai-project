@@ -229,6 +229,14 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
     previousRowCountRef.current = tableRows.length
   }, [selectedCell, tableRows])
 
+  useEffect(() => {
+    if (generateStatus === 'loading' || generateStatus === 'success') {
+      if (previewSectionRef.current) {
+        previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }
+  }, [generateStatus])
+
   const handleChangeSource = useCallback((files: File[]) => {
     setSourceFiles(files.slice(0, 1))
     setFormalizeStatus('idle')
@@ -385,6 +393,11 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
   }, [downloadUrl])
 
   const canGenerate = defects.length > 0 && formalizeStatus === 'success'
+  const isGenerating = generateStatus === 'loading'
+  const isGenerated = generateStatus === 'success'
+  const hasPreviewRows = tableRows.length > 0
+  const shouldHideReviewStep = isGenerating || isGenerated || hasPreviewRows
+  const shouldShowPreviewSection = hasPreviewRows || isGenerating || isGenerated
 
   const applyCellUpdate = useCallback(
     (rowIndex: number, columnKey: string, value: string) => {
@@ -812,7 +825,7 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
           </p>
         </section>
       )}
-      {defects.length > 0 && (
+      {defects.length > 0 && !shouldHideReviewStep && (
         <section className="defect-workflow__section" aria-labelledby="defect-review">
           <h2 id="defect-review" className="defect-workflow__title">
             2. 결함 검토 및 증적 첨부
@@ -875,7 +888,7 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
         </section>
       )}
 
-      {tableRows.length > 0 && (
+      {shouldShowPreviewSection && (
         <section
           className="defect-workflow__section"
           aria-labelledby="defect-preview"
@@ -900,36 +913,48 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
                   </tr>
                 </thead>
                 <tbody>
-                  {tableRows.map((row, rowIndex) => (
-                    <tr key={row.rowNumber}>
-                      {DEFECT_REPORT_COLUMNS.map((column) => {
-                        const value = row.cells[column.key]
-                        const isSelected =
-                          selectedCell?.rowIndex === rowIndex && selectedCell.columnKey === column.key
-                        return (
-                          <td key={column.key}>
-                            <button
-                              type="button"
-                              className={`defect-workflow__cell-button${
-                                isSelected ? ' defect-workflow__cell-button--selected' : ''
-                              }`}
-                              onClick={() => handleSelectCell(rowIndex, column.key)}
-                            >
-                              {value ? (
-                                <span>{value}</span>
-                              ) : (
-                                <span className="defect-workflow__cell-placeholder">내용 없음</span>
-                              )}
-                            </button>
-                          </td>
-                        )
-                      })}
+                  {tableRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={DEFECT_REPORT_COLUMNS.length}>
+                        <div className="defect-workflow__loading" role="status">
+                          {isGenerating
+                            ? '결함 리포트를 생성하는 중입니다…'
+                            : '생성된 리포트 데이터를 불러오지 못했습니다.'}
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    tableRows.map((row, rowIndex) => (
+                      <tr key={row.rowNumber}>
+                        {DEFECT_REPORT_COLUMNS.map((column) => {
+                          const value = row.cells[column.key]
+                          const isSelected =
+                            selectedCell?.rowIndex === rowIndex && selectedCell.columnKey === column.key
+                          return (
+                            <td key={column.key}>
+                              <button
+                                type="button"
+                                className={`defect-workflow__cell-button${
+                                  isSelected ? ' defect-workflow__cell-button--selected' : ''
+                                }`}
+                                onClick={() => handleSelectCell(rowIndex, column.key)}
+                              >
+                                {value ? (
+                                  <span>{value}</span>
+                                ) : (
+                                  <span className="defect-workflow__cell-placeholder">내용 없음</span>
+                                )}
+                              </button>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
-            {selectedRow && selectedColumn ? (
+            {tableRows.length > 0 && selectedRow && selectedColumn ? (
               <aside className="defect-workflow__editor" aria-live="polite">
                 <div className="defect-workflow__editor-header">
                   <h3 className="defect-workflow__editor-title">셀 편집</h3>
@@ -997,9 +1022,17 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
                   </form>
                 </div>
               </aside>
-            ) : (
+            ) : tableRows.length > 0 ? (
               <aside className="defect-workflow__editor defect-workflow__editor--empty">
                 <p>편집할 셀을 선택하면 내용과 GPT 대화창이 표시됩니다.</p>
+              </aside>
+            ) : (
+              <aside className="defect-workflow__editor defect-workflow__editor--empty">
+                <p>
+                  {isGenerating
+                    ? '결함 리포트를 생성하는 중입니다. 잠시만 기다려 주세요.'
+                    : '생성된 리포트 데이터를 불러오지 못했습니다.'}
+                </p>
               </aside>
             )}
           </div>
@@ -1008,14 +1041,16 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
 
       <div className="defect-workflow__footer">
         <div className="defect-workflow__buttons">
-          <button
-            type="button"
-            className="defect-workflow__primary"
-            onClick={handleGenerate}
-            disabled={!canGenerate || generateStatus === 'loading'}
-          >
-            {generateStatus === 'loading' ? '리포트 생성 중…' : '결함 리포트 생성'}
-          </button>
+          {!shouldHideReviewStep && (
+            <button
+              type="button"
+              className="defect-workflow__primary"
+              onClick={handleGenerate}
+              disabled={!canGenerate || isGenerating}
+            >
+              {isGenerating ? '리포트 생성 중…' : '결함 리포트 생성'}
+            </button>
+          )}
           <button type="button" className="defect-workflow__secondary" onClick={handleReset}>
             초기화
           </button>

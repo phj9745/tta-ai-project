@@ -1945,6 +1945,13 @@
   vertical-align: top;
 }
 
+.defect-workflow__loading {
+  padding: 48px 16px;
+  text-align: center;
+  color: #475569;
+  font-size: 14px;
+}
+
 .defect-workflow__table th {
   position: sticky;
   top: 0;
