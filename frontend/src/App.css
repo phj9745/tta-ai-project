@@ -1689,3 +1689,241 @@
     padding: 1.5rem;
   }
 }
+
+.defect-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.defect-workflow__section {
+  background: #ffffff;
+  border: 1px solid #e4e7ef;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+}
+
+.defect-workflow__title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+
+.defect-workflow__helper {
+  color: #4a5568;
+  font-size: 14px;
+  margin: 0 0 16px;
+}
+
+.defect-workflow__helper--small {
+  font-size: 13px;
+  color: #5a6475;
+}
+
+.defect-workflow__actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.defect-workflow__primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 12px 24px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.defect-workflow__primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(59, 130, 246, 0.28);
+}
+
+.defect-workflow__primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.defect-workflow__status {
+  font-size: 14px;
+}
+
+.defect-workflow__status--error {
+  color: #d0342c;
+}
+
+.defect-workflow__status--success {
+  color: #0f9d58;
+}
+
+.defect-workflow__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.defect-workflow__item {
+  border: 1px solid #e4e7ef;
+  border-radius: 12px;
+  padding: 16px;
+  background-color: #f9fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.defect-workflow__item-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.defect-workflow__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #6366f1;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 13px;
+  align-self: flex-start;
+}
+
+.defect-workflow__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a5568;
+}
+
+.defect-workflow__original {
+  margin: 0;
+  font-size: 14px;
+  color: #1f2937;
+  white-space: pre-wrap;
+}
+
+.defect-workflow__item textarea {
+  resize: vertical;
+  min-height: 96px;
+  border-radius: 12px;
+  border: 1px solid #d1d9e6;
+  padding: 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1f2937;
+}
+
+.defect-workflow__item textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.defect-workflow__attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.defect-workflow__attachment-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: #4a5568;
+}
+
+.defect-workflow__attachment-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.defect-workflow__attachment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #dce3ef;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.defect-workflow__remove {
+  border: none;
+  background: none;
+  color: #d0342c;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.defect-workflow__remove:hover {
+  text-decoration: underline;
+}
+
+.defect-workflow__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.defect-workflow__buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.defect-workflow__secondary {
+  border-radius: 999px;
+  border: 1px solid #cbd5f5;
+  padding: 12px 24px;
+  background: #f8f9ff;
+  color: #3b82f6;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.defect-workflow__secondary:hover {
+  background: #eef2ff;
+}
+
+.defect-workflow__result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .defect-workflow__section {
+    padding: 20px;
+  }
+
+  .defect-workflow__item {
+    padding: 14px;
+  }
+
+  .defect-workflow__buttons {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
