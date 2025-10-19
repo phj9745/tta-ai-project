@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 
 import { FileUploader } from './FileUploader'
@@ -205,6 +205,8 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
   const [rewriteStatus, setRewriteStatus] = useState<AsyncStatus>('idle')
   const [rewriteError, setRewriteError] = useState<string | null>(null)
   const [rewriteInput, setRewriteInput] = useState('')
+  const previewSectionRef = useRef<HTMLElement | null>(null)
+  const previousRowCountRef = useRef(0)
 
   useEffect(() => {
     return () => {
@@ -213,6 +215,19 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
       }
     }
   }, [downloadUrl])
+
+  useEffect(() => {
+    const previousCount = previousRowCountRef.current
+    if (tableRows.length > 0 && previousCount === 0) {
+      if (!selectedCell) {
+        setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
+      }
+      if (previewSectionRef.current) {
+        previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    }
+    previousRowCountRef.current = tableRows.length
+  }, [selectedCell, tableRows])
 
   const handleChangeSource = useCallback((files: File[]) => {
     setSourceFiles(files.slice(0, 1))
@@ -513,7 +528,11 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
 
       const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
       if (encodedTable) {
-        setTableRows(buildRowsFromCsv(encodedTable))
+        const rows = buildRowsFromCsv(encodedTable)
+        setTableRows(rows)
+        if (rows.length > 0) {
+          setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
+        }
       }
 
       const objectUrl = URL.createObjectURL(blob)
@@ -711,7 +730,11 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
 
       const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
       if (encodedTable) {
-        setTableRows(buildRowsFromCsv(encodedTable))
+        const rows = buildRowsFromCsv(encodedTable)
+        setTableRows(rows)
+        if (!selectedCell && rows.length > 0) {
+          setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
+        }
       }
 
       if (downloadUrl) {
@@ -738,7 +761,7 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
       setDownloadError(messageText)
       setDownloadStatus('error')
     }
-  }, [attachments, backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, tableRows])
+  }, [attachments, backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, selectedCell, tableRows])
 
   const selectedRowIndex = selectedCell?.rowIndex ?? -1
   const selectedRow = selectedRowIndex >= 0 ? tableRows[selectedRowIndex] : null
@@ -749,38 +772,46 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
 
   return (
     <div className="defect-workflow">
-      <section className="defect-workflow__section" aria-labelledby="defect-upload">
-        <h2 id="defect-upload" className="defect-workflow__title">
-          1. 결함 메모 업로드
-        </h2>
-        <p className="defect-workflow__helper">숫자 목록(1. 2. …) 형태의 TXT 파일을 업로드한 뒤 결함 문장을 정제하세요.</p>
-        <FileUploader
-          allowedTypes={TXT_ONLY}
-          files={sourceFiles}
-          onChange={handleChangeSource}
-          multiple={false}
-          maxFiles={1}
-          hideDropzoneWhenFilled={false}
-        />
-        <div className="defect-workflow__actions">
-          <button
-            type="button"
-            className="defect-workflow__primary"
-            onClick={handleFormalize}
-            disabled={formalizeStatus === 'loading'}
-          >
-            {formalizeStatus === 'loading' ? '정제 중…' : '결함 문장 다듬기'}
-          </button>
-          {formalizeStatus === 'error' && formalizeError && (
-            <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-              {formalizeError}
-            </p>
-          )}
-          {formalizeStatus === 'success' && (
-            <p className="defect-workflow__status defect-workflow__status--success">결함 문장이 정제되었습니다.</p>
-          )}
-        </div>
-      </section>
+      {formalizeStatus !== 'success' ? (
+        <section className="defect-workflow__section" aria-labelledby="defect-upload">
+          <h2 id="defect-upload" className="defect-workflow__title">
+            1. 결함 메모 업로드
+          </h2>
+          <p className="defect-workflow__helper">숫자 목록(1. 2. …) 형태의 TXT 파일을 업로드한 뒤 결함 문장을 정제하세요.</p>
+          <FileUploader
+            allowedTypes={TXT_ONLY}
+            files={sourceFiles}
+            onChange={handleChangeSource}
+            multiple={false}
+            maxFiles={1}
+            hideDropzoneWhenFilled={false}
+          />
+          <div className="defect-workflow__actions">
+            <button
+              type="button"
+              className="defect-workflow__primary"
+              onClick={handleFormalize}
+              disabled={formalizeStatus === 'loading'}
+            >
+              {formalizeStatus === 'loading' ? '정제 중…' : '결함 문장 다듬기'}
+            </button>
+            {formalizeStatus === 'error' && formalizeError && (
+              <p className="defect-workflow__status defect-workflow__status--error" role="alert">
+                {formalizeError}
+              </p>
+            )}
+          </div>
+        </section>
+      ) : (
+        <section className="defect-workflow__section" aria-labelledby="defect-upload">
+          <h2 id="defect-upload" className="defect-workflow__title">
+            1. 결함 메모 업로드
+          </h2>
+          <p className="defect-workflow__status defect-workflow__status--success" role="status">
+            결함 문장이 정제되었습니다. 아래 단계에서 검토를 계속하세요. 새 TXT 파일을 업로드하려면 초기화 버튼을 눌러주세요.
+          </p>
+        </section>
+      )}
       {defects.length > 0 && (
         <section className="defect-workflow__section" aria-labelledby="defect-review">
           <h2 id="defect-review" className="defect-workflow__title">
@@ -845,7 +876,11 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
       )}
 
       {tableRows.length > 0 && (
-        <section className="defect-workflow__section" aria-labelledby="defect-preview">
+        <section
+          className="defect-workflow__section"
+          aria-labelledby="defect-preview"
+          ref={previewSectionRef}
+        >
           <h2 id="defect-preview" className="defect-workflow__title">
             3. 결함 리포트 미리보기 및 편집
           </h2>
