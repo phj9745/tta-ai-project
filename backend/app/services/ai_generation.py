@@ -11,6 +11,7 @@ import os
 import re
 import zipfile
 from pathlib import Path
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal
@@ -45,6 +46,8 @@ class GeneratedCsv:
     filename: str
     content: bytes
     csv_text: str
+    defect_summary: List["DefectSummaryEntry"] | None = None
+    defect_images: Dict[int, List[BufferedUpload]] | None = None
 
 
 @dataclass
@@ -66,6 +69,20 @@ class NormalizedDefect:
     index: int
     original_text: str
     polished_text: str
+
+
+@dataclass(frozen=True)
+class DefectSummaryAttachment:
+    file_name: str
+    original_file_name: str | None = None
+
+
+@dataclass(frozen=True)
+class DefectSummaryEntry:
+    index: int
+    original_text: str
+    polished_text: str
+    attachments: List[DefectSummaryAttachment]
 
 logger = logging.getLogger(__name__)
 
@@ -665,6 +682,10 @@ class AIGenerationService:
             buffered, metadata_entries
         )
 
+        defect_prompt_section: str | None = None
+        defect_summary_entries: List[DefectSummaryEntry] | None = None
+        defect_image_map: Dict[int, List[BufferedUpload]] = {}
+
         contexts: List[UploadContext] = []
         for index, upload in enumerate(buffered):
             entry = metadata_entries[index] if index < len(metadata_entries) else None
@@ -673,6 +694,14 @@ class AIGenerationService:
         contexts.extend(
             self._builtin_attachment_contexts(menu_id, prompt_config.builtin_contexts)
         )
+
+        if menu_id == "defect-report":
+            (
+                contexts,
+                defect_prompt_section,
+                defect_summary_entries,
+                defect_image_map,
+            ) = self._prepare_defect_report_contexts(contexts)
 
         client = self._get_client()
         uploaded_file_records: List[tuple[str, bool]] = []
@@ -739,6 +768,9 @@ class AIGenerationService:
                     user_prompt_parts.append(f"{label}\n{content}")
                 elif label or content:
                     user_prompt_parts.append(label or content)
+
+            if defect_prompt_section:
+                user_prompt_parts.append(defect_prompt_section)
 
             if contexts:
                 heading = prompt_config.scaffolding.attachments_heading.strip()
@@ -894,7 +926,13 @@ class AIGenerationService:
             safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
             filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
 
-            return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
+            return GeneratedCsv(
+                filename=filename,
+                content=encoded,
+                csv_text=sanitized,
+                defect_summary=defect_summary_entries,
+                defect_images=dict(defect_image_map) if defect_image_map else None,
+            )
         finally:
             if uploaded_file_records:
                 await self._cleanup_openai_files(client, uploaded_file_records)
@@ -1023,6 +1061,123 @@ class AIGenerationService:
 
         encoded = base64.b64encode(upload.content).decode("ascii")
         return f"data:{media_type};base64,{encoded}"
+
+    def _prepare_defect_report_contexts(
+        self, contexts: List[UploadContext]
+    ) -> tuple[
+        List[UploadContext],
+        str | None,
+        List[DefectSummaryEntry] | None,
+        Dict[int, List[BufferedUpload]],
+    ]:
+        summary_entries: List[DefectSummaryEntry] | None = None
+        prompt_section: str | None = None
+        image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
+        filtered_contexts: List[UploadContext] = []
+
+        for context in contexts:
+            metadata = context.metadata or {}
+            upload = context.upload
+            defect_index_value = metadata.get("defect_index")
+            if defect_index_value is not None:
+                try:
+                    defect_index = int(defect_index_value)
+                except (TypeError, ValueError):
+                    defect_index = None
+                else:
+                    if self._attachment_kind(upload) == "image":
+                        image_map[defect_index].append(upload)
+
+            is_json_upload = upload.name.lower().endswith(".json") or (
+                (upload.content_type or "").split(";")[0].lower() == "application/json"
+            )
+
+            if is_json_upload:
+                if summary_entries is None:
+                    parsed = self._parse_defect_summary_upload(upload)
+                    if parsed:
+                        summary_entries = parsed
+                        prompt_section = self._format_defect_prompt_section(parsed)
+                continue
+
+            filtered_contexts.append(context)
+
+        return filtered_contexts, prompt_section, summary_entries, image_map
+
+    @staticmethod
+    def _parse_defect_summary_upload(upload: BufferedUpload) -> List[DefectSummaryEntry]:
+        try:
+            decoded = upload.content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            decoded = upload.content.decode("utf-8", errors="ignore")
+
+        try:
+            payload = json.loads(decoded)
+        except json.JSONDecodeError:
+            return []
+
+        defects = payload.get("defects") if isinstance(payload, dict) else None
+        if not isinstance(defects, list):
+            return []
+
+        entries: List[DefectSummaryEntry] = []
+        for item in defects:
+            if not isinstance(item, dict):
+                continue
+            index_value = item.get("index")
+            polished_text = item.get("polishedText")
+            if not isinstance(index_value, int) or not isinstance(polished_text, str):
+                continue
+            original_text = item.get("originalText")
+            if not isinstance(original_text, str):
+                original_text = ""
+
+            attachments_raw = item.get("attachments")
+            attachments: List[DefectSummaryAttachment] = []
+            if isinstance(attachments_raw, list):
+                for attachment in attachments_raw:
+                    if not isinstance(attachment, dict):
+                        continue
+                    file_name = attachment.get("fileName")
+                    original_name = attachment.get("originalFileName")
+                    if isinstance(file_name, str) and file_name.strip():
+                        attachments.append(
+                            DefectSummaryAttachment(
+                                file_name=file_name.strip(),
+                                original_file_name=original_name
+                                if isinstance(original_name, str)
+                                else None,
+                            )
+                        )
+
+            entries.append(
+                DefectSummaryEntry(
+                    index=index_value,
+                    original_text=original_text.strip(),
+                    polished_text=polished_text.strip(),
+                    attachments=attachments,
+                )
+            )
+
+        return entries
+
+    @staticmethod
+    def _format_defect_prompt_section(entries: List[DefectSummaryEntry]) -> str | None:
+        if not entries:
+            return None
+
+        lines: List[str] = ["정제된 결함 목록", ""]
+        for entry in sorted(entries, key=lambda item: item.index):
+            polished = entry.polished_text or "-"
+            lines.append(f"{entry.index}. {polished}")
+            if entry.original_text:
+                lines.append(f"   - 원문: {entry.original_text}")
+            if entry.attachments:
+                names = ", ".join(att.file_name for att in entry.attachments)
+                lines.append(f"   - 첨부 이미지: {names}")
+            lines.append("")
+
+        return "\n".join(line for line in lines if line is not None).strip()
 
     def _builtin_attachment_contexts(
         self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]

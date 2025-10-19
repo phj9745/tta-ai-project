@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..dependencies import get_ai_generation_service, get_drive_service
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
-from ..services.excel_templates import populate_defect_report
+from ..services.excel_templates import DefectReportImage, populate_defect_report
 
 router = APIRouter()
 
@@ -299,8 +299,40 @@ async def generate_project_asset(
         except FileNotFoundError as exc:  # pragma: no cover - unexpected
             raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 읽을 수 없습니다.") from exc
 
+        image_map: Dict[int, List[DefectReportImage]] = {}
+        if result.defect_images:
+            for defect_index, uploads in result.defect_images.items():
+                images: List[DefectReportImage] = []
+                for upload in uploads:
+                    images.append(
+                        DefectReportImage(
+                            file_name=upload.name,
+                            content=upload.content,
+                            content_type=upload.content_type,
+                        )
+                    )
+                if not images:
+                    continue
+                try:
+                    normalized_index = int(defect_index)
+                except (TypeError, ValueError):
+                    continue
+                image_map[normalized_index] = images
+
+        attachment_notes: Dict[int, List[str]] = {}
+        if result.defect_summary:
+            for entry in result.defect_summary:
+                names = [att.file_name for att in entry.attachments if att.file_name]
+                if names:
+                    attachment_notes[entry.index] = names
+
         try:
-            workbook_bytes = populate_defect_report(template_bytes, result.csv_text)
+            workbook_bytes = populate_defect_report(
+                template_bytes,
+                result.csv_text,
+                images=image_map,
+                attachment_notes=attachment_notes,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
