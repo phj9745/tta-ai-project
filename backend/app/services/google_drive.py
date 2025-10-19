@@ -752,6 +752,103 @@ class GoogleDriveService:
 
         return match.group(0)
 
+    async def download_project_file_by_suffix(
+        self,
+        *,
+        project_id: str,
+        suffix: str,
+        google_id: Optional[str],
+        mime_type: Optional[str] = XLSX_MIME_TYPE,
+    ) -> Tuple[Dict[str, Any], bytes]:
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        file_entry, active_tokens = await self._find_file_by_suffix(
+            active_tokens,
+            parent_id=project_id,
+            suffix=suffix,
+            mime_type=mime_type,
+        )
+        if file_entry is None or not file_entry.get("id"):
+            raise HTTPException(status_code=404, detail=f"프로젝트에서 '{suffix}' 파일을 찾지 못했습니다.")
+
+        file_id = str(file_entry["id"])
+        metadata_fields = "id,name,mimeType,parents"
+        metadata, active_tokens = await self._drive_request(
+            active_tokens,
+            method="GET",
+            path=f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+            params={"fields": metadata_fields},
+        )
+        if not isinstance(metadata, dict):
+            raise HTTPException(status_code=500, detail="파일 정보를 확인하지 못했습니다. 다시 시도해주세요.")
+
+        content, _ = await self._download_file_content(
+            active_tokens,
+            file_id=file_id,
+            mime_type=metadata.get("mimeType"),
+        )
+        return metadata, content
+
+    async def upload_file_to_folder(
+        self,
+        *,
+        parent_id: str,
+        file_name: str,
+        content: bytes,
+        google_id: Optional[str],
+        content_type: str = XLSX_MIME_TYPE,
+    ) -> Dict[str, Any]:
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+        upload_result, _ = await self._upload_file_to_folder(
+            active_tokens,
+            file_name=file_name,
+            parent_id=parent_id,
+            content=content,
+            content_type=content_type,
+        )
+        return upload_result
+
+    async def ensure_project_subfolder(
+        self,
+        *,
+        project_id: str,
+        path: Sequence[str],
+        google_id: Optional[str],
+    ) -> str:
+        """
+        Ensure nested subfolders exist under the given project and return the final folder id.
+        """
+        if not path:
+            return project_id
+
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        current_id = project_id
+        for name in path:
+            folder, active_tokens = await self._find_child_folder_by_name(
+                active_tokens,
+                parent_id=current_id,
+                name=name,
+            )
+            if folder is None:
+                folder, active_tokens = await self._create_child_folder(
+                    active_tokens,
+                    name=name,
+                    parent_id=current_id,
+                )
+            folder_id = folder.get("id")
+            if not folder_id:
+                raise HTTPException(status_code=500, detail=f"Google Drive 폴더 정보를 확인하지 못했습니다: {name}")
+            current_id = str(folder_id)
+
+        return current_id
+
     async def _ensure_shared_criteria_file(
         self,
         tokens: StoredTokens,

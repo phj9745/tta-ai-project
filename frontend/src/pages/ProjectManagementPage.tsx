@@ -27,6 +27,7 @@ interface AdditionalFileEntry {
 type FileMetadataEntry =
   | { role: 'required'; id: string; label: string }
   | { role: 'additional'; description: string }
+  | { filename: string; os: string | null }
 
 interface MenuItemContent {
   id: MenuItemId
@@ -43,9 +44,15 @@ interface MenuItemContent {
   hideDropzoneWhenFilled?: boolean
 }
 
-type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
+type GenerationStatus = 'idle' | 'loading' | 'success' | 'error' | 'select-os'
 
 const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
+const OS_OPTIONS = ['Windows', 'Linux', 'Android', 'iOS'] as const
+
+interface PendingOsEntry {
+  index: number
+  filename: string
+}
 
 interface ItemState {
   files: File[]
@@ -55,6 +62,8 @@ interface ItemState {
   errorMessage: string | null
   downloadUrl: string | null
   downloadName: string | null
+  osSelection: Record<number, string | null>
+  pendingOs: PendingOsEntry[]
 }
 
 function createItemState(item?: MenuItemContent): ItemState {
@@ -73,6 +82,8 @@ function createItemState(item?: MenuItemContent): ItemState {
     errorMessage: null,
     downloadUrl: null,
     downloadName: null,
+    osSelection: {},
+    pendingOs: [],
   }
 }
 
@@ -200,12 +211,13 @@ const MENU_ITEMS: MenuItemContent[] = [
     eyebrow: '성능 평가',
     title: '성능 평가 리포트 완성하기',
     description:
-      '벤치마크 결과나 모니터링 데이터를 업로드하면 성능 분석 리포트를 구조화해 드립니다.',
-    helper: '성능 측정 결과 표, CSV 데이터, 스크린샷 등을 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
+      '벤치마크 결과나 모니터링 Rawdata를 업로드하면 운영체제별 시트를 자동으로 구성해 드립니다.',
+    helper:
+      'Perfmon CSV 또는 vmstat TXT 등 Rawdata 파일을 여러 개 업로드해 주세요. 운영체제는 자동으로 판별됩니다.',
     buttonLabel: '성능평가 리포트 생성하기',
-    allowedTypes: ['pdf', 'csv', 'txt'],
-    maxFiles: 1,
-    hideDropzoneWhenFilled: true,
+    allowedTypes: ['csv', 'txt'],
+    maxFiles: 10,
+    hideDropzoneWhenFilled: false,
   },
 ]
 
@@ -253,6 +265,17 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
   const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
+  const downloadLabel = useMemo(() => {
+    const name = activeState.downloadName
+    if (!name) {
+      return '파일 다운로드'
+    }
+    const extension = name.split('.').pop()
+    if (!extension) {
+      return '파일 다운로드'
+    }
+    return `${extension.toUpperCase()} 다운로드`
+  }, [activeState.downloadName])
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -278,6 +301,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             errorMessage: null,
             downloadUrl: null,
             downloadName: null,
+            osSelection: {},
+            pendingOs: [],
           },
         }
       })
@@ -418,12 +443,53 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     [releaseDownloadUrl],
   )
 
+  const handleSetOsSelection = useCallback((id: MenuItemId, index: number, value: string) => {
+    setItemStates((prev) => {
+      const current = prev[id]
+      if (!current) {
+        return prev
+      }
+
+      const nextSelection = {
+        ...current.osSelection,
+        [index]: value ? value : null,
+      }
+
+      return {
+        ...prev,
+        [id]: {
+          ...current,
+          osSelection: nextSelection,
+          errorMessage: null,
+        },
+      }
+    })
+  }, [])
+
   const handleGenerate = useCallback(
     async (id: MenuItemId) => {
       const current = itemStates[id]
       const menu = menuById[id] ?? MENU_ITEMS[0]
       if (!current || current.status === 'loading') {
         return
+      }
+
+      if (id === 'performance-report' && current.pendingOs.length > 0) {
+        const hasMissingSelection = current.pendingOs.some(({ index }) => {
+          const selection = current.osSelection[index]
+          return !selection
+        })
+        if (hasMissingSelection) {
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: {
+              ...current,
+              status: 'select-os',
+              errorMessage: '모든 Rawdata 파일의 운영체제를 선택해 주세요.',
+            },
+          }))
+          return
+        }
       }
 
       const requiredDocs = menu?.requiredDocuments ?? []
@@ -491,6 +557,15 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         return
       }
 
+      if (id === 'performance-report') {
+        uploads = current.files
+        const osMetadata = uploads.map<FileMetadataEntry>((file, index) => ({
+          filename: file.name,
+          os: current.osSelection[index] ?? null,
+        }))
+        metadataEntries.splice(0, metadataEntries.length, ...osMetadata)
+      }
+
       setItemStates((prev) => ({
         ...prev,
         [id]: {
@@ -524,28 +599,102 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         )
 
         if (!response.ok) {
-          let detail = '자료를 생성하는 중 오류가 발생했습니다.'
+          let message = '자료를 생성하는 중 오류가 발생했습니다.'
+          let osRequirement: PendingOsEntry[] | null = null
           try {
             const payload = (await response.json()) as { detail?: unknown }
-            if (payload && typeof payload.detail === 'string') {
-              detail = payload.detail
+            const detail = payload?.detail
+            if (typeof detail === 'string') {
+              message = detail
+            } else if (detail && typeof detail === 'object') {
+              const anyDetail = detail as Record<string, unknown>
+              if (typeof anyDetail.message === 'string') {
+                message = anyDetail.message
+              }
+              if (anyDetail.code === 'os_selection_required' && Array.isArray(anyDetail.files)) {
+                const parsed = (anyDetail.files as unknown[]).map((entry) => {
+                  if (!entry || typeof entry !== 'object') {
+                    return null
+                  }
+                  const fileEntry = entry as Record<string, unknown>
+                  const index = typeof fileEntry.index === 'number' ? fileEntry.index : null
+                  const filename = typeof fileEntry.filename === 'string' ? fileEntry.filename : null
+                  if (index === null) {
+                    return null
+                  }
+                  return {
+                    index,
+                    filename: filename ?? `Rawdata ${index + 1}`,
+                  }
+                })
+                osRequirement = parsed.filter((entry): entry is PendingOsEntry => entry !== null)
+              }
             }
           } catch {
             const text = await response.text()
             if (text) {
-              detail = text
+              message = text
             }
           }
 
           if (!controller.signal.aborted) {
-            setItemStates((prev) => ({
-              ...prev,
-              [id]: {
-                ...prev[id],
-                status: 'error',
-                errorMessage: detail,
-              },
-            }))
+            if (id === 'performance-report' && osRequirement && osRequirement.length > 0) {
+              setItemStates((prev) => {
+                const currentState = prev[id]
+                if (!currentState) {
+                  return prev
+                }
+
+                const validPending = osRequirement
+                  .filter(({ index }) => index >= 0 && index < currentState.files.length)
+
+                if (validPending.length === 0) {
+                  return {
+                    ...prev,
+                    [id]: {
+                      ...currentState,
+                      status: 'error',
+                      errorMessage: message,
+                    },
+                  }
+                }
+
+                const nextSelection: Record<number, string | null> = {
+                  ...currentState.osSelection,
+                }
+                validPending.forEach(({ index }) => {
+                  if (!(index in nextSelection)) {
+                    nextSelection[index] = null
+                  }
+                })
+
+                if (currentState.downloadUrl) {
+                  releaseDownloadUrl(id, currentState.downloadUrl)
+                }
+
+                return {
+                  ...prev,
+                  [id]: {
+                    ...currentState,
+                    status: 'select-os',
+                    errorMessage: message,
+                    downloadUrl: null,
+                    downloadName: null,
+                    pendingOs: validPending,
+                    osSelection: nextSelection,
+                  },
+                }
+              })
+            } else {
+              setItemStates((prev) => ({
+                ...prev,
+                [id]: {
+                  ...prev[id],
+                  status: 'error',
+                  errorMessage: message,
+                },
+              }))
+            }
           }
           return
         }
@@ -557,7 +706,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
         const disposition = response.headers.get('content-disposition')
         const parsedName = parseFileNameFromDisposition(disposition)
-        const safeName = sanitizeFileName(parsedName ?? `${id}-result.csv`)
+        const defaultName = id === 'performance-report' ? 'performance-report.xlsx' : `${id}-result.csv`
+        const safeName = sanitizeFileName(parsedName ?? defaultName)
         const objectUrl = URL.createObjectURL(blob)
 
         setItemStates((prev) => {
@@ -789,6 +939,38 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
                     variant={activeContent.uploaderVariant}
                   />
+                  {activeContent.id === 'performance-report' && activeState.pendingOs.length > 0 && (
+                    <div className="project-management-content__section">
+                      <h3>운영체제 선택</h3>
+                      <p className="project-management-content__helper">
+                        자동으로 판별하지 못한 Rawdata 파일입니다. 각 파일에 해당하는 운영체제를 선택해 주세요.
+                      </p>
+                      <ul className="project-management-required__list">
+                        {activeState.pendingOs.map(({ index, filename }) => {
+                          const file = activeState.files[index]
+                          const displayName = file?.name ?? filename
+                          const selection = activeState.osSelection[index] ?? ''
+                          return (
+                            <li key={`${displayName}-${index}`} className="project-management-required__item">
+                              <span className="project-management-required__label">{displayName}</span>
+                              <select
+                                value={selection}
+                                onChange={(event) => handleSetOsSelection(activeContent.id, index, event.target.value)}
+                                disabled={activeState.status === 'loading'}
+                              >
+                                <option value="">운영체제 선택</option>
+                                {OS_OPTIONS.map((option) => (
+                                  <option key={option} value={option}>
+                                    {option}
+                                  </option>
+                                ))}
+                              </select>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </section>
               )}
             </>
@@ -820,7 +1002,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               </div>
             )}
 
-            {activeState.status === 'error' && (
+            {(activeState.status === 'error' || (activeState.status === 'select-os' && activeState.errorMessage)) && (
               <div className="project-management-content__status project-management-content__status--error" role="alert">
                 {activeState.errorMessage}
               </div>
@@ -833,7 +1015,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                   className="project-management-content__button project-management-content__download"
                   download={activeState.downloadName ?? undefined}
                 >
-                  CSV 다운로드
+                  {downloadLabel}
                 </a>
                 <button
                   type="button"

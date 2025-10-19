@@ -6,6 +6,7 @@ from .services.prompt_config import PromptConfigService
 from .services.prompt_request_log import PromptRequestLogService
 from .services.google_drive import GoogleDriveService
 from .services.oauth import GoogleOAuthService
+from .services.performance_report import PerformanceReportService
 from .services.security_report import SecurityReportService
 from .token_store import TokenStorage
 from openai import OpenAI
@@ -36,6 +37,7 @@ class Container:
             self._prompt_request_log_service,
             openai_client,
         )
+        self._performance_report_service = PerformanceReportService(self._drive_service)
 
     @property
     def settings(self) -> Settings:
@@ -68,3 +70,7 @@ class Container:
     @property
     def security_report_service(self) -> SecurityReportService:
         return self._security_report_service
+
+    @property
+    def performance_report_service(self) -> PerformanceReportService:
+        return self._performance_report_service

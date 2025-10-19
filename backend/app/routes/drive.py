@@ -12,10 +12,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from ..dependencies import (
     get_ai_generation_service,
     get_drive_service,
+    get_performance_report_service,
     get_security_report_service,
 )
 from ..services.ai_generation import AIGenerationService
-from ..services.google_drive import GoogleDriveService
+from ..services.google_drive import GoogleDriveService, XLSX_MIME_TYPE
+from ..services.performance_report import PerformanceReportService
 from ..services.security_report import SecurityReportService
 
 router = APIRouter()
@@ -121,6 +123,7 @@ async def generate_project_asset(
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     drive_service: GoogleDriveService = Depends(get_drive_service),
     security_report_service: SecurityReportService = Depends(get_security_report_service),
+    performance_report_service: PerformanceReportService = Depends(get_performance_report_service),
 ) -> StreamingResponse:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -170,6 +173,39 @@ async def generate_project_asset(
         }
 
         return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
+
+    if menu_id == "performance-report":
+        if not uploads:
+            raise HTTPException(status_code=422, detail="Rawdata 파일을 업로드해 주세요.")
+
+        os_hints: List[Optional[str]]
+        if metadata_entries:
+            os_hints = []
+            for entry in metadata_entries[: len(uploads)]:
+                if isinstance(entry, dict):
+                    value = entry.get("os")
+                    if isinstance(value, str):
+                        os_hints.append(value)
+                    else:
+                        os_hints.append(None)
+                else:
+                    os_hints.append(None)
+            if len(os_hints) < len(uploads):
+                os_hints.extend([None] * (len(uploads) - len(os_hints)))
+        else:
+            os_hints = [None] * len(uploads)
+
+        workbook = await performance_report_service.generate_report(
+            project_id=project_id,
+            uploads=uploads,
+            google_id=google_id,
+            os_hints=os_hints,
+        )
+        headers = {
+            "Content-Disposition": _build_attachment_header(workbook.filename),
+            "Cache-Control": "no-store",
+        }
+        return StreamingResponse(io.BytesIO(workbook.content), media_type=XLSX_MIME_TYPE, headers=headers)
 
     required_docs = _REQUIRED_MENU_DOCUMENTS.get(menu_id, [])
     if required_docs:
