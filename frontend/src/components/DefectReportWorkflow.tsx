@@ -368,28 +368,12 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
       return nextMap
     })
   }, [])
-  const handleReset = useCallback(() => {
-    setSourceFiles([])
-    setFormalizeStatus('idle')
-    setFormalizeError(null)
-    setDefects([])
-    setAttachments({})
-    setGenerateStatus('idle')
-    setGenerateError(null)
-    setDownloadName(null)
-    if (downloadUrl) {
-      URL.revokeObjectURL(downloadUrl)
-      setDownloadUrl(null)
+  useEffect(() => {
+    return () => {
+      if (downloadUrl) {
+        URL.revokeObjectURL(downloadUrl)
+      }
     }
-    setTableRows([])
-    setIsTableDirty(false)
-    setDownloadStatus('idle')
-    setDownloadError(null)
-    setSelectedCell(null)
-    setRewriteMessages([])
-    setRewriteStatus('idle')
-    setRewriteError(null)
-    setRewriteInput('')
   }, [downloadUrl])
 
   const canGenerate = defects.length > 0 && formalizeStatus === 'success'
@@ -785,7 +769,7 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
 
   return (
     <div className="defect-workflow">
-      {formalizeStatus !== 'success' ? (
+      {formalizeStatus !== 'success' && (
         <section className="defect-workflow__section" aria-labelledby="defect-upload">
           <h2 id="defect-upload" className="defect-workflow__title">
             1. 결함 메모 업로드
@@ -814,15 +798,6 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
               </p>
             )}
           </div>
-        </section>
-      ) : (
-        <section className="defect-workflow__section" aria-labelledby="defect-upload">
-          <h2 id="defect-upload" className="defect-workflow__title">
-            1. 결함 메모 업로드
-          </h2>
-          <p className="defect-workflow__status defect-workflow__status--success" role="status">
-            결함 문장이 정제되었습니다. 아래 단계에서 검토를 계속하세요. 새 TXT 파일을 업로드하려면 초기화 버튼을 눌러주세요.
-          </p>
         </section>
       )}
       {defects.length > 0 && !shouldHideReviewStep && (
@@ -1051,9 +1026,6 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
               {isGenerating ? '리포트 생성 중…' : '결함 리포트 생성'}
             </button>
           )}
-          <button type="button" className="defect-workflow__secondary" onClick={handleReset}>
-            초기화
-          </button>
         </div>
 
         {generateStatus === 'error' && generateError && (

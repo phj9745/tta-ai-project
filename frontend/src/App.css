@@ -1825,6 +1825,7 @@
   font-size: 14px;
   font-family: inherit;
   color: #1f2937;
+  width: 100%;
 }
 
 .defect-workflow__item textarea:focus {
@@ -1916,11 +1917,13 @@
 .defect-workflow__preview {
   display: flex;
   gap: 24px;
-  align-items: flex-start;
+  align-items: stretch;
+  width: 100%;
 }
 
 .defect-workflow__table-wrapper {
-  flex: 1 1 60%;
+  flex: 1 1 0;
+  min-width: 0;
   max-height: 460px;
   overflow: auto;
   border: 1px solid #e4e7ef;
