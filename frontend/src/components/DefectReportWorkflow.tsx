@@ -216,6 +216,33 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
     }
   }, [downloadUrl])
 
+  const handleReset = useCallback(() => {
+    if (downloadUrl) {
+      URL.revokeObjectURL(downloadUrl)
+    }
+
+    previousRowCountRef.current = 0
+
+    setSourceFiles([])
+    setFormalizeStatus('idle')
+    setFormalizeError(null)
+    setDefects([])
+    setAttachments({})
+    setGenerateStatus('idle')
+    setGenerateError(null)
+    setDownloadUrl(null)
+    setDownloadName(null)
+    setTableRows([])
+    setIsTableDirty(false)
+    setDownloadStatus('idle')
+    setDownloadError(null)
+    setSelectedCell(null)
+    setRewriteMessages([])
+    setRewriteStatus('idle')
+    setRewriteError(null)
+    setRewriteInput('')
+  }, [downloadUrl])
+
   useEffect(() => {
     const previousCount = previousRowCountRef.current
     if (tableRows.length > 0 && previousCount === 0) {
@@ -382,6 +409,24 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
   const hasPreviewRows = tableRows.length > 0
   const shouldHideReviewStep = isGenerating || isGenerated || hasPreviewRows
   const shouldShowPreviewSection = hasPreviewRows || isGenerating || isGenerated
+  const hasSource = sourceFiles.length > 0
+  const hasAttachments = Object.keys(attachments).length > 0
+  const hasDownload = Boolean(downloadUrl) || Boolean(downloadName)
+  const hasProgress =
+    hasSource ||
+    defects.length > 0 ||
+    hasAttachments ||
+    hasPreviewRows ||
+    isGenerating ||
+    isGenerated ||
+    isTableDirty ||
+    rewriteMessages.length > 0 ||
+    hasDownload
+  const isResetDisabled =
+    formalizeStatus === 'loading' || generateStatus === 'loading' || downloadStatus === 'loading'
+  const showResetInUpload = hasProgress && formalizeStatus !== 'success'
+  const showResetInReview = hasProgress && formalizeStatus === 'success' && !shouldHideReviewStep
+  const showResetInPreview = hasProgress && shouldShowPreviewSection
 
   const applyCellUpdate = useCallback(
     (rowIndex: number, columnKey: string, value: string) => {
@@ -792,6 +837,16 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
             >
               {formalizeStatus === 'loading' ? '정제 중…' : '결함 문장 다듬기'}
             </button>
+            {showResetInUpload && (
+              <button
+                type="button"
+                className="defect-workflow__secondary"
+                onClick={handleReset}
+                disabled={isResetDisabled}
+              >
+                초기화
+              </button>
+            )}
             {formalizeStatus === 'error' && formalizeError && (
               <p className="defect-workflow__status defect-workflow__status--error" role="alert">
                 {formalizeError}
@@ -802,9 +857,23 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
       )}
       {defects.length > 0 && !shouldHideReviewStep && (
         <section className="defect-workflow__section" aria-labelledby="defect-review">
-          <h2 id="defect-review" className="defect-workflow__title">
-            2. 결함 검토 및 증적 첨부
-          </h2>
+          <div className="defect-workflow__section-heading">
+            <h2 id="defect-review" className="defect-workflow__title">
+              2. 결함 검토 및 증적 첨부
+            </h2>
+            {showResetInReview && (
+              <div className="defect-workflow__section-actions">
+                <button
+                  type="button"
+                  className="defect-workflow__secondary"
+                  onClick={handleReset}
+                  disabled={isResetDisabled}
+                >
+                  초기화
+                </button>
+              </div>
+            )}
+          </div>
           <p className="defect-workflow__helper">필요 시 문장을 수정하고 결함별 증빙 이미지를 첨부한 뒤 리포트를 생성하세요.</p>
           <ol className="defect-workflow__list">
             {defects.map((item) => {
@@ -869,9 +938,23 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
           aria-labelledby="defect-preview"
           ref={previewSectionRef}
         >
-          <h2 id="defect-preview" className="defect-workflow__title">
-            3. 결함 리포트 미리보기 및 편집
-          </h2>
+          <div className="defect-workflow__section-heading">
+            <h2 id="defect-preview" className="defect-workflow__title">
+              3. 결함 리포트 미리보기 및 편집
+            </h2>
+            {showResetInPreview && (
+              <div className="defect-workflow__section-actions">
+                <button
+                  type="button"
+                  className="defect-workflow__secondary"
+                  onClick={handleReset}
+                  disabled={isResetDisabled}
+                >
+                  초기화
+                </button>
+              </div>
+            )}
+          </div>
           <p className="defect-workflow__helper">
             생성된 표를 확인하고 수정할 칸을 선택하세요. 오른쪽 패널에서 직접 편집하거나 GPT에게 수정 요청을 보낼 수 있습니다.
           </p>
