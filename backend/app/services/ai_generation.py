@@ -309,10 +309,10 @@ class AIGenerationService:
 
         user_prompt = (
             "다음 결함 설명을 공문서에 맞는 문장으로 다듬어 주세요.\n"
-            "- 결과는 JSON 배열로 출력합니다.\n"
-            "- 각 객체에는 index(정수)와 polished_text(문자열) 속성이 있어야 합니다.\n"
-            "- polished_text에는 존댓말 어미를 사용하고 한 문단으로 정리합니다.\n"
-            "- JSON 이외의 문장은 출력하지 마세요.\n\n"
+            "- 결과는 입력 순서를 유지한 번호 매기기 형식으로 작성하세요.\n"
+            "- 각 줄은 '번호. 정제된 문장' 형태여야 합니다.\n"
+            "- 존댓말 어미를 사용하고 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
+            "- 번호 목록 이외의 설명이나 부가 문장은 작성하지 마세요.\n\n"
             "입력 결함 목록:\n"
             + "\n".join(bullet_lines)
         )
@@ -379,32 +379,33 @@ class AIGenerationService:
                 )
 
         if not response_text:
-            raise HTTPException(status_code=502, detail="OpenAI 응답에서 JSON 결과를 찾을 수 없습니다.")
-
-        try:
-            payload = json.loads(response_text)
-        except json.JSONDecodeError as exc:
-            logger.error(
-                "Failed to decode defect formalization response as JSON",
-                extra={"project_id": project_id, "response": response_text},
-            )
-            raise HTTPException(status_code=502, detail="정제된 결함 정보를 해석하지 못했습니다.") from exc
-
-        if not isinstance(payload, list):
-            raise HTTPException(status_code=502, detail="정제된 결함 응답 형식이 올바르지 않습니다.")
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 번호 목록을 찾을 수 없습니다.")
 
         polished_by_index: Dict[int, str] = {}
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
+        numbered_pattern = re.compile(
+            r"(?:^|\n)\s*(\d+)\.(.*?)(?=(?:\n\s*\d+\.)|\Z)",
+            re.S,
+        )
+
+        for match in numbered_pattern.finditer(response_text):
+            index_str, body = match.groups()
             try:
-                index_value = int(item.get("index"))
-            except Exception:
+                index_value = int(index_str)
+            except ValueError:
                 continue
-            polished_value = str(item.get("polished_text") or "").strip()
+            polished_value = " ".join(body.strip().split())
             if not polished_value:
                 continue
             polished_by_index[index_value] = polished_value
+
+        if not polished_by_index:
+            fallback_lines = [
+                line.strip()
+                for line in response_text.splitlines()
+                if line.strip()
+            ]
+            for offset, line in enumerate(fallback_lines, start=1):
+                polished_by_index[offset] = line
 
         results: List[NormalizedDefect] = []
         for entry in entries:
