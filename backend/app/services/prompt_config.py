@@ -200,29 +200,96 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
         user_prompt=(
             "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
             "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
-            "테스트 케이스 ID는 TC-001과 같이 순차적으로 부여하고, 테스트 결과는 기본값으로 '미실행'을 사용하세요."
+            "테스트 케이스 ID는 TC-001부터 순차적으로 부여하고 테스트 결과는 기본값으로 '미실행'을 사용하세요."
         ),
+        user_prompt_sections=[
+            PromptSection(
+                id="testcase-analysis",
+                label="분석 요청",
+                content=(
+                    "1. 첨부 자료에서 사용자 흐름, 예외 상황, 비기능 요구사항을 식별하고\n"
+                    "2. 기능리스트 항목과 매핑되는 테스트 케이스를 구성하며\n"
+                    "3. 커버리지 공백이 있으면 비고에 보완이 필요한 근거를 기록하세요."
+                ),
+            ),
+            PromptSection(
+                id="testcase-quality",
+                label="품질 기준",
+                content=(
+                    "- 테스트 시나리오는 'Given-When-Then' 구조 또는 동등한 단계로 간결히 작성합니다.\n"
+                    "- 입력(사전조건 포함)과 기대 출력(사후조건 포함)에는 화면 ID, API, 데이터 범위 등 구체적 근거를 포함하세요."
+                ),
+            ),
+            PromptSection(
+                id="testcase-format",
+                label="작성 지침",
+                content=(
+                    "CSV 열 순서는 ‘대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고’로 고정합니다.\n"
+                    "테스트 케이스 ID는 TC-001부터 증가시키고, 테스트 결과는 기본값으로 ‘미실행’을 입력하세요."
+                ),
+            ),
+        ],
         scaffolding=PromptScaffolding(
             attachments_heading="첨부 파일 목록",
             attachments_intro=(
-                "다음 첨부 파일을 참고하여 요구사항을 분석한 뒤 지침에 맞는 테스트 케이스를 작성하세요."
+                "다음 첨부 파일을 참고하여 요구사항을 분석한 뒤 지침에 맞는 테스트 케이스를 작성하세요.\n"
+                "각 파일은 업로드된 순서대로 첨부되어 있습니다."
             ),
             closing_note="위 자료는 {{context_summary}}입니다. 이 자료를 바탕으로 테스트케이스를 작성해 주세요.",
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
         ),
+        builtin_contexts=[
+            PromptBuiltinContext(
+                id="testcase-template",
+                label="테스트케이스 예제 양식",
+                description="내장된 테스트케이스 예제 XLSX를 PDF로 변환한 자료. 열 구성 및 작성 예시 참고용.",
+                source_path="template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx",
+                render_mode="xlsx-to-pdf",
+                include_in_prompt=True,
+                show_in_attachment_list=True,
+            )
+        ],
     ),
     "defect-report": PromptConfig(
         label="결함 리포트",
-        summary="테스트 로그와 증적 자료를 바탕으로 결함 요약을 생성합니다.",
-        request_description="핵심 결함을 선별해 CSV 테이블로 정리합니다.",
-        system_prompt="당신은 QA 분석가입니다. 업로드된 테스트 로그와 증적 자료를 바탕으로 결함 요약을 작성합니다.",
+        summary="정제된 결함 목록과 증적 자료를 바탕으로 결함 리포트 표를 작성합니다.",
+        request_description="결함별 현상, 심각도, 발생 정보를 표 형식으로 정리합니다.",
+        system_prompt="당신은 QA 분석가입니다. 업로드된 정제된 결함 설명과 첨부 증적을 바탕으로 결함 리포트를 작성합니다.",
         user_prompt=(
-            "자료를 분석해 주요 결함을 요약한 CSV를 작성하세요. 열은 결함 ID, 심각도, 발생 모듈, 현상 요약, 제안 조치입니다. "
-            "결함 ID는 BUG-001 형식을 사용하고, 심각도는 치명/중대/보통/경미 중 하나로 표기합니다."
+            "정제된 결함 목록과 첨부 자료를 참고하여 다음 열을 포함한 CSV를 작성하세요: 순번, 시험환경(OS), 결함요약, 결함정도, 발생빈도, 품질특성, 결함 설명, 업체 응답, 수정여부, 비고. "
+            "자료가 없는 항목은 '-'로 표기하고, 첨부 이미지가 있다면 결함 설명 또는 비고에 파일명을 괄호로 명시하세요."
         ),
+        user_prompt_sections=[
+            PromptSection(
+                id="defect-analysis",
+                label="작성 지침",
+                content=(
+                    "1. 정제된 결함 문장을 기반으로 현상을 공식 문체로 요약하고 필요한 경우 시험환경이나 재현 조건을 보완하세요.\n"
+                    "2. 결함정도는 치명/중대/보통/경미 중에서 판단하여 기입하고, 발생빈도는 Always/Intermittent 등 로그에 근거해 작성하세요.\n"
+                    "3. 품질특성에는 기능성, 신뢰성 등 관련 분류를 지정하고, 업체 응답과 수정여부는 근거 자료가 없으면 '-'로 표기합니다."
+                ),
+            ),
+            PromptSection(
+                id="defect-attachments",
+                label="첨부 활용",
+                content=(
+                    "첨부 이미지가 존재하면 결함 설명 또는 비고에 '(첨부: 파일명)' 형태로 명시하여 표와 첨부를 연결하세요."
+                ),
+            ),
+            PromptSection(
+                id="defect-format",
+                label="출력 형식",
+                content=(
+                    "모든 열을 지정된 순서로 포함한 CSV만 출력하세요. 값이 비어 있으면 '-'를 사용하고, 순번은 1부터 원본 순서를 유지합니다."
+                ),
+            ),
+        ],
         scaffolding=PromptScaffolding(
             attachments_heading="첨부 파일 목록",
-            attachments_intro="참고 자료를 검토하여 결함을 정리하세요.",
+            attachments_intro=(
+                "정제된 결함 요약과 추가 증적을 참고하여 결함을 정리하세요.\n"
+                "이미지나 로그 파일이 있다면 해당 결함과 매핑해 활용하세요."
+            ),
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
         ),
     ),
