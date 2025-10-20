@@ -13,6 +13,7 @@ interface DefectEntry {
 interface DefectReportWorkflowProps {
   backendUrl: string
   projectId: string
+  onPreviewModeChange?: (isPreviewVisible: boolean) => void
 }
 
 type AsyncStatus = 'idle' | 'loading' | 'success' | 'error'
@@ -186,7 +187,11 @@ function buildRowsFromCsv(csvText: string): DefectReportTableRow[] {
 
   return rows
 }
-export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWorkflowProps) {
+export function DefectReportWorkflow({
+  backendUrl,
+  projectId,
+  onPreviewModeChange,
+}: DefectReportWorkflowProps) {
   const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [formalizeStatus, setFormalizeStatus] = useState<AsyncStatus>('idle')
   const [formalizeError, setFormalizeError] = useState<string | null>(null)
@@ -427,6 +432,22 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
   const showResetInUpload = hasProgress && formalizeStatus !== 'success'
   const showResetInReview = hasProgress && formalizeStatus === 'success' && !shouldHideReviewStep
   const showResetInPreview = hasProgress && shouldShowPreviewSection
+
+  useEffect(() => {
+    if (!onPreviewModeChange) {
+      return undefined
+    }
+
+    onPreviewModeChange(shouldShowPreviewSection)
+
+    return () => {
+      onPreviewModeChange(false)
+    }
+  }, [onPreviewModeChange, shouldShowPreviewSection])
+
+  const rootClassName = `defect-workflow${
+    shouldShowPreviewSection ? ' defect-workflow--preview-visible' : ''
+  }`
 
   const applyCellUpdate = useCallback(
     (rowIndex: number, columnKey: string, value: string) => {
@@ -813,7 +834,7 @@ export function DefectReportWorkflow({ backendUrl, projectId }: DefectReportWork
   const selectedValue = selectedRow && selectedColumn ? selectedRow.cells[selectedColumn.key] ?? '' : ''
 
   return (
-    <div className="defect-workflow">
+    <div className={rootClassName}>
       {formalizeStatus !== 'success' && (
         <section className="defect-workflow__section" aria-labelledby="defect-upload">
           <h2 id="defect-upload" className="defect-workflow__title">

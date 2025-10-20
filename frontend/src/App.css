@@ -1210,6 +1210,10 @@
   overflow: hidden;
 }
 
+.project-management-page--preview {
+  width: min(1560px, 100%);
+}
+
 .project-management-sidebar {
   flex: 0 0 260px;
   display: flex;
@@ -1327,6 +1331,11 @@
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
   padding: 2.25rem;
+}
+
+.project-management-content__inner--preview {
+  padding-left: 2.75rem;
+  padding-right: 2.75rem;
 }
 
 .project-management-content__toolbar {
