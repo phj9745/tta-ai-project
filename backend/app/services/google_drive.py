@@ -18,8 +18,8 @@ from fastapi import HTTPException, UploadFile
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
 from .excel_templates import (
+    populate_defect_report,
     populate_feature_list,
-    populate_security_report,
     populate_testcase_list,
 )
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
@@ -58,10 +58,10 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
         "file_suffix": "테스트케이스.xlsx",
         "populate": populate_testcase_list,
     },
-    "security-report": {
+    "defect-report": {
         "folder_name": "다.수행",
         "file_suffix": "결함리포트 v1.0.xlsx",
-        "populate": populate_security_report,
+        "populate": populate_defect_report,
     },
 }
 

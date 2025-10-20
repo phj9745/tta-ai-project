@@ -23,6 +23,7 @@ def test_record_and_list_recent(tmp_path: Path) -> None:
         system_prompt="system",
         user_prompt="user",
         context_summary="summary",
+        response_text="csv-1",
     )
     second = service.record_request(
         project_id="project-2",
@@ -30,13 +31,16 @@ def test_record_and_list_recent(tmp_path: Path) -> None:
         system_prompt="system-2",
         user_prompt="user-2",
         context_summary="",
+        response_text="csv-2",
     )
 
     entries = service.list_recent()
     assert len(entries) == 2
     assert entries[0].request_id == second.request_id
     assert entries[0].context_summary == ""
+    assert entries[0].response_text == "csv-2"
     assert entries[1].project_id == "project-1"
+    assert entries[1].response_text == "csv-1"
 
 
 def test_list_recent_ignores_invalid_rows(tmp_path: Path) -> None:
@@ -49,6 +53,7 @@ def test_list_recent_ignores_invalid_rows(tmp_path: Path) -> None:
         menu_id="feature-list",
         system_prompt="system",
         user_prompt="user",
+        response_text="",
     )
 
     entries = service.list_recent(limit=5)

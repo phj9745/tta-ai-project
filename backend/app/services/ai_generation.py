@@ -5,17 +5,24 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal
 import asyncio
+import csv
 import base64
 import io
+import json
 import logging
 import mimetypes
 import os
 import re
 import zipfile
+from pathlib import Path
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
-from bs4 import BeautifulSoup
+from docx import Document
 from openai import (
     APIError,
     BadRequestError,
@@ -43,6 +50,8 @@ class GeneratedCsv:
     filename: str
     content: bytes
     csv_text: str
+    defect_summary: List["DefectSummaryEntry"] | None = None
+    defect_images: Dict[int, List[BufferedUpload]] | None = None
 
 
 @dataclass
@@ -57,6 +66,27 @@ class PromptContextPreview:
     doc_id: str | None
     include_in_attachment_list: bool
     metadata: Dict[str, Any]
+
+
+@dataclass
+class NormalizedDefect:
+    index: int
+    original_text: str
+    polished_text: str
+
+
+@dataclass(frozen=True)
+class DefectSummaryAttachment:
+    file_name: str
+    original_file_name: str | None = None
+
+
+@dataclass(frozen=True)
+class DefectSummaryEntry:
+    index: int
+    original_text: str
+    polished_text: str
+    attachments: List[DefectSummaryAttachment]
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +363,276 @@ class AIGenerationService:
                     extra={"file_id": file_id, "error": str(exc)},
                 )
 
+    async def formalize_defect_notes(
+        self,
+        *,
+        project_id: str,
+        entries: List[Dict[str, str]],
+    ) -> List[NormalizedDefect]:
+        if not entries:
+            raise HTTPException(status_code=422, detail="정제할 결함 항목이 없습니다.")
+
+        client = self._get_client()
+        system_prompt = (
+            "당신은 소프트웨어 시험 결과를 정리하는 품질 보증 문서 작성자입니다. "
+            "사용자가 제공한 비격식 표현을 공문서에 적합한 격식 있는 문장으로 다듬어야 합니다."
+        )
+
+        bullet_lines: List[str] = []
+        for entry in entries:
+            index_value = entry.get("index")
+            text_value = (entry.get("text") or "").strip()
+            if not text_value:
+                continue
+            bullet_lines.append(f"{index_value}. {text_value}")
+
+        if not bullet_lines:
+            raise HTTPException(status_code=422, detail="결함 항목에서 내용을 찾을 수 없습니다.")
+
+        user_prompt = (
+            "다음 결함 설명을 공문서에 맞는 문장으로 다듬어 주세요.\n"
+            "- 결과는 입력 순서를 유지한 번호 매기기 형식으로 작성하세요.\n"
+            "- 각 줄은 '번호. 정제된 문장' 형태여야 합니다.\n"
+            "- 존댓말 어미를 사용하고 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
+            "- 번호 목록 이외의 설명이나 부가 문장은 작성하지 마세요.\n\n"
+            "입력 결함 목록:\n"
+            + "\n".join(bullet_lines)
+        )
+
+        messages = [
+            OpenAIMessageBuilder.text_message("system", system_prompt),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=messages,
+                temperature=0.2,
+                top_p=0.9,
+                max_output_tokens=600,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while requesting OpenAI response",
+                extra={"project_id": project_id, "menu_id": "defect-report-formalize"},
+            )
+            message = str(exc).strip()
+            detail = (
+                "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                if not message
+                else f"OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
+            )
+            raise HTTPException(status_code=502, detail=detail) from exc
+
+        response_text = self._extract_response_text(response) or ""
+
+        if self._request_log_service is not None:
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="defect-report-formalize",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary="결함 목록 정제",
+                    response_text=response_text,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={"project_id": project_id, "menu_id": "defect-report-formalize"},
+                )
+
+        if not response_text:
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 번호 목록을 찾을 수 없습니다.")
+
+        polished_by_index: Dict[int, str] = {}
+        numbered_pattern = re.compile(
+            r"(?:^|\n)\s*(\d+)\.(.*?)(?=(?:\n\s*\d+\.)|\Z)",
+            re.S,
+        )
+
+        for match in numbered_pattern.finditer(response_text):
+            index_str, body = match.groups()
+            try:
+                index_value = int(index_str)
+            except ValueError:
+                continue
+            polished_value = " ".join(body.strip().split())
+            if not polished_value:
+                continue
+            polished_by_index[index_value] = polished_value
+
+        if not polished_by_index:
+            fallback_lines = [
+                line.strip()
+                for line in response_text.splitlines()
+                if line.strip()
+            ]
+            for offset, line in enumerate(fallback_lines, start=1):
+                polished_by_index[offset] = line
+
+        results: List[NormalizedDefect] = []
+        for entry in entries:
+            index_value = int(entry.get("index", 0))
+            original_text = str(entry.get("text") or "").strip()
+            polished_text = polished_by_index.get(index_value, original_text)
+            if not polished_text:
+                continue
+            results.append(
+                NormalizedDefect(
+                    index=index_value,
+                    original_text=original_text,
+                    polished_text=polished_text,
+                )
+            )
+
+        if not results:
+            raise HTTPException(status_code=502, detail="정제된 결함 결과가 비어 있습니다.")
+
+        return results
+
+    async def rewrite_defect_report_cell(
+        self,
+        *,
+        project_id: str,
+        column_key: str,
+        column_label: str | None,
+        original_value: str | None,
+        instructions: str,
+        row_values: Mapping[str, str] | None = None,
+    ) -> str:
+        normalized_instructions = (instructions or "").strip()
+        if not normalized_instructions:
+            raise HTTPException(status_code=422, detail="변경 요청 내용을 입력해 주세요.")
+
+        normalized_column = (column_key or "").strip()
+        if not normalized_column:
+            raise HTTPException(status_code=422, detail="수정할 열 정보를 확인할 수 없습니다.")
+
+        display_label = (column_label or "").strip() or normalized_column
+        current_value = (original_value or "").strip()
+
+        context_lines: List[str] = []
+        if row_values:
+            for key, value in row_values.items():
+                if not isinstance(key, str) or key.strip() == "":
+                    continue
+                if key == normalized_column:
+                    continue
+                value_text = "" if value is None else str(value)
+                value_text = value_text.strip()
+                if not value_text:
+                    continue
+                context_lines.append(f"- {key}: {value_text}")
+
+        system_prompt = (
+            "당신은 소프트웨어 시험 결과를 정리하는 결함 리포트 편집자입니다. "
+            "각 항목은 명확하고 공문서에 적합한 어조를 유지해야 합니다."
+        )
+
+        prompt_parts: List[str] = []
+        if context_lines:
+            prompt_parts.append("행의 다른 항목:\n" + "\n".join(context_lines))
+        prompt_parts.append(f"현재 '{display_label}' 값: {current_value or '없음'}")
+        prompt_parts.append(f"사용자 요청: {normalized_instructions}")
+        prompt_parts.append(
+            "위 정보를 바탕으로 해당 셀에 들어갈 문장을 공문서 어조로 작성해 주세요.\n"
+            "- 출력은 수정된 셀 내용만 제공하세요.\n"
+            "- 필요 시 존댓말을 사용하고 문장은 간결하게 유지하세요."
+        )
+
+        user_prompt = "\n\n".join(prompt_parts)
+
+        client = self._get_client()
+        messages = [
+            OpenAIMessageBuilder.text_message("system", system_prompt),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=messages,
+                temperature=0.2,
+                top_p=0.9,
+                max_output_tokens=400,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while requesting OpenAI response",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "defect-report-rewrite",
+                    "column": normalized_column,
+                },
+            )
+            message = str(exc).strip()
+            detail = (
+                "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                if not message
+                else f"OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
+            )
+            raise HTTPException(status_code=502, detail=detail) from exc
+
+        response_text = self._extract_response_text(response) or ""
+
+        if self._request_log_service is not None:
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="defect-report-rewrite",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary=f"{display_label} 셀 수정",
+                    response_text=response_text,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={"project_id": project_id, "menu_id": "defect-report-rewrite"},
+                )
+
+        updated_value = response_text.strip()
+        if not updated_value:
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 수정된 텍스트를 찾을 수 없습니다.")
+
+        return updated_value
+
     @staticmethod
     def _sanitize_csv(text: str) -> str:
         cleaned = text.strip()
@@ -340,6 +640,193 @@ class AIGenerationService:
         if fence_match:
             cleaned = fence_match.group(1).strip()
         return cleaned
+
+    def _convert_required_documents_to_pdf(
+        self,
+        uploads: List[BufferedUpload],
+        metadata_entries: List[Dict[str, Any]],
+    ) -> List[BufferedUpload]:
+        if not metadata_entries:
+            return uploads
+
+        converted = list(uploads)
+        for index, upload in enumerate(uploads):
+            metadata = metadata_entries[index] if index < len(metadata_entries) else None
+            if not isinstance(metadata, dict):
+                continue
+
+            role = str(metadata.get("role") or "").strip().lower()
+            if role != "required":
+                continue
+
+            doc_id = str(metadata.get("id") or "").strip()
+            if doc_id not in {"user-manual", "vendor-feature-list"}:
+                continue
+
+            converted_upload = self._convert_single_required_document_to_pdf(
+                upload, metadata
+            )
+            if converted_upload is not upload:
+                converted[index] = converted_upload
+
+        return converted
+
+    def _convert_single_required_document_to_pdf(
+        self, upload: BufferedUpload, metadata: Dict[str, Any]
+    ) -> BufferedUpload:
+        extension = self._detect_raw_extension(upload)
+        if extension == "pdf":
+            return upload
+
+        label = str(
+            metadata.get("label")
+            or metadata.get("description")
+            or metadata.get("id")
+            or "문서"
+        ).strip()
+
+        original_extension = extension.upper() if extension else ""
+
+        if extension == "docx":
+            converted = self._convert_docx_upload_to_pdf(upload, label)
+        elif extension == "xlsx":
+            converted = self._convert_xlsx_upload_to_pdf(upload, label)
+        elif extension == "csv":
+            converted = self._convert_csv_upload_to_pdf(upload, label)
+        else:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label}은(는) PDF 또는 지원되는 문서 형식(DOCX, XLSX, CSV)이어야 합니다.",
+            )
+
+        self._append_conversion_note(metadata, label, original_extension)
+        return converted
+
+    @staticmethod
+    def _append_conversion_note(
+        metadata: Dict[str, Any], label: str, original_extension: str
+    ) -> None:
+        if not original_extension:
+            return
+
+        note = f"{label} {original_extension} 파일을 PDF로 변환했습니다."
+        existing = str(metadata.get("notes") or "").strip()
+        metadata["notes"] = f"{existing}\n{note}".strip() if existing else note
+        metadata["originalExtension"] = original_extension
+        metadata["convertedToPdf"] = True
+
+    @staticmethod
+    def _detect_raw_extension(upload: BufferedUpload) -> str:
+        extension = os.path.splitext(upload.name)[1].lstrip(".").lower()
+        if extension:
+            return extension
+
+        content_type = (upload.content_type or "").split(";")[0].strip()
+        if content_type:
+            guessed = mimetypes.guess_extension(content_type)
+            if guessed:
+                return guessed.lstrip(".").lower()
+
+        return ""
+
+    @staticmethod
+    def _pdf_file_name(original_name: str) -> str:
+        base = os.path.splitext(original_name)[0] or "converted"
+        return f"{base}.pdf"
+
+    @staticmethod
+    def _build_pdf_upload(
+        original: BufferedUpload, rows: List[List[str]]
+    ) -> BufferedUpload:
+        pdf_bytes = AIGenerationService._rows_to_pdf(rows)
+        return BufferedUpload(
+            name=AIGenerationService._pdf_file_name(original.name),
+            content=pdf_bytes,
+            content_type="application/pdf",
+        )
+
+    @staticmethod
+    def _convert_docx_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        try:
+            document = Document(io.BytesIO(upload.content))
+        except Exception as exc:
+            logger.warning(
+                "Failed to parse DOCX for PDF conversion; falling back to plain text",
+                extra={"label": label, "error": str(exc)},
+            )
+            decoded = upload.content.decode("utf-8", errors="ignore")
+            if not decoded.strip():
+                decoded = upload.content.decode("latin-1", errors="ignore")
+            lines = decoded.splitlines() or [decoded]
+            rows = [[line.strip()] for line in lines]
+            return AIGenerationService._build_pdf_upload(upload, rows)
+
+        rows: List[List[str]] = []
+
+        for paragraph in document.paragraphs:
+            text = paragraph.text.strip()
+            rows.append([text] if text else [])
+
+        if document.paragraphs and document.tables:
+            rows.append([])
+
+        for table in document.tables:
+            for row in table.rows:
+                cell_values = [cell.text.strip() for cell in row.cells]
+                if any(cell_values):
+                    rows.append(cell_values)
+            rows.append([])
+
+        if rows and not rows[-1]:
+            rows.pop()
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
+
+    @staticmethod
+    def _convert_xlsx_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        try:
+            rows = AIGenerationService._parse_xlsx_rows(upload.content)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} XLSX 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
+
+    @staticmethod
+    def _convert_csv_upload_to_pdf(
+        upload: BufferedUpload, label: str
+    ) -> BufferedUpload:
+        decoded: str | None = None
+        last_error: Exception | None = None
+        for encoding in ("utf-8-sig", "utf-8", "cp949", "latin-1"):
+            try:
+                decoded = upload.content.decode(encoding)
+                break
+            except UnicodeDecodeError as exc:
+                last_error = exc
+
+        if decoded is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} CSV 파일을 읽는 중 오류가 발생했습니다.",
+            ) from last_error
+
+        try:
+            reader = csv.reader(io.StringIO(decoded))
+            rows = [[cell.strip() for cell in row] for row in reader]
+        except csv.Error as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{label} CSV 파일을 PDF로 변환하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        return AIGenerationService._build_pdf_upload(upload, rows)
 
     async def generate_csv(
         self,
@@ -373,17 +860,37 @@ class AIGenerationService:
             finally:
                 await upload.close()
 
+        metadata_entries: List[Dict[str, Any]] = []
+        if metadata:
+            metadata_entries = [
+                dict(entry) if isinstance(entry, dict) else {}
+                for entry in metadata
+            ]
+
+        buffered = self._convert_required_documents_to_pdf(
+            buffered, metadata_entries
+        )
+
+        defect_prompt_section: str | None = None
+        defect_summary_entries: List[DefectSummaryEntry] | None = None
+        defect_image_map: Dict[int, List[BufferedUpload]] = {}
+
         contexts: List[UploadContext] = []
-        metadata = metadata or []
         for index, upload in enumerate(buffered):
-            entry = metadata[index] if index < len(metadata) else None
+            entry = metadata_entries[index] if index < len(metadata_entries) else None
             contexts.append(UploadContext(upload=upload, metadata=entry))
 
         contexts.extend(
             self._builtin_attachment_contexts(menu_id, prompt_config.builtin_contexts)
         )
 
-        contexts = self._prepare_contexts_for_openai(contexts)
+        if menu_id == "defect-report":
+            (
+                contexts,
+                defect_prompt_section,
+                defect_summary_entries,
+                defect_image_map,
+            ) = self._prepare_defect_report_contexts(contexts)
 
         client = self._get_client()
         uploaded_file_records: List[tuple[str, bool]] = []
@@ -451,6 +958,9 @@ class AIGenerationService:
                 elif label or content:
                     user_prompt_parts.append(label or content)
 
+            if defect_prompt_section:
+                user_prompt_parts.append(defect_prompt_section)
+
             if contexts:
                 heading = prompt_config.scaffolding.attachments_heading.strip()
                 intro = prompt_config.scaffolding.attachments_intro.strip()
@@ -499,21 +1009,6 @@ class AIGenerationService:
                     "user_prompt": user_prompt,
                 },
             )
-
-            if self._request_log_service is not None:
-                try:
-                    self._request_log_service.record_request(
-                        project_id=project_id,
-                        menu_id=menu_id,
-                        system_prompt=prompt_config.system_prompt,
-                        user_prompt=user_prompt,
-                        context_summary=context_summary,
-                    )
-                except Exception:  # pragma: no cover - logging must not fail request
-                    logger.exception(
-                        "Failed to record prompt request log",
-                        extra={"project_id": project_id, "menu_id": menu_id},
-                    )
 
             params = prompt_config.model_parameters
             try:
@@ -590,11 +1085,28 @@ class AIGenerationService:
                     detail = "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
                 raise HTTPException(status_code=502, detail=detail) from exc
 
-            csv_text = self._extract_response_text(response)
-            if not csv_text:
+            response_text = self._extract_response_text(response) or ""
+
+            if self._request_log_service is not None:
+                try:
+                    self._request_log_service.record_request(
+                        project_id=project_id,
+                        menu_id=menu_id,
+                        system_prompt=prompt_config.system_prompt,
+                        user_prompt=user_prompt,
+                        context_summary=context_summary,
+                        response_text=response_text,
+                    )
+                except Exception:  # pragma: no cover - logging must not fail request
+                    logger.exception(
+                        "Failed to record prompt request log",
+                        extra={"project_id": project_id, "menu_id": menu_id},
+                    )
+
+            if not response_text:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
-            sanitized = self._sanitize_csv(csv_text)
+            sanitized = self._sanitize_csv(response_text)
             if not sanitized:
                 raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 
@@ -603,7 +1115,13 @@ class AIGenerationService:
             safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
             filename = f"{safe_project}_{menu_id}_{timestamp}.csv"
 
-            return GeneratedCsv(filename=filename, content=encoded, csv_text=sanitized)
+            return GeneratedCsv(
+                filename=filename,
+                content=encoded,
+                csv_text=sanitized,
+                defect_summary=defect_summary_entries,
+                defect_images=dict(defect_image_map) if defect_image_map else None,
+            )
         finally:
             if uploaded_file_records:
                 await self._cleanup_openai_files(client, uploaded_file_records)
@@ -732,6 +1250,123 @@ class AIGenerationService:
 
         encoded = base64.b64encode(upload.content).decode("ascii")
         return f"data:{media_type};base64,{encoded}"
+
+    def _prepare_defect_report_contexts(
+        self, contexts: List[UploadContext]
+    ) -> tuple[
+        List[UploadContext],
+        str | None,
+        List[DefectSummaryEntry] | None,
+        Dict[int, List[BufferedUpload]],
+    ]:
+        summary_entries: List[DefectSummaryEntry] | None = None
+        prompt_section: str | None = None
+        image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
+        filtered_contexts: List[UploadContext] = []
+
+        for context in contexts:
+            metadata = context.metadata or {}
+            upload = context.upload
+            defect_index_value = metadata.get("defect_index")
+            if defect_index_value is not None:
+                try:
+                    defect_index = int(defect_index_value)
+                except (TypeError, ValueError):
+                    defect_index = None
+                else:
+                    if self._attachment_kind(upload) == "image":
+                        image_map[defect_index].append(upload)
+
+            is_json_upload = upload.name.lower().endswith(".json") or (
+                (upload.content_type or "").split(";")[0].lower() == "application/json"
+            )
+
+            if is_json_upload:
+                if summary_entries is None:
+                    parsed = self._parse_defect_summary_upload(upload)
+                    if parsed:
+                        summary_entries = parsed
+                        prompt_section = self._format_defect_prompt_section(parsed)
+                continue
+
+            filtered_contexts.append(context)
+
+        return filtered_contexts, prompt_section, summary_entries, image_map
+
+    @staticmethod
+    def _parse_defect_summary_upload(upload: BufferedUpload) -> List[DefectSummaryEntry]:
+        try:
+            decoded = upload.content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            decoded = upload.content.decode("utf-8", errors="ignore")
+
+        try:
+            payload = json.loads(decoded)
+        except json.JSONDecodeError:
+            return []
+
+        defects = payload.get("defects") if isinstance(payload, dict) else None
+        if not isinstance(defects, list):
+            return []
+
+        entries: List[DefectSummaryEntry] = []
+        for item in defects:
+            if not isinstance(item, dict):
+                continue
+            index_value = item.get("index")
+            polished_text = item.get("polishedText")
+            if not isinstance(index_value, int) or not isinstance(polished_text, str):
+                continue
+            original_text = item.get("originalText")
+            if not isinstance(original_text, str):
+                original_text = ""
+
+            attachments_raw = item.get("attachments")
+            attachments: List[DefectSummaryAttachment] = []
+            if isinstance(attachments_raw, list):
+                for attachment in attachments_raw:
+                    if not isinstance(attachment, dict):
+                        continue
+                    file_name = attachment.get("fileName")
+                    original_name = attachment.get("originalFileName")
+                    if isinstance(file_name, str) and file_name.strip():
+                        attachments.append(
+                            DefectSummaryAttachment(
+                                file_name=file_name.strip(),
+                                original_file_name=original_name
+                                if isinstance(original_name, str)
+                                else None,
+                            )
+                        )
+
+            entries.append(
+                DefectSummaryEntry(
+                    index=index_value,
+                    original_text=original_text.strip(),
+                    polished_text=polished_text.strip(),
+                    attachments=attachments,
+                )
+            )
+
+        return entries
+
+    @staticmethod
+    def _format_defect_prompt_section(entries: List[DefectSummaryEntry]) -> str | None:
+        if not entries:
+            return None
+
+        lines: List[str] = ["정제된 결함 목록", ""]
+        for entry in sorted(entries, key=lambda item: item.index):
+            polished = entry.polished_text or "-"
+            lines.append(f"{entry.index}. {polished}")
+            if entry.original_text:
+                lines.append(f"   - 원문: {entry.original_text}")
+            if entry.attachments:
+                names = ", ".join(att.file_name for att in entry.attachments)
+                lines.append(f"   - 첨부 이미지: {names}")
+            lines.append("")
+
+        return "\n".join(line for line in lines if line is not None).strip()
 
     def _builtin_attachment_contexts(
         self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]
