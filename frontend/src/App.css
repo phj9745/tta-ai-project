@@ -1321,6 +1321,10 @@
   padding: 2.5rem;
 }
 
+.project-management-content--preview {
+  padding: 2rem 1.75rem;
+}
+
 .project-management-content__inner {
   flex: 1;
   display: flex;
@@ -1944,8 +1948,8 @@
 
 .defect-workflow__preview {
   display: flex;
-  gap: 28px;
-  align-items: stretch;
+  gap: 24px;
+  align-items: flex-start;
   width: 100%;
 }
 
@@ -1962,7 +1966,7 @@
 
 .defect-workflow__table {
   width: 100%;
-  min-width: 720px;
+  min-width: 640px;
   border-collapse: collapse;
 }
 
@@ -2026,8 +2030,8 @@
 }
 
 .defect-workflow__editor {
-  flex: 0 0 380px;
-  max-width: 420px;
+  flex: 0 0 340px;
+  max-width: 360px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -2159,6 +2163,22 @@
   outline: none;
   border-color: #6366f1;
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+}
+
+@media (max-width: 1440px) {
+  .project-management-page--preview .defect-workflow__preview {
+    flex-direction: column;
+  }
+
+  .project-management-page--preview .defect-workflow__editor {
+    flex: 1 1 auto;
+    max-width: none;
+    width: 100%;
+  }
+
+  .project-management-page--preview .defect-workflow__table {
+    min-width: 100%;
+  }
 }
 
 @media (max-width: 768px) {

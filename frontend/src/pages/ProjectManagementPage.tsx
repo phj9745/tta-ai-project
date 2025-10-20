@@ -682,6 +682,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     isDefectReport && isDefectPreviewVisible ? ' project-management-content__inner--preview' : ''
   }`
 
+  const contentClassName = `project-management-content${
+    isDefectReport && isDefectPreviewVisible ? ' project-management-content--preview' : ''
+  }`
+
   return (
     <div className={pageClassName}>
       <aside className="project-management-sidebar">
@@ -718,7 +722,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         </nav>
       </aside>
 
-      <main className="project-management-content" aria-label="프로젝트 관리 컨텐츠">
+      <main className={contentClassName} aria-label="프로젝트 관리 컨텐츠">
         <div className={contentInnerClassName}>
           <div className="project-management-content__toolbar" role="navigation" aria-label="프로젝트 작업 메뉴">
             <button
