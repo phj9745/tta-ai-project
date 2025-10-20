@@ -209,6 +209,37 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
 
 
 @pytest.mark.anyio
+async def test_generate_csv_converts_required_csv_documents_to_pdf() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    upload = UploadFile(
+        file=io.BytesIO("제목,내용\n항목1,값1".encode("utf-8")),
+        filename="사용자_매뉴얼.csv",
+        headers=Headers({"content-type": "text/csv"}),
+    )
+
+    metadata = [{"role": "required", "id": "user-manual", "label": "사용자 설명서"}]
+
+    result = await service.generate_csv(
+        project_id="proj-csv",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=metadata,
+    )
+
+    assert result.csv_text == "col1,col2\nvalue1,value2"
+
+    assert [entry["name"] for entry in stub_client.files.created] == [
+        "사용자_매뉴얼.pdf",
+        "GS-B-XX-XXXX 기능리스트 v1.0.pdf",
+    ]
+    assert stub_client.files.created[0]["content"].startswith(b"%PDF")
+
+
+
+@pytest.mark.anyio
 async def test_generate_csv_includes_testcase_template() -> None:
     service = AIGenerationService(_settings())
     stub_client = _StubClient()
