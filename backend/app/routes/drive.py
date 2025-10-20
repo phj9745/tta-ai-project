@@ -5,8 +5,8 @@ import csv
 import io
 import json
 import re
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -136,6 +136,14 @@ def _extract_defect_entries(text: str) -> List[Dict[str, str]]:
         for idx, line in enumerate(lines, start=1):
             entries.append({"index": idx, "text": line})
     return entries
+
+
+def _build_attachment_header(filename: str) -> str:
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+    if not ascii_fallback or not re.search(r"[A-Za-z0-9]", ascii_fallback):
+        ascii_fallback = "security-report.csv"
+    quoted = quote(filename)
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
 
 
 @router.post("/drive/gs/setup")
@@ -271,7 +279,7 @@ async def generate_project_asset(
         )
 
         headers = {
-            "Content-Disposition": f'attachment; filename="{result.filename}"',
+            "Content-Disposition": _build_attachment_header(result.filename),
             "Cache-Control": "no-store",
         }
 

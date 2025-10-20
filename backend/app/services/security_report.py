@@ -5,8 +5,6 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import pandas as pd
@@ -17,6 +15,8 @@ from thefuzz import process as fuzz_process
 
 from .ai_generation import AIGenerationService, GeneratedCsv
 from .google_drive import GoogleDriveService
+from .prompt_config import PromptConfig, PromptConfigService
+from .prompt_request_log import PromptRequestLogService
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,12 @@ _CRITERIA_REQUIRED_COLUMNS = (
     "품질특성",
     "결함 설명",
     "결함 제외 여부",
+)
+
+_PROMPT_TEMPLATE_PATTERN = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
+_DEFAULT_SECURITY_SYSTEM_PROMPT = (
+    "당신은 Invicti HTML 보고서를 분석하여 보안 결함을 표준 템플릿에 맞게 요약하는 한국어 보안 분석가입니다. "
+    "응답은 항상 JSON 형식이어야 합니다."
 )
 
 
@@ -78,8 +84,16 @@ class StandardizedFinding:
 
 
 class SecurityReportService:
-    def __init__(self, drive_service: GoogleDriveService, openai_client: OpenAI) -> None:
+    def __init__(
+        self,
+        drive_service: GoogleDriveService,
+        prompt_config_service: PromptConfigService,
+        prompt_request_log_service: PromptRequestLogService | None,
+        openai_client: OpenAI,
+    ) -> None:
         self._drive_service = drive_service
+        self._prompt_config_service = prompt_config_service
+        self._prompt_request_log_service = prompt_request_log_service
         self._openai_client = openai_client
 
     async def generate_csv_report(
@@ -89,21 +103,20 @@ class SecurityReportService:
         project_id: str,
         google_id: str | None,
     ) -> GeneratedCsv:
-        source_filename = invicti_upload.filename or "invicti-report.html"
         dataframe = await self.process_invicti_report(
             invicti_upload=invicti_upload,
+            project_id=project_id,
             google_id=google_id,
         )
         csv_dataframe = self._build_csv_view(dataframe)
         csv_text = csv_dataframe.to_csv(index=False)
         encoded = csv_text.encode("utf-8-sig")
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-        stem = Path(source_filename).stem
-        if not stem:
-            stem = "invicti-report"
-        safe_stem = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "invicti-report"
-        filename = f"{safe_stem}_security-report_{timestamp}.csv"
+        project_number = await self._drive_service.get_project_exam_number(
+            project_id=project_id,
+            google_id=google_id,
+        )
+        filename = f"[{project_number}] 보안성 결함리포트 v1.0.csv"
 
         return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
 
@@ -111,6 +124,7 @@ class SecurityReportService:
         self,
         *,
         invicti_upload: UploadFile,
+        project_id: str,
         google_id: str | None,
     ) -> pd.DataFrame:
         raw_bytes = await invicti_upload.read()
@@ -133,7 +147,12 @@ class SecurityReportService:
         standardized: List[StandardizedFinding] = []
         criteria_modified = False
         for finding in findings:
-            mapped, updated = await self._map_finding_to_standard(finding, criteria_df, soup)
+            mapped, updated = await self._map_finding_to_standard(
+                finding,
+                criteria_df,
+                soup,
+                project_id=project_id,
+            )
             criteria_modified = criteria_modified or updated
             if mapped is None:
                 logger.info(
@@ -155,6 +174,9 @@ class SecurityReportService:
 
         if not standardized:
             raise HTTPException(status_code=422, detail="매칭된 결함이 없어 리포트를 생성할 수 없습니다.")
+
+        # 병합: 동일 유형은 대표 항목(첫 경로)만 남기고 병합
+        standardized = self._merge_similar_findings(standardized)
 
         if criteria_modified:
             logger.info("Security criteria augmented with AI-generated rules during processing.")
@@ -356,10 +378,16 @@ class SecurityReportService:
         finding: InvictiFinding,
         criteria_df: pd.DataFrame,
         soup: BeautifulSoup,
+        *,
+        project_id: str,
     ) -> Tuple[Optional[StandardizedFinding], bool]:
         best_match = self._find_best_criteria(finding.name, criteria_df["Invicti 결과"])
         if best_match is None:
-            generated = await self._generate_new_standard(finding, soup)
+            generated = await self._generate_new_standard(
+                finding,
+                soup,
+                project_id=project_id,
+            )
             if generated is None:
                 return None, False
             self._append_generated_rule(criteria_df, generated)
@@ -378,6 +406,7 @@ class SecurityReportService:
             summary_template,
             finding,
             soup,
+            project_id=project_id,
             context=context_values,
         )
 
@@ -386,6 +415,7 @@ class SecurityReportService:
             description_template,
             finding,
             soup,
+            project_id=project_id,
             context=context_values,
         )
 
@@ -394,6 +424,7 @@ class SecurityReportService:
             recommendation_template,
             finding,
             soup,
+            project_id=project_id,
             context=context_values,
         )
 
@@ -450,12 +481,15 @@ class SecurityReportService:
         self,
         finding: InvictiFinding,
         soup: BeautifulSoup,
+        *,
+        project_id: str,
     ) -> Optional[StandardizedFinding]:
         context_values = self._build_placeholder_values(finding, soup)
         prompt_payload = await self._call_openai_for_json(
             prompt_id="security-new-finding",
             finding=finding,
             context_data=context_values,
+            project_id=project_id,
         )
         if not prompt_payload:
             logger.warning(
@@ -495,6 +529,7 @@ class SecurityReportService:
         template: str,
         finding: InvictiFinding,
         placeholders: Iterable[str],
+        project_id: str,
         context: Dict[str, str] | None = None,
     ) -> str:
         if not placeholders:
@@ -505,6 +540,7 @@ class SecurityReportService:
             finding=finding,
             placeholders=placeholders,
             context_data=context,
+            project_id=project_id,
         )
         if not prompt_payload:
             return template
@@ -522,8 +558,9 @@ class SecurityReportService:
         finding: InvictiFinding,
         placeholders: Iterable[str] | None = None,
         context_data: Dict[str, str] | None = None,
+        project_id: str | None,
     ) -> Dict[str, Any]:
-        _ = prompts = self._build_prompt(
+        prompts = self._build_prompt(
             prompt_id=prompt_id,
             finding=finding,
             placeholders=placeholders,
@@ -531,6 +568,32 @@ class SecurityReportService:
         )
         if prompts is None:
             return {}
+
+        system_prompt = ""
+        user_prompt = ""
+        for message in prompts:
+            role = str(message.get("role", ""))
+            content = str(message.get("content", ""))
+            if role == "system":
+                system_prompt = content
+            elif role == "user":
+                user_prompt = content
+
+        if self._prompt_request_log_service is not None and project_id:
+            context_summary = f"{finding.name or '알 수 없는 결함'} (severity: {finding.severity or '?'})"
+            try:
+                self._prompt_request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="security-report",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary=context_summary,
+                )
+            except Exception:  # pragma: no cover - logging failures must not break flow
+                logger.exception(
+                    "Failed to record security prompt request",
+                    extra={"project_id": project_id, "prompt_id": prompt_id},
+                )
 
         try:
             response = await asyncio.to_thread(
@@ -561,54 +624,70 @@ class SecurityReportService:
     ) -> List[Dict[str, str]] | None:
         placeholder_text = ""
         if placeholders:
-            placeholder_text = ", ".join(sorted(placeholders))
+            placeholder_text = ", ".join([str(item) for item in placeholders if str(item)])
 
         context_lines = ""
         if context_data:
-            entries = [
-                f"- {key}: {value}"
-                for key, value in context_data.items()
-                if isinstance(value, str) and value.strip()
-            ]
+            entries: List[str] = []
+            seen_keys: set[str] = set()
+            for key, value in context_data.items():
+                if not isinstance(value, str):
+                    continue
+                stripped_value = value.strip()
+                if not stripped_value:
+                    continue
+                normalized_key = re.sub(r"\s+", "", str(key)).lower()
+                if normalized_key in seen_keys:
+                    continue
+                seen_keys.add(normalized_key)
+                entries.append(f"- {key}: {stripped_value}")
             context_lines = "\n".join(entries)
 
+        try:
+            config = self._prompt_config_service.get_runtime_prompt("security-report")
+        except KeyError as exc:  # pragma: no cover - configuration should always exist
+            logger.exception("Security report prompt configuration is missing.")
+            raise HTTPException(status_code=500, detail="보안성 리포트 프롬프트 구성을 불러오지 못했습니다.") from exc
+
+        values = self._build_prompt_values(
+            finding=finding,
+            context_lines=context_lines,
+            placeholder_text=placeholder_text,
+        )
+
         if prompt_id == "security-new-finding":
-            system = (
-                "당신은 Invicti HTML 보고서를 기반으로 "
-                "보안 결함을 요약하고 표준 템플릿에 맞게 설명을 작성하는 한국어 보안 분석가입니다. "
-                "JSON만 출력하세요."
+            system = self._render_template(config.system_prompt, values).strip() or _DEFAULT_SECURITY_SYSTEM_PROMPT
+            parts, details_ref, _ = self._assemble_prompt_parts(
+                config,
+                values,
+                use_sections=True,
+                use_heading=True,
+                use_intro=True,
+                use_closing=True,
+                use_warning=True,
+                track_placeholders=False,
             )
-            user = (
-                "다음 Invicti 결함 정보를 읽고 JSON 객체를 생성하세요. "
-                "필드: summary(간단 요약), description(3문장 이상 상세 설명), "
-                "recommendation(조치 가이드), category(품질 특성), occurrence(발생 빈도 권장 값). "
-                f"\n\n제목: {finding.name}\n위험도: {finding.severity}\n경로: {finding.path}\n"
-                f"상세 설명:\n{finding.description_text}\n"
-                f"증적:\n{finding.evidence_text or '없음'}\n"
-                "추가 참고 정보:\n"
-                f"{context_lines or '- (제공된 추가 정보 없음)'}\n\n"
-                "작성 지침:\n"
-                "- summary는 6~18자의 한국어 명사구로 작성하고 번호, 괄호, 문장 부호를 사용하지 마세요.\n"
-                "- description은 2~3문장으로 문제 원인, 영향 경로, 개선 방향을 자연스럽게 설명하세요.\n"
-                "- 번호나 목록 대신 문장으로 작성하고, 불필요한 인용부호나 HTML 표기를 제거하세요.\n"
-                "- '암호화 목록' 정보가 제공되면 마지막 문장에 \"취약한 암호화 목록: ...\" 형식으로 그대로 포함하세요."
-            )
+            if not details_ref:
+                parts.append(values["finding_details_block"])
+            user = "\n\n".join(part for part in parts if part)
         elif prompt_id == "security-template-fill":
-            system = (
-                "Invicti 보안 결함 상세를 기반으로 템플릿 플레이스홀더 값을 추출하는 보안 분석가입니다. "
-                "JSON만 출력하세요."
+            system = self._render_template(config.system_prompt, values).strip() or _DEFAULT_SECURITY_SYSTEM_PROMPT
+            parts, details_ref, placeholders_ref = self._assemble_prompt_parts(
+                config,
+                values,
+                use_sections=False,
+                use_heading=False,
+                use_intro=False,
+                use_closing=True,
+                use_warning=True,
+                track_placeholders=True,
             )
-            user = (
-                "다음 결함 설명을 읽고 지정된 플레이스홀더에 맞는 값을 추출하세요. "
-                "존재하지 않는 경우 빈 문자열을 넣습니다.\n"
-                f"플레이스홀더: {placeholder_text}\n\n"
-                f"제목: {finding.name}\n위험도: {finding.severity}\n경로: {finding.path}\n"
-                f"상세 설명:\n{finding.description_text}\n"
-                f"증적:\n{finding.evidence_text or '없음'}\n"
-                "추가 참고 정보:\n"
-                f"{context_lines or '- (제공된 추가 정보 없음)'}\n"
-                "출력 값에는 번호나 장식 문자를 포함하지 마세요."
-            )
+            if not placeholders_ref:
+                placeholder_line = values["placeholder_list"] or "(플레이스홀더 없음)"
+                parts.insert(0, f"플레이스홀더: {placeholder_line}")
+            if not details_ref:
+                parts.append(values["finding_details_block"])
+            user = "\n\n".join(part for part in parts if part)
         else:
             return None
 
@@ -616,6 +695,166 @@ class SecurityReportService:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
+
+    def _assemble_prompt_parts(
+        self,
+        config: PromptConfig,
+        values: Dict[str, str],
+        *,
+        use_sections: bool,
+        use_heading: bool,
+        use_intro: bool,
+        use_closing: bool,
+        use_warning: bool,
+        track_placeholders: bool,
+    ) -> Tuple[List[str], bool, bool]:
+        parts: List[str] = []
+        details_referenced = False
+        placeholders_referenced = False
+
+        base, base_details, base_placeholders = self._render_fragment(
+            config.user_prompt,
+            values,
+            track_details=True,
+            track_placeholders=track_placeholders,
+        )
+        if base:
+            parts.append(base)
+        details_referenced = details_referenced or base_details
+        placeholders_referenced = placeholders_referenced or base_placeholders
+
+        if use_sections:
+            for section in config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label, label_details, label_placeholders = self._render_fragment(
+                    section.label,
+                    values,
+                    track_details=True,
+                    track_placeholders=track_placeholders,
+                )
+                content, content_details, content_placeholders = self._render_fragment(
+                    section.content,
+                    values,
+                    track_details=True,
+                    track_placeholders=track_placeholders,
+                )
+                combined = "\n".join(part for part in [label, content] if part).strip()
+                if combined:
+                    parts.append(combined)
+                details_referenced = details_referenced or label_details or content_details
+                placeholders_referenced = (
+                    placeholders_referenced or label_placeholders or content_placeholders
+                )
+
+        if use_heading:
+            heading, heading_details, heading_placeholders = self._render_fragment(
+                config.scaffolding.attachments_heading,
+                values,
+                track_details=True,
+                track_placeholders=track_placeholders,
+            )
+            if heading:
+                parts.append(heading)
+            details_referenced = details_referenced or heading_details
+            placeholders_referenced = placeholders_referenced or heading_placeholders
+
+        if use_intro:
+            intro, intro_details, intro_placeholders = self._render_fragment(
+                config.scaffolding.attachments_intro,
+                values,
+                track_details=True,
+                track_placeholders=track_placeholders,
+            )
+            if intro:
+                parts.append(intro)
+            details_referenced = details_referenced or intro_details
+            placeholders_referenced = placeholders_referenced or intro_placeholders
+
+        if use_closing:
+            closing, closing_details, closing_placeholders = self._render_fragment(
+                config.scaffolding.closing_note,
+                values,
+                track_details=True,
+                track_placeholders=track_placeholders,
+            )
+            if closing:
+                parts.append(closing)
+            details_referenced = details_referenced or closing_details
+            placeholders_referenced = placeholders_referenced or closing_placeholders
+
+        if use_warning:
+            warning, warning_details, warning_placeholders = self._render_fragment(
+                config.scaffolding.format_warning,
+                values,
+                track_details=True,
+                track_placeholders=track_placeholders,
+            )
+            if warning:
+                parts.append(warning)
+            details_referenced = details_referenced or warning_details
+            placeholders_referenced = placeholders_referenced or warning_placeholders
+
+        return parts, details_referenced, placeholders_referenced
+
+    def _render_fragment(
+        self,
+        template: str,
+        values: Dict[str, str],
+        *,
+        track_details: bool,
+        track_placeholders: bool,
+    ) -> Tuple[str, bool, bool]:
+        raw = (template or "").strip()
+        if not raw:
+            return "", False, False
+        details_referenced = track_details and "{{finding_details_block}}" in template
+        placeholders_referenced = track_placeholders and "{{placeholder_list}}" in template
+        rendered = self._render_template(raw, values).strip()
+        return rendered, details_referenced, placeholders_referenced
+
+    def _render_template(self, template: str, values: Dict[str, str]) -> str:
+        def _replace(match: re.Match[str]) -> str:
+            key = match.group(1)
+            return str(values.get(key, ""))
+
+        return _PROMPT_TEMPLATE_PATTERN.sub(_replace, template)
+
+    def _build_prompt_values(
+        self,
+        *,
+        finding: InvictiFinding,
+        context_lines: str,
+        placeholder_text: str,
+    ) -> Dict[str, str]:
+        context_block = context_lines or "- (제공된 추가 정보 없음)"
+        finding_details = self._format_finding_details_block(finding, context_block)
+        return {
+            "finding_name": finding.name or "",
+            "finding_severity": finding.severity or "",
+            "finding_path": finding.path or "",
+            "finding_description": finding.description_text or "",
+            "finding_evidence": finding.evidence_text or "없음",
+            "context_block": context_block,
+            "finding_details_block": finding_details,
+            "placeholder_list": placeholder_text or "",
+        }
+
+    @staticmethod
+    def _format_finding_details_block(finding: InvictiFinding, context_block: str) -> str:
+        name = finding.name or "-"
+        severity = finding.severity or "-"
+        path = finding.path or "-"
+        description = finding.description_text or "-"
+        evidence = finding.evidence_text or "없음"
+        return (
+            f"제목: {name}\n"
+            f"위험도: {severity}\n"
+            f"경로: {path}\n"
+            f"상세 설명:\n{description}\n"
+            f"증적:\n{evidence}\n"
+            f"추가 참고 정보:\n{context_block}"
+        )
 
     def _is_excluded(self, value: Any) -> bool:
         text = str(value or "").strip().lower()
@@ -626,6 +865,8 @@ class SecurityReportService:
         template: str,
         finding: InvictiFinding,
         soup: BeautifulSoup,
+        *,
+        project_id: str,
         context: Dict[str, str] | None = None,
     ) -> str:
         if not template:
@@ -647,6 +888,7 @@ class SecurityReportService:
             template=filled,
             finding=finding,
             placeholders=remaining,
+            project_id=project_id,
             context=context,
         )
         return ai_filled if ai_filled else filled
@@ -800,6 +1042,32 @@ class SecurityReportService:
         if match:
             return match.group(1).strip()
         return ""
+    
+    def _weak_list_already_present(self, description: str, weak_list: str) -> bool:
+        if not description or not weak_list:
+            return False
+
+        def _norm(s: str) -> str:
+            return re.sub(r"\s+", " ", s).strip().lower()
+
+        # 1) 전체 문자열 정규화 비교
+        if _norm(weak_list) in _norm(description):
+            return True
+
+        # 2) 목록 항목들 중 앞쪽 2~3개가 본문에 동시에 존재하면 포함된 것으로 간주
+        items = [ln.strip() for ln in weak_list.splitlines() if ln.strip()]
+        if not items:
+            return False
+        probe = items[:3]  # 앞에서 최대 3개까지 확인
+        hits = sum(1 for it in probe if it and it in description)
+        if hits >= 2:
+            return True
+
+        # 3) 헤더 문구 + 첫 항목 조합 체크
+        if ("취약한 암호화 목록" in description or "취약한 암호화 알고리즘 목록" in description) and items[0] in description:
+            return True
+
+        return False
 
     def _finalize_summary(
         self,
@@ -896,8 +1164,8 @@ class SecurityReportService:
             segments.append(f"최신 버전: {latest_version}")
 
         weak_list = context.get("암호화 목록") or context.get("암호화목록")
-        if weak_list and weak_list not in description:
-            segments.append(f"취약한 암호화 목록: {weak_list}")
+        if weak_list and not self._weak_list_already_present(description, weak_list):
+            segments.append(f"취약한 암호화 목록: \n{weak_list}")
 
         if finding.evidence_text and finding.evidence_text not in description:
             segments.append(f"Invicti 증적 요약: {finding.evidence_text}")
@@ -985,6 +1253,63 @@ class SecurityReportService:
         }
         criteria_df.loc[len(criteria_df)] = new_row
 
+    def _merge_similar_findings(
+        self,
+        findings: Sequence[StandardizedFinding],
+    ) -> List[StandardizedFinding]:
+        """
+        동일 취약 유형(같은 Invicti 결과/요약/위험도레벨/조치 가이드)에서 URL/파라미터만 다른 항목을 하나로 합칩니다.
+        병합 시 대표 path는 해당 그룹에서 처음 등장한 path(맨 앞 항목의 path)만 사용합니다.
+        결함 설명은 대표 항목의 description을 그대로 유지합니다.
+        """
+        merged_map: Dict[Tuple[str, str, int, str], StandardizedFinding] = {}
+        first_path_seen: Dict[Tuple[str, str, int, str], str] = {}
+
+        for f in findings:
+            key = (
+                (f.invicti_name or "").strip().lower(),
+                (f.summary or "").strip(),
+                int(f.severity_rank),
+                (f.recommendation or "").strip(),
+            )
+            if key not in merged_map:
+                # 첫 항목을 대표로 그대로 보관
+                merged_map[key] = f
+                first_path_seen[key] = f.path or ""
+            else:
+                # 이미 존재하면 ai_notes 병합(선택적) 및 대표 path 보존 (변경하지 않음)
+                existing = merged_map[key]
+                # preserve existing.ai_notes but add info that another occurrence existed
+                existing.ai_notes = dict(existing.ai_notes or {})
+                # 증거로서 간단히 카운트/기록 추가 (기존 값 유지)
+                existing.ai_notes.setdefault("merged_count", 1)
+                existing.ai_notes["merged_count"] = existing.ai_notes.get("merged_count", 1) + 1
+                merged_map[key] = existing
+
+        # 반환 시, path는 그룹에서 첫으로 본 path만 사용
+        result: List[StandardizedFinding] = []
+        for key, base in merged_map.items():
+            rep_path = first_path_seen.get(key, base.path)
+            result.append(
+                StandardizedFinding(
+                    invicti_name=base.invicti_name,
+                    path=rep_path,
+                    severity=base.severity,
+                    severity_rank=base.severity_rank,
+                    anchor_id=base.anchor_id,
+                    summary=base.summary,
+                    recommendation=base.recommendation,
+                    category=base.category,
+                    occurrence=base.occurrence,
+                    description=base.description,
+                    excluded=base.excluded,
+                    raw_details=base.raw_details,
+                    ai_notes=base.ai_notes,
+                    source=base.source,
+                )
+            )
+        return result
+
     def _build_dataframe(self, findings: Sequence[StandardizedFinding]) -> pd.DataFrame:
         rows = []
         for finding in findings:
@@ -1023,6 +1348,7 @@ class SecurityReportService:
 
     def _build_csv_view(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         if dataframe.empty:
+            # 빈 경우에도 요구된 최종 컬럼 세트만 노출
             return pd.DataFrame(
                 columns=[
                     "순번",
@@ -1035,11 +1361,8 @@ class SecurityReportService:
                     "업체 응답",
                     "수정여부",
                     "비고",
-                    "Invicti 결과",
-                    "위험도",
-                    "발생경로",
-                    "조치 가이드",
-                    "원본 세부내용",
+                    # 요청에 따라 아래 컬럼은 CSV에서 제거됨:
+                    # "Invicti 결과", "위험도", "발생경로", "조치 가이드", "원본 세부내용",
                     "매핑 유형",
                 ]
             )
@@ -1048,6 +1371,7 @@ class SecurityReportService:
         output.insert(0, "순번", [str(index) for index in range(1, len(output) + 1)])
         output.insert(1, "시험환경 OS", ["시험환경 모든 OS"] * len(output))
 
+        # '결함정도'에서 직접 매핑하여 최종 '결함 정도' 생성 (중간 '위험도' 컬럼 생성하지 않음)
         severity_map = {
             "Critical": "H",
             "High": "H",
@@ -1056,21 +1380,29 @@ class SecurityReportService:
             "Info": "L",
             "Informational": "L",
         }
-        output["위험도"] = output["결함정도"].fillna("").astype(str)
-        output["결함 정도"] = output["위험도"].map(severity_map).fillna("M")
+        raw_sev = output["결함정도"].fillna("").astype(str)
+        output["결함 정도"] = raw_sev.map(severity_map).fillna("M")
+
         output["발생 빈도"] = output["발생빈도"].fillna("").astype(str)
         output["품질 특성"] = output["품질특성"].fillna("").astype(str)
         output["결함 설명"] = output["결함 설명"].fillna("").astype(str)
         output["결함 요약"] = output["결함 요약"].fillna("").astype(str)
-        output["조치 가이드"] = output["조치 가이드"].fillna("").astype(str)
-        output["발생경로"] = output["발생경로"].fillna("").astype(str)
-        output["Invicti 결과"] = output["Invicti 결과"].fillna("").astype(str)
-        output["원본 세부내용"] = output["원본 세부내용"].fillna("").astype(str)
+
+        # 내부적으로는 존재하더라도 CSV에 포함하지 않을 특정 컬럼들에 대해 안전하게 처리
+        if "조치 가이드" in output.columns:
+            output["조치 가이드"] = output["조치 가이드"].fillna("").astype(str)
+        if "발생경로" in output.columns:
+            output["발생경로"] = output["발생경로"].fillna("").astype(str)
+        if "Invicti 결과" in output.columns:
+            output["Invicti 결과"] = output["Invicti 결과"].fillna("").astype(str)
+        if "원본 세부내용" in output.columns:
+            output["원본 세부내용"] = output["원본 세부내용"].fillna("").astype(str)
 
         output["업체 응답"] = ""
         output["수정여부"] = ""
         output["비고"] = "보안성 시험 결과 참고"
 
+        # 최종 CSV 컬럼: 요청된 5개는 제외
         columns = [
             "순번",
             "시험환경 OS",
@@ -1082,11 +1414,6 @@ class SecurityReportService:
             "업체 응답",
             "수정여부",
             "비고",
-            "Invicti 결과",
-            "위험도",
-            "발생경로",
-            "조치 가이드",
-            "원본 세부내용",
             "매핑 유형",
         ]
         return output.reindex(columns=columns)

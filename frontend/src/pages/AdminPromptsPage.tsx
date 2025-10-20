@@ -154,18 +154,24 @@ function buildPreview(config: PromptConfig): string {
     parts.push(intro)
   }
 
-  const descriptorTemplate = config.attachmentDescriptorTemplate || '{{index}}. {{descriptor}}'
-  const descriptorExample = descriptorTemplate
-    .replaceAll('{{index}}', '1')
-    .replaceAll('{{descriptor}}', '사용자 매뉴얼 (PDF)')
-    .replaceAll('{{label}}', '사용자 매뉴얼')
-    .replaceAll('{{description}}', '첨부 자료 설명')
-    .replaceAll('{{extension}}', 'PDF')
-    .replaceAll('{{doc_id}}', 'sample-doc')
-    .replaceAll('{{notes}}', '비고')
-    .replaceAll('{{source_path}}', 'template/sample.pdf')
-  if (descriptorExample.trim()) {
-    parts.push(descriptorExample)
+  const shouldPreviewDescriptor =
+    config.builtinContexts.some((context) => context.includeInPrompt) ||
+    Boolean(config.scaffolding.attachmentsHeading.trim()) ||
+    Boolean(config.scaffolding.attachmentsIntro.trim())
+  if (shouldPreviewDescriptor) {
+    const descriptorTemplate = config.attachmentDescriptorTemplate || '{{index}}. {{descriptor}}'
+    const descriptorExample = descriptorTemplate
+      .replaceAll('{{index}}', '1')
+      .replaceAll('{{descriptor}}', '사용자 매뉴얼 (PDF)')
+      .replaceAll('{{label}}', '사용자 매뉴얼')
+      .replaceAll('{{description}}', '첨부 자료 설명')
+      .replaceAll('{{extension}}', 'PDF')
+      .replaceAll('{{doc_id}}', 'sample-doc')
+      .replaceAll('{{notes}}', '비고')
+      .replaceAll('{{source_path}}', 'template/sample.pdf')
+    if (descriptorExample.trim()) {
+      parts.push(descriptorExample)
+    }
   }
 
   const closingTemplate = config.scaffolding.closingNote.trim()
