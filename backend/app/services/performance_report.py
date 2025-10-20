@@ -83,9 +83,6 @@ class GeneratedWorkbook:
 def detect_os(filename: str, text: str) -> OSType:
     """
     Detect the operating system for a rawdata file.
-
-    The detection favours explicit content-based patterns; if none match,
-    fallback hints derived from the filename or content are used.
     """
     if WINDOWS_PATTERN.search(text):
         return OSType.WINDOWS
@@ -221,9 +218,7 @@ def parse_vmstat(text: str) -> List[Dict[str, Any]]:
 
 
 def parse_android(text: str) -> List[Dict[str, Any]]:
-    """
-    Android 성능 데이터는 Linux(vmstat)와 구조가 동일하다고 가정한다.
-    """
+    """Android 성능 데이터는 Linux(vmstat)와 구조가 동일하다고 가정한다."""
     return parse_vmstat(text)
 
 
@@ -352,6 +347,8 @@ class PerformanceReportBuilder:
         self._workbook.save(buffer)
         buffer.seek(0)
         raw_bytes = buffer.getvalue()
+
+        # 차트 XML 전역 재작성(원본 템플릿 시트 참조 제거)
         rename_targets = {
             (new_title, base_title)
             for new_title, base_title in self._chart_reference_jobs
@@ -367,7 +364,6 @@ class PerformanceReportBuilder:
                 raise PerformanceReportError(f"템플릿에서 '{os_type.sheet_name}' 시트를 찾지 못했습니다.")
             if not datasets:
                 continue
-            # Ensure template sheet name is original before cloning
             template_sheet = self._workbook[os_type.sheet_name]
             self._ensure_chart_templates(template_sheet)
 
@@ -375,7 +371,6 @@ class PerformanceReportBuilder:
         sheets: List[Worksheet] = []
         if count <= 0:
             return sheets
-
         sheets.append(template_sheet)
         template_chart_snapshot = list(template_sheet._charts or [])
         for _ in range(count - 1):
@@ -388,11 +383,8 @@ class PerformanceReportBuilder:
     def _ensure_chart_templates(self, sheet: Worksheet) -> None:
         if not getattr(sheet, "_charts", None):
             return
-        # Nothing to do for the base template sheet that already has charts.
-        # Copying a worksheet drops charts, so when _charts is empty we restore from template.
         if sheet._charts:  # pragma: no cover - template already prepared
             return
-
         raise PerformanceReportError(f"'{sheet.title}' 시트에서 차트 템플릿을 찾지 못했습니다.")
 
     def _insert_records(self, sheet: Worksheet, dataset: RawDataset) -> None:
@@ -451,7 +443,6 @@ class PerformanceReportBuilder:
         self._clear_tail(sheet, start_row=row, columns=(4, 5, 16))
 
     def _clear_tail(self, sheet: Worksheet, start_row: int, columns: Sequence[int]) -> None:
-        # Clear remaining tail rows to avoid stray artifacts.
         max_row = sheet.max_row
         if start_row > max_row:
             return
@@ -472,23 +463,34 @@ class PerformanceReportBuilder:
 
         for chart in charts:
             for series in list(getattr(chart, "series", [])):
-                if hasattr(series, "values") and isinstance(series.values, Reference):
-                    series.values = Reference(
-                        sheet,
-                        min_col=series.values.min_col,
-                        min_row=series.values.min_row,
-                        max_col=series.values.max_col,
-                        max_row=end_row,
-                    )
-                if hasattr(series, "xvalues") and isinstance(series.xvalues, Reference):
-                    series.xvalues = Reference(
-                        sheet,
-                        min_col=series.xvalues.min_col,
-                        min_row=series.xvalues.min_row,
-                        max_col=series.xvalues.max_col,
-                        max_row=end_row,
-                    )
+                # Values 범위가 Reference면 행 범위 늘리기
+                if hasattr(series, "values"):
+                    if isinstance(series.values, Reference):
+                        series.values = Reference(
+                            sheet,
+                            min_col=series.values.min_col,
+                            min_row=series.values.min_row,
+                            max_col=series.values.max_col,
+                            max_row=end_row,
+                        )
+                    elif isinstance(series.values, str):
+                        # 문자열 수식인 경우 시트명만 보정
+                        series.values = self._rewrite_sheet_reference(series.values, sheet.title)
 
+                # XValues 범위가 Reference면 행 범위 늘리기
+                if hasattr(series, "xvalues"):
+                    if isinstance(series.xvalues, Reference):
+                        series.xvalues = Reference(
+                            sheet,
+                            min_col=series.xvalues.min_col,
+                            min_row=series.xvalues.min_row,
+                            max_col=series.xvalues.max_col,
+                            max_row=end_row,
+                        )
+                    elif isinstance(series.xvalues, str):
+                        series.xvalues = self._rewrite_sheet_reference(series.xvalues, sheet.title)
+
+                # 시리즈 라벨 수식의 시트명도 보정
                 label = getattr(series, "tx", None)
                 if label is not None:
                     str_ref = getattr(label, "strRef", None)
@@ -505,7 +507,6 @@ class PerformanceReportBuilder:
             if sheet_name in expected_titles:
                 continue
             if sheet_name in (ost.sheet_name for ost in OSType):
-                # Remove unused template sheet.
                 del self._workbook[sheet_name]
 
     def _remove_external_links(self) -> None:
@@ -515,33 +516,29 @@ class PerformanceReportBuilder:
 
     def _rename_defined_names(self, old_title: str, new_title: str) -> None:
         defined_names = getattr(self._workbook, "defined_names", None)
-        if defined_names is None:
+        if not defined_names:
             return
 
-        for definition in list(getattr(defined_names, "definedName", [])):
-            text = definition.text
-            if not text:
-                continue
-            quoted_old = quote_sheetname(old_title)
-            quoted_new = quote_sheetname(new_title)
+        quoted_old = quote_sheetname(old_title)
+        quoted_new = quote_sheetname(new_title)
 
-            if text.startswith(f"{old_title}!"):
-                definition.text = quoted_new + text[len(old_title):]
-            elif text.startswith(f"{quoted_old}!"):
-                definition.text = quoted_new + text[len(quoted_old):]
+        for definition in list(getattr(defined_names, "definedName", [])):
+            txt = definition.text or ""
+            # 시트명 참조가 문자열 어디에 있어도 전역 치환
+            replaced = txt.replace(f"{old_title}!", f"{quoted_new}!") \
+                          .replace(f"{quoted_old}!", f"{quoted_new}!")
+            if replaced != txt:
+                definition.text = replaced
 
     @staticmethod
     def _rewrite_sheet_reference(formula: str, sheet_title: str) -> str:
         if "!" not in formula:
             return formula
-
         quoted_new = quote_sheetname(sheet_title)
         if formula.startswith(f"{sheet_title}!") or formula.startswith(f"{quoted_new}!"):
             return formula
-
         _, rest = formula.split("!", 1)
         return f"{quoted_new}!{rest}"
-
 
 
 def clone_charts(source: Worksheet, target: Worksheet) -> None:
@@ -629,6 +626,7 @@ class PerformanceReportService:
             google_id=google_id,
         )
 
+        # 빈 템플릿 정리
         await self._drive_service.delete_files_by_name(
             parent_id=target_folder_id,
             name="GS-X-XX-XXXX 성능시험.xlsx",
@@ -664,6 +662,10 @@ class PerformanceReportService:
                 return candidate
         raise HTTPException(status_code=422, detail=f"지원하지 않는 운영체제 지정입니다: {normalized}")
 
+
+# -------------------------
+# Chart XML rewrite helpers
+# -------------------------
 
 def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tuple[str, str]]) -> bytes:
     targets = [target for target in rename_targets if target[0] != target[1]]
@@ -709,6 +711,8 @@ def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tu
             rel_path = _sheet_relationship_path(sheet_xml_path)
             if rel_path not in zin.namelist():
                 continue
+
+            # NOTE: Target of a .rels is resolved RELATIVE TO THE .rels FILE'S FOLDER
             sheet_rel_tree = ET.fromstring(zin.read(rel_path))
             drawing_targets: List[str] = []
             for rel in sheet_rel_tree.findall("rel:Relationship", rel_ns):
@@ -716,7 +720,9 @@ def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tu
                 if rel_type == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing":
                     target = rel.get("Target")
                     if target:
-                        drawing_targets.append(_normalize_zip_path(posixpath.join(posixpath.dirname(rel_path), target)))
+                        drawing_targets.append(
+                            _normalize_zip_path(posixpath.join(posixpath.dirname(rel_path), target))
+                        )
 
             for drawing_path in drawing_targets:
                 if drawing_path not in zin.namelist():
@@ -725,6 +731,7 @@ def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tu
                 drawing_rel_path = _drawing_relationship_path(drawing_path)
                 if drawing_rel_path not in zin.namelist():
                     continue
+
                 drawing_rel_tree = ET.fromstring(zin.read(drawing_rel_path))
                 chart_id_to_target: Dict[str, str] = {}
                 for rel in drawing_rel_tree.findall("rel:Relationship", rel_ns):
@@ -740,23 +747,28 @@ def _rewrite_chart_references(workbook_bytes: bytes, rename_targets: Iterable[Tu
                     "c": "http://schemas.openxmlformats.org/drawingml/2006/chart",
                     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
                 }
-                for anchor in drawing_tree.findall("xdr:twoCellAnchor", chart_ns):
-                    chart_elem = anchor.find(".//c:chart", chart_ns)
-                    if chart_elem is None:
-                        continue
-                    r_id = chart_elem.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
-                    if not r_id or r_id not in chart_id_to_target:
-                        continue
-                    chart_target = _normalize_zip_path(
-                        posixpath.join(posixpath.dirname(drawing_rel_path), chart_id_to_target[r_id])
-                    )
-                    if chart_target not in zin.namelist():
-                        continue
-                    original_xml = chart_overrides.get(chart_target)
-                    if original_xml is None:
-                        original_xml = zin.read(chart_target)
-                    updated_xml = _replace_sheet_references_in_xml(original_xml, base_title, new_title)
-                    chart_overrides[chart_target] = updated_xml
+                # Cover all possible anchor types
+                for anchor_tag in ("xdr:twoCellAnchor", "xdr:oneCellAnchor", "xdr:absoluteAnchor"):
+                    for anchor in drawing_tree.findall(anchor_tag, chart_ns):
+                        chart_elem = anchor.find(".//c:chart", chart_ns)
+                        if chart_elem is None:
+                            continue
+                        r_id = chart_elem.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+                        if not r_id or r_id not in chart_id_to_target:
+                            continue
+
+                        # NOTE: Chart Target is relative to the DRAWING .rels folder
+                        chart_target = _normalize_zip_path(
+                            posixpath.join(posixpath.dirname(drawing_rel_path), chart_id_to_target[r_id])
+                        )
+                        if chart_target not in zin.namelist():
+                            continue
+
+                        original_xml = chart_overrides.get(chart_target)
+                        if original_xml is None:
+                            original_xml = zin.read(chart_target)
+                        updated_xml = _replace_sheet_references_in_xml(original_xml, base_title, new_title)
+                        chart_overrides[chart_target] = updated_xml
 
         if not chart_overrides:
             return workbook_bytes
@@ -806,3 +818,4 @@ def _replace_sheet_references_in_xml(content: bytes, base_title: str, new_title:
     for old, new in replacements:
         text = text.replace(old, new)
     return text.encode("utf-8")
+
