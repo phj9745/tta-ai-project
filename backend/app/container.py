@@ -6,7 +6,9 @@ from .services.prompt_config import PromptConfigService
 from .services.prompt_request_log import PromptRequestLogService
 from .services.google_drive import GoogleDriveService
 from .services.oauth import GoogleOAuthService
+from .services.security_report import SecurityReportService
 from .token_store import TokenStorage
+from openai import OpenAI
 
 
 class Container:
@@ -25,6 +27,14 @@ class Container:
         self._prompt_request_log_service = PromptRequestLogService(request_log_path)
         self._ai_generation_service = AIGenerationService(
             self._settings, self._prompt_config_service, self._prompt_request_log_service
+        )
+        api_key = self._settings.openai_api_key
+        openai_client = OpenAI(api_key=api_key) if api_key else OpenAI()
+        self._security_report_service = SecurityReportService(
+            self._drive_service,
+            self._prompt_config_service,
+            self._prompt_request_log_service,
+            openai_client,
         )
 
     @property
@@ -54,3 +64,7 @@ class Container:
     @property
     def prompt_request_log_service(self) -> PromptRequestLogService:
         return self._prompt_request_log_service
+
+    @property
+    def security_report_service(self) -> SecurityReportService:
+        return self._security_report_service

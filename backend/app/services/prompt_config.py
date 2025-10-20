@@ -252,33 +252,84 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
     ),
     "defect-report": PromptConfig(
         label="결함 리포트",
-        summary="테스트 로그와 증적 자료를 바탕으로 결함 요약을 생성합니다.",
-        request_description="핵심 결함을 선별해 CSV 테이블로 정리합니다.",
-        system_prompt="당신은 QA 분석가입니다. 업로드된 테스트 로그와 증적 자료를 바탕으로 결함 요약을 작성합니다.",
+        summary="정제된 결함 목록과 증적 자료를 바탕으로 결함 리포트 표를 작성합니다.",
+        request_description="결함별 현상, 심각도, 발생 정보를 표 형식으로 정리합니다.",
+        system_prompt="당신은 QA 분석가입니다. 업로드된 정제된 결함 설명과 첨부 증적을 바탕으로 결함 리포트를 작성합니다.",
         user_prompt=(
-            "자료를 분석해 주요 결함을 요약한 CSV를 작성하세요. 열은 결함 ID, 심각도, 발생 모듈, 현상 요약, 제안 조치입니다. "
-            "결함 ID는 BUG-001 형식을 사용하고, 심각도는 치명/중대/보통/경미 중 하나로 표기합니다."
+            "정제된 결함 목록과 첨부 자료를 참고하여 다음 열을 포함한 CSV를 작성하세요: 순번, 시험환경(OS), 결함요약, 결함정도, 발생빈도, 품질특성, 결함 설명, 업체 응답, 수정여부, 비고. "
+            "자료가 없는 항목은 '-'로 표기하고, 첨부 이미지가 있다면 결함 설명 또는 비고에 파일명을 괄호로 명시하세요."
         ),
+        user_prompt_sections=[
+            PromptSection(
+                id="defect-analysis",
+                label="작성 지침",
+                content=(
+                    "1. 정제된 결함 문장을 기반으로 현상을 공식 문체로 요약하고 필요한 경우 시험환경이나 재현 조건을 보완하세요.\n"
+                    "2. 결함정도는 치명/중대/보통/경미 중에서 판단하여 기입하고, 발생빈도는 Always/Intermittent 등 로그에 근거해 작성하세요.\n"
+                    "3. 품질특성에는 기능성, 신뢰성 등 관련 분류를 지정하고, 업체 응답과 수정여부는 근거 자료가 없으면 '-'로 표기합니다."
+                ),
+            ),
+            PromptSection(
+                id="defect-attachments",
+                label="첨부 활용",
+                content=(
+                    "첨부 이미지가 존재하면 결함 설명 또는 비고에 '(첨부: 파일명)' 형태로 명시하여 표와 첨부를 연결하세요."
+                ),
+            ),
+            PromptSection(
+                id="defect-format",
+                label="출력 형식",
+                content=(
+                    "모든 열을 지정된 순서로 포함한 CSV만 출력하세요. 값이 비어 있으면 '-'를 사용하고, 순번은 1부터 원본 순서를 유지합니다."
+                ),
+            ),
+        ],
         scaffolding=PromptScaffolding(
             attachments_heading="첨부 파일 목록",
-            attachments_intro="참고 자료를 검토하여 결함을 정리하세요.",
+            attachments_intro=(
+                "정제된 결함 요약과 추가 증적을 참고하여 결함을 정리하세요.\n"
+                "이미지나 로그 파일이 있다면 해당 결함과 매핑해 활용하세요."
+            ),
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
         ),
     ),
     "security-report": PromptConfig(
         label="보안성 리포트",
-        summary="보안 점검 결과와 취약점 목록을 요약합니다.",
-        request_description="발견된 취약점을 위험도와 함께 정리합니다.",
-        system_prompt="당신은 보안 컨설턴트입니다. 업로드된 보안 점검 결과를 요약한 리포트를 만듭니다.",
+        summary="Invicti HTML 보고서를 기반으로 결함 요약과 조치 지침을 생성합니다.",
+        request_description="결함 요약(JSON)과 템플릿 자동 작성에 필요한 지시를 관리합니다.",
+        system_prompt=(
+            "당신은 Invicti HTML 보고서를 분석하여 보안 결함을 표준 템플릿에 맞게 요약하는 한국어 보안 분석가입니다. "
+            "응답은 항상 JSON 형식이어야 합니다."
+        ),
         user_prompt=(
-            "자료를 바탕으로 취약점을 정리한 CSV를 작성하세요. 열은 취약점 ID, 위험도, 영향 영역, 발견 내용, 권장 조치입니다. "
-            "위험도는 높음/중간/낮음 중 하나를 사용합니다."
+            "다음 Invicti 결함 정보를 검토하고 요구된 필드를 포함하는 JSON 객체를 작성하세요. "
+            "필수 필드: summary(간단 요약), description(3문장 이상 상세 설명), "
+            "recommendation(조치 가이드), category(품질 특성), occurrence(발생 빈도 권장 값).\n\n"
+            "{{finding_details_block}}\n\n"
+            "추가 참고 정보:\n{{context_block}}"
         ),
         scaffolding=PromptScaffolding(
-            attachments_heading="첨부 파일 목록",
-            attachments_intro="다음 자료를 확인하고 취약점을 정리하세요.",
-            format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
+            attachments_heading="",
+            attachments_intro="",
+            closing_note=(
+                "다음 결함 설명을 읽고 지정된 플레이스홀더에 맞는 값을 JSON으로 추출하세요.\n"
+                "플레이스홀더 목록: {{placeholder_list}}\n"
+                "첨부 정보가 없으면 빈 문자열을 사용하고, 번호나 장식 문자는 제거하세요."
+            ),
+            format_warning="응답은 JSON 객체 하나로만 반환하세요.",
         ),
+        user_prompt_sections=[
+            PromptSection(
+                id="security-guidelines",
+                label="작성 지침",
+                content=(
+                    "- summary는 6~18자의 한국어 명사구로 작성하고 번호, 괄호, 문장 부호를 사용하지 마세요.\n"
+                    "- description은 2~3문장으로 문제 원인, 영향 경로, 개선 방향을 자연스럽게 설명하세요.\n"
+                    "- 번호나 목록 대신 문장으로 작성하고, 불필요한 인용부호나 HTML 표기를 제거하세요.\n"
+                    '- "암호화 목록" 정보가 제공되면 마지막 문장에 "취약한 암호화 목록: ..." 형식으로 그대로 포함하세요.'
+                ),
+            )
+        ],
     ),
     "performance-report": PromptConfig(
         label="성능 평가 리포트",

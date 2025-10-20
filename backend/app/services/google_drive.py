@@ -14,10 +14,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDi
 import httpx
 from docx import Document
 from fastapi import HTTPException, UploadFile
+from openpyxl import Workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
-from .excel_templates import populate_feature_list, populate_testcase_list
+from .excel_templates import (
+    populate_defect_report,
+    populate_feature_list,
+    populate_testcase_list,
+)
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,7 @@ DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DRIVE_FILES_ENDPOINT = "/files"
 DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3"
 DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
+GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
 XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PROJECT_FOLDER_BASE_NAME = "GS-X-X-XXXX"
 TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
@@ -35,6 +41,41 @@ PLACEHOLDER_PATTERNS: Tuple[str, ...] = (
     "GS-X-X-XXXX",
 )
 EXAM_NUMBER_PATTERN = re.compile(r"GS-[A-Z]-\d{2}-\d{4}")
+
+
+_SHARED_CRITERIA_FILE_CANDIDATES: Tuple[str, ...] = (
+    "보안성 결함판단기준표 v1.0.xlsx",
+    "결함판단기준표 v1.0.xlsx",
+    "결함 판단 기준표 v1.0.xlsx",
+    "결함 판단기준표 v1.0.xlsx",
+    "공유 결함판단기준표 v1.0.xlsx",
+    "공유 결함 판단 기준표 v1.0.xlsx",
+)
+
+
+def _normalize_shared_criteria_name(name: str) -> str:
+    base = name.strip().lower()
+    if base.endswith(".xlsx"):
+        base = base[:-5]
+    return re.sub(r"\s+", "", base)
+
+
+_SHARED_CRITERIA_NORMALIZED_NAMES = {
+    _normalize_shared_criteria_name(candidate) for candidate in _SHARED_CRITERIA_FILE_CANDIDATES
+}
+_PREFERRED_SHARED_CRITERIA_FILE_NAME = _SHARED_CRITERIA_FILE_CANDIDATES[0]
+
+
+def _is_shared_criteria_candidate(filename: str) -> bool:
+    """
+    템플릿 파일명이 공유 결함판단기준표 후보들과 동일(공백/대소문자/확장자 무시)한지 판정.
+    프로젝트 폴더 복사에서 제외하기 위해 사용.
+    """
+    try:
+        normalized = _normalize_shared_criteria_name(filename)
+    except Exception:
+        return False
+    return normalized in _SHARED_CRITERIA_NORMALIZED_NAMES
 
 
 class _SpreadsheetRule(TypedDict):
@@ -53,6 +94,11 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
         "folder_name": "나.설계",
         "file_suffix": "테스트케이스.xlsx",
         "populate": populate_testcase_list,
+    },
+    "defect-report": {
+        "folder_name": "다.수행",
+        "file_suffix": "결함리포트 v1.0.xlsx",
+        "populate": populate_defect_report,
     },
 }
 
@@ -192,6 +238,36 @@ class GoogleDriveService:
         mime_type, _ = mimetypes.guess_type(path.name)
         return mime_type or "application/octet-stream"
 
+    @staticmethod
+    def _build_default_shared_criteria_workbook() -> bytes:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "결함판단기준"
+        headers = [
+            "Invicti 결과",
+            "결함 요약",
+            "결함정도",
+            "발생빈도",
+            "품질특성",
+            "결함 설명",
+            "결함 제외 여부",
+        ]
+        sheet.append(headers)
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        return buffer.getvalue()
+
+    @staticmethod
+    def _load_shared_criteria_template_bytes() -> bytes:
+        for candidate in _SHARED_CRITERIA_FILE_CANDIDATES:
+            template_path = TEMPLATE_ROOT / candidate
+            if template_path.exists():
+                return template_path.read_bytes()
+        logger.warning(
+            "Shared criteria template not found in template folder; generating a default workbook."
+        )
+        return GoogleDriveService._build_default_shared_criteria_workbook()
+
     async def _copy_template_to_drive(
         self,
         tokens: StoredTokens,
@@ -218,6 +294,11 @@ class GoogleDriveService:
                 path_to_folder_id[local_dir] = str(folder["id"])
 
             for filename in sorted(filenames):
+                # ✅ 공유 결함판단기준표는 프로젝트 폴더에 복사하지 않음
+                if _is_shared_criteria_candidate(filename):
+                    logger.info("Skip copying shared criteria into project: %s", filename)
+                    continue
+
                 local_file = current_path / filename
                 target_name = self._replace_placeholders(filename, exam_number)
                 content = self._prepare_template_file_content(local_file, exam_number)
@@ -485,16 +566,24 @@ class GoogleDriveService:
         tokens: StoredTokens,
         *,
         file_id: str,
+        mime_type: Optional[str] = None,
     ) -> Tuple[bytes, StoredTokens]:
         active_tokens = tokens
         for attempt in range(2):
             headers = {
                 "Authorization": f"Bearer {active_tokens.access_token}",
             }
+            if mime_type == GOOGLE_SHEETS_MIME_TYPE:
+                path = f"{DRIVE_FILES_ENDPOINT}/{file_id}/export"
+                params = {"mimeType": XLSX_MIME_TYPE}
+            else:
+                path = f"{DRIVE_FILES_ENDPOINT}/{file_id}"
+                params = {"alt": "media"}
+
             async with httpx.AsyncClient(timeout=30.0, base_url=DRIVE_API_BASE) as client:
                 response = await client.get(
-                    f"{DRIVE_FILES_ENDPOINT}/{file_id}",
-                    params={"alt": "media"},
+                    path,
+                    params=params,
                     headers=headers,
                 )
 
@@ -608,6 +697,7 @@ class GoogleDriveService:
         workbook_bytes, active_tokens = await self._download_file_content(
             active_tokens,
             file_id=file_id,
+            mime_type=file_entry.get("mimeType"),
         )
 
         try:
@@ -627,10 +717,134 @@ class GoogleDriveService:
             content=updated_bytes,
             content_type=XLSX_MIME_TYPE,
         )
-
         logger.info(
             "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
         )
+
+    async def get_project_exam_number(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> str:
+        """
+        Retrieve the exam number (e.g. GS-B-12-3456) from the Drive project folder name.
+        """
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        params = {"fields": "id,name"}
+        data, _ = await self._drive_request(
+            active_tokens,
+            method="GET",
+            path=f"{DRIVE_FILES_ENDPOINT}/{project_id}",
+            params=params,
+        )
+
+        name = data.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise HTTPException(status_code=404, detail="프로젝트 폴더를 찾을 수 없습니다.")
+
+        match = EXAM_NUMBER_PATTERN.search(name)
+        if not match:
+            raise HTTPException(status_code=404, detail="프로젝트 이름에서 시험신청 번호를 찾을 수 없습니다.")
+
+        return match.group(0)
+
+    async def _ensure_shared_criteria_file(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        preferred_names: Optional[Sequence[str]] = None,
+    ) -> Tuple[Dict[str, Any], StoredTokens, bool]:
+        normalized_candidates = set(_SHARED_CRITERIA_NORMALIZED_NAMES)
+        upload_name = _PREFERRED_SHARED_CRITERIA_FILE_NAME
+        if preferred_names:
+            normalized_candidates.update(
+                _normalize_shared_criteria_name(name)
+                for name in preferred_names
+                if isinstance(name, str) and name.strip()
+            )
+            first_valid = next(
+                (name.strip() for name in preferred_names if isinstance(name, str) and name.strip()),
+                None,
+            )
+            if first_valid:
+                upload_name = first_valid
+
+        files, active_tokens = await self._list_child_files(tokens, parent_id=parent_id)
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str):
+                continue
+            normalized_name = _normalize_shared_criteria_name(name)
+            if normalized_name not in normalized_candidates:
+                continue
+            mime_type = entry.get("mimeType")
+            if isinstance(mime_type, str) and mime_type not in {XLSX_MIME_TYPE, GOOGLE_SHEETS_MIME_TYPE}:
+                logger.warning(
+                    "Ignoring shared criteria candidate with unsupported mime type: %s (%s)",
+                    name,
+                    mime_type,
+                )
+                continue
+            normalized_entry = dict(entry)
+            normalized_entry["mimeType"] = mime_type if isinstance(mime_type, str) else None
+            return normalized_entry, active_tokens, False
+
+        content = GoogleDriveService._load_shared_criteria_template_bytes()
+        uploaded_entry, updated_tokens = await self._upload_file_to_folder(
+            active_tokens,
+            file_name=upload_name,
+            parent_id=parent_id,
+            content=content,
+            content_type=XLSX_MIME_TYPE,
+        )
+        uploaded_entry = dict(uploaded_entry)
+        uploaded_entry.setdefault("name", upload_name)
+        uploaded_entry["mimeType"] = XLSX_MIME_TYPE
+        logger.info(
+            "Uploaded shared criteria template to gs folder: %s",
+            uploaded_entry.get("name"),
+        )
+        return uploaded_entry, updated_tokens, True
+
+    async def download_shared_security_criteria(
+        self,
+        *,
+        google_id: Optional[str],
+        file_name: str,
+    ) -> bytes:
+        self._oauth_service.ensure_credentials()
+        stored_tokens = self._load_tokens(google_id)
+        active_tokens = await self._ensure_valid_tokens(stored_tokens)
+
+        folder, active_tokens = await self._find_root_folder(active_tokens, folder_name="gs")
+        if folder is None:
+            folder, active_tokens = await self._create_root_folder(active_tokens, folder_name="gs")
+        gs_folder_id = str(folder["id"])
+
+        file_entry, active_tokens, _ = await self._ensure_shared_criteria_file(
+            active_tokens,
+            parent_id=gs_folder_id,
+            preferred_names=(file_name,),
+        )
+
+        file_id = file_entry.get("id")
+        if not isinstance(file_id, str):
+            logger.error("Shared criteria entry missing id: %s", file_entry)
+            raise HTTPException(status_code=502, detail="결함 판단 기준표 ID를 확인할 수 없습니다.")
+
+        content, _ = await self._download_file_content(
+            active_tokens,
+            file_id=file_id,
+            mime_type=file_entry.get("mimeType"),
+        )
+        return content
 
     async def _list_child_folders(
         self,
@@ -728,6 +942,26 @@ class GoogleDriveService:
                 return entry, updated_tokens
         return None, updated_tokens
 
+    async def _find_file_by_name(
+        self,
+        tokens: StoredTokens,
+        *,
+        parent_id: str,
+        name: str,
+        mime_type: Optional[str] = None,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        files, updated_tokens = await self._list_child_files(
+            tokens, parent_id=parent_id, mime_type=mime_type
+        )
+        normalized_name = name.strip()
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            file_name = entry.get("name")
+            if isinstance(file_name, str) and file_name.strip() == normalized_name:
+                return entry, updated_tokens
+        return None, updated_tokens
+
     async def ensure_drive_setup(self, google_id: Optional[str]) -> Dict[str, Any]:
         self._oauth_service.ensure_credentials()
         stored_tokens = self._load_tokens(google_id)
@@ -737,10 +971,21 @@ class GoogleDriveService:
         folder_created = False
 
         if folder is None:
-            folder, active_tokens = await self._create_root_folder(active_tokens, folder_name="gs")
+            folder, active_tokens = await self._create_root_folder(
+                active_tokens, folder_name="gs"
+            )
             folder_created = True
 
-        projects, active_tokens = await self._list_child_folders(active_tokens, parent_id=str(folder["id"]))
+        gs_folder_id = str(folder["id"])
+
+        criteria_sheet, active_tokens, criteria_created = await self._ensure_shared_criteria_file(
+            active_tokens,
+            parent_id=gs_folder_id,
+        )
+
+        projects, active_tokens = await self._list_child_folders(
+            active_tokens, parent_id=str(folder["id"])
+        )
 
         normalized_projects = []
         for item in projects:
@@ -763,6 +1008,12 @@ class GoogleDriveService:
             "folderCreated": folder_created,
             "folderId": folder["id"],
             "folderName": folder.get("name", "gs"),
+            "criteria": {
+                "created": criteria_created,
+                "fileId": criteria_sheet.get("id"),
+                "fileName": criteria_sheet.get("name"),
+                "mimeType": criteria_sheet.get("mimeType"),
+            },
             "projects": normalized_projects,
             "account": {
                 "googleId": active_tokens.google_id,
