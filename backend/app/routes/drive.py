@@ -5,8 +5,9 @@ import csv
 import io
 import json
 import re
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
 from urllib.parse import quote
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -19,11 +20,13 @@ from ..dependencies import (
 )
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
+from ..services.security_report import SecurityReportService
 from ..services.excel_templates import (
     DefectReportImage,
     populate_defect_report,
     populate_feature_list,
     populate_testcase_list,
+    DEFECT_REPORT_EXPECTED_HEADERS
 )
 
 router = APIRouter()

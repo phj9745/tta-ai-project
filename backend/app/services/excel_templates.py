@@ -461,6 +461,20 @@ DEFECT_REPORT_EXPECTED_HEADERS: Sequence[str] = [
     "비고",
 ]
 
+SECURITY_REPORT_EXPECTED_HEADERS: Sequence[str] = [
+    "순번",
+    "시험환경 OS",
+    "결함 요약",
+    "결함 정도",
+    "발생 빈도",
+    "품질 특성",
+    "결함 설명",
+    "업체 응답",
+    "수정여부",
+    "비고",
+    "매핑 유형",
+]
+
 
 def populate_defect_report(
     workbook_bytes: bytes,
@@ -506,6 +520,32 @@ def populate_defect_report(
         image_map,
         column_letter="J",
     )
+
+
+def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
+    records = _parse_csv_records(csv_text, SECURITY_REPORT_EXPECTED_HEADERS)
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(DEFECT_REPORT_EXPECTED_HEADERS)
+    for record in records:
+        writer.writerow(
+            [
+                record.get("순번", ""),
+                record.get("시험환경 OS", ""),
+                record.get("결함 요약", ""),
+                record.get("결함 정도", ""),
+                record.get("발생 빈도", ""),
+                record.get("품질 특성", ""),
+                record.get("결함 설명", ""),
+                record.get("업체 응답", ""),
+                record.get("수정여부", ""),
+                record.get("비고", ""),
+            ]
+        )
+
+    converted_csv = buffer.getvalue()
+    return populate_defect_report(workbook_bytes, converted_csv)
 
 
 def _locate_column_width(root: ET.Element, column_index: int) -> float | None:

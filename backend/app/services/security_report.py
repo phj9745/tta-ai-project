@@ -116,7 +116,7 @@ class SecurityReportService:
             project_id=project_id,
             google_id=google_id,
         )
-        filename = f"[{project_number}] 보안성 결함리포트 v1.0.csv"
+        filename = f"{project_number} 보안성 결함리포트 v1.0.csv"
 
         return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
 
@@ -600,7 +600,6 @@ class SecurityReportService:
                 self._openai_client.responses.create,
                 model="gpt-4.1-mini",
                 input=prompts,
-                response_format={"type": "json_object"},
             )
         except Exception as exc:  # pragma: no cover - OpenAI client failure
             logger.exception("OpenAI call failed for prompt %s", prompt_id)
