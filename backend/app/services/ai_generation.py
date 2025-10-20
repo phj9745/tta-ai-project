@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
+from bs4 import BeautifulSoup
 
 from fastapi import HTTPException, UploadFile
 from docx import Document
