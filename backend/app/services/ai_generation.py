@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Literal
 import asyncio
 import csv
 import base64
@@ -183,6 +187,67 @@ class AIGenerationService:
             return "image"
 
         return "file"
+
+    @classmethod
+    def _normalize_upload_for_openai(cls, upload: BufferedUpload) -> BufferedUpload:
+        content_type = (upload.content_type or "").split(";")[0].strip().lower()
+        extension = Path(upload.name).suffix.lower()
+        if extension in {".html", ".htm"} or content_type == "text/html":
+            return cls._html_to_pdf(upload)
+        return upload
+
+    @staticmethod
+    def _html_to_pdf(upload: BufferedUpload) -> BufferedUpload:
+        try:
+            soup = BeautifulSoup(upload.content, "html.parser")
+            text = soup.get_text(separator="\n", strip=True)
+        except Exception:
+            text = ""
+
+        if not text:
+            try:
+                text = upload.content.decode("utf-8", errors="ignore")
+            except Exception:
+                text = ""
+
+        lines: List[str] = []
+        if text:
+            previous_blank = False
+            for raw_line in text.splitlines():
+                stripped = raw_line.strip()
+                if stripped:
+                    lines.append(stripped)
+                    previous_blank = False
+                elif not previous_blank:
+                    lines.append("")
+                    previous_blank = True
+        if not lines:
+            lines = ["원본 HTML에서 텍스트를 추출하지 못했습니다."]
+
+        pdf_bytes = AIGenerationService._lines_to_pdf(lines)
+
+        stem = Path(upload.name).stem or "document"
+        new_name = f"{stem}.pdf"
+
+        return BufferedUpload(
+            name=new_name,
+            content=pdf_bytes,
+            content_type="application/pdf",
+        )
+
+    @classmethod
+    def _prepare_contexts_for_openai(
+        cls, contexts: Iterable[UploadContext]
+    ) -> List[UploadContext]:
+        prepared: List[UploadContext] = []
+        for context in contexts:
+            normalized_upload = cls._normalize_upload_for_openai(context.upload)
+            if normalized_upload is context.upload:
+                prepared.append(context)
+            else:
+                metadata = dict(context.metadata) if context.metadata is not None else None
+                prepared.append(UploadContext(upload=normalized_upload, metadata=metadata))
+        return prepared
 
     @staticmethod
     def _context_summary(menu_id: str, contexts: List[PromptContextPreview]) -> str:
@@ -1441,8 +1506,12 @@ class AIGenerationService:
                 line = ""
             lines.append(line)
 
+        return AIGenerationService._lines_to_pdf(lines)
+
+    @staticmethod
+    def _lines_to_pdf(lines: List[str]) -> bytes:
         if not lines:
-            lines.append("")
+            lines = [""]
 
         def _escape(text: str) -> str:
             encoded = ("\ufeff" + text).encode("utf-16-be")
