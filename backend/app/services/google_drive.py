@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import json
 import logging
@@ -7,6 +8,7 @@ import mimetypes
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
@@ -14,11 +16,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDi
 import httpx
 from docx import Document
 from fastapi import HTTPException, UploadFile
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
 from .excel_templates import (
+    FEATURE_LIST_EXPECTED_HEADERS,
     populate_defect_report,
     populate_feature_list,
     populate_security_report,
@@ -107,6 +110,21 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
         "populate": populate_security_report,
     },
 }
+
+
+@dataclass
+class _ResolvedSpreadsheet:
+    rule: _SpreadsheetRule
+    tokens: StoredTokens
+    folder_id: str
+    file_id: str
+    file_name: str
+    mime_type: Optional[str]
+    modified_time: Optional[str]
+    content: Optional[bytes] = None
+
+
+_FEATURE_LIST_START_ROW = 8
 
 
 class GoogleDriveService:
@@ -663,17 +681,17 @@ class GoogleDriveService:
 
         raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
-    async def apply_csv_to_spreadsheet(
+    async def _resolve_menu_spreadsheet(
         self,
         *,
         project_id: str,
         menu_id: str,
-        csv_text: str,
         google_id: Optional[str],
-    ) -> None:
+        include_content: bool = False,
+    ) -> _ResolvedSpreadsheet:
         rule = _SPREADSHEET_RULES.get(menu_id)
         if not rule:
-            return
+            raise HTTPException(status_code=404, detail="지원하지 않는 스프레드시트 메뉴입니다.")
 
         self._oauth_service.ensure_credentials()
         stored_tokens = self._load_tokens(google_id)
@@ -699,15 +717,58 @@ class GoogleDriveService:
 
         file_id = str(file_entry["id"])
         file_name = str(file_entry.get("name", rule["file_suffix"]))
-
-        workbook_bytes, active_tokens = await self._download_file_content(
-            active_tokens,
-            file_id=file_id,
-            mime_type=file_entry.get("mimeType"),
+        mime_type = file_entry.get("mimeType")
+        normalized_mime = mime_type if isinstance(mime_type, str) else None
+        modified_time = (
+            str(file_entry.get("modifiedTime"))
+            if isinstance(file_entry.get("modifiedTime"), str)
+            else None
         )
 
+        content: Optional[bytes] = None
+        if include_content:
+            content, active_tokens = await self._download_file_content(
+                active_tokens,
+                file_id=file_id,
+                mime_type=normalized_mime,
+            )
+
+        return _ResolvedSpreadsheet(
+            rule=rule,
+            tokens=active_tokens,
+            folder_id=folder_id,
+            file_id=file_id,
+            file_name=file_name,
+            mime_type=normalized_mime,
+            modified_time=modified_time,
+            content=content,
+        )
+
+    async def apply_csv_to_spreadsheet(
+        self,
+        *,
+        project_id: str,
+        menu_id: str,
+        csv_text: str,
+        google_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        rule = _SPREADSHEET_RULES.get(menu_id)
+        if not rule:
+            return None
+
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id=menu_id,
+            google_id=google_id,
+            include_content=True,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="스프레드시트 내용을 불러오지 못했습니다. 다시 시도해 주세요.")
+
         try:
-            updated_bytes = rule["populate"](workbook_bytes, csv_text)
+            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -716,16 +777,165 @@ class GoogleDriveService:
             )
             raise HTTPException(status_code=500, detail="엑셀 템플릿을 업데이트하지 못했습니다. 다시 시도해주세요.") from exc
 
-        await self._update_file_content(
-            active_tokens,
-            file_id=file_id,
-            file_name=file_name,
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
             content=updated_bytes,
             content_type=XLSX_MIME_TYPE,
         )
         logger.info(
-            "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
+            "Populated project spreadsheet",
+            extra={"project_id": project_id, "menu_id": menu_id, "file_id": resolved.file_id},
         )
+        response: Dict[str, Any] = {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+        return response
+
+    async def get_feature_list_rows(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        buffer = io.BytesIO(workbook_bytes)
+        try:
+            workbook = load_workbook(buffer, data_only=True)
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(status_code=500, detail="엑셀 파일을 읽는 중 오류가 발생했습니다.") from exc
+
+        headers = list(FEATURE_LIST_EXPECTED_HEADERS)
+        extracted_rows: List[Dict[str, str]] = []
+        sheet_title = ""
+        try:
+            sheet = workbook.active
+            sheet_title = sheet.title
+            for row in sheet.iter_rows(
+                min_row=_FEATURE_LIST_START_ROW,
+                max_col=len(headers),
+                values_only=True,
+            ):
+                values = ["" if value is None else str(value).strip() for value in row]
+                if not any(values):
+                    continue
+                padded = values + [""] * (len(headers) - len(values))
+                extracted_rows.append(
+                    {
+                        "majorCategory": padded[0],
+                        "middleCategory": padded[1],
+                        "minorCategory": padded[2],
+                    }
+                )
+        finally:
+            workbook.close()
+
+        if not sheet_title:
+            sheet_title = "기능리스트"
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "sheetName": sheet_title,
+            "startRow": _FEATURE_LIST_START_ROW,
+            "headers": headers,
+            "rows": extracted_rows,
+            "modifiedTime": resolved.modified_time,
+        }
+
+    async def update_feature_list_rows(
+        self,
+        *,
+        project_id: str,
+        rows: Sequence[Dict[str, str]],
+        google_id: Optional[str],
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
+            lineterminator="\n",
+        )
+        writer.writeheader()
+
+        for row in rows:
+            major = str(row.get("majorCategory", "") or "").strip()
+            middle = str(row.get("middleCategory", "") or "").strip()
+            minor = str(row.get("minorCategory", "") or "").strip()
+            if not any([major, middle, minor]):
+                continue
+            writer.writerow({
+                "대분류": major,
+                "중분류": middle,
+                "소분류": minor,
+            })
+
+        csv_text = output.getvalue()
+
+        try:
+            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
+            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
     async def get_project_exam_number(
         self,
