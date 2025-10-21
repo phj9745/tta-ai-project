@@ -1387,8 +1387,7 @@ class AIGenerationService:
             contexts.append(UploadContext(upload=upload, metadata=metadata))
         return contexts
 
-    @staticmethod
-    def _locate_builtin_source(path_hint: str) -> tuple[Path | None, List[Path]]:
+    def _locate_builtin_source(self, path_hint: str) -> tuple[Path | None, List[Path]]:
         """Resolve the on-disk path for a builtin attachment.
 
         Historically the API server has been executed from different working
@@ -1410,7 +1409,7 @@ class AIGenerationService:
         def _candidate(path: Path) -> Optional[Path]:
             resolved = path if path.is_absolute() else path.resolve()
             attempted.append(resolved)
-            if resolved.exists():
+            if resolved.exists() and resolved.is_file():
                 return resolved
             return None
 
@@ -1418,6 +1417,55 @@ class AIGenerationService:
             resolved = _candidate(requested)
             if resolved is not None:
                 return resolved, attempted
+
+        override_root = getattr(self._settings, "builtin_template_root", None)
+        if override_root:
+            override_path = Path(override_root)
+
+            if override_path.is_file():
+                resolved = _candidate(override_path)
+                if resolved is not None:
+                    return resolved, attempted
+
+            relative_variants: List[Path] = []
+
+            if str(requested):
+                relative_variants.append(requested)
+
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = None
+            if relative_to_template and str(relative_to_template):
+                relative_variants.append(relative_to_template)
+
+            parts = list(requested.parts)
+            if parts and parts[0] == "backend":
+                relative_variants.append(Path(*parts[1:]))
+                if len(parts) > 1 and parts[1] == "template":
+                    relative_variants.append(Path(*parts[2:]))
+
+            seen: set[Path] = set()
+            ordered_variants: List[Path] = []
+            for variant in relative_variants:
+                variant_str = str(variant)
+                if not variant_str or variant_str == ".":
+                    continue
+                if variant in seen:
+                    continue
+                seen.add(variant)
+                ordered_variants.append(variant)
+
+            if override_path.is_dir():
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+            else:
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path.parent / variant)
+                    if resolved is not None:
+                        return resolved, attempted
 
         base_path = Path(__file__).resolve().parents[2]
         resolved = _candidate(base_path / requested)
