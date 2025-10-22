@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import csv
 import io
 import json
 import logging
 import mimetypes
 import os
 import re
+import unicodedata
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
@@ -14,11 +17,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDi
 import httpx
 from docx import Document
 from fastapi import HTTPException, UploadFile
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
 from .excel_templates import (
+    FEATURE_LIST_EXPECTED_HEADERS,
     populate_defect_report,
     populate_feature_list,
     populate_security_report,
@@ -67,6 +71,130 @@ _SHARED_CRITERIA_NORMALIZED_NAMES = {
 _PREFERRED_SHARED_CRITERIA_FILE_NAME = _SHARED_CRITERIA_FILE_CANDIDATES[0]
 
 
+def _normalize_drive_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value or "")
+    normalized = normalized.replace("\xa0", " ")
+    normalized = normalized.strip().lower()
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _squash_drive_text(value: str) -> str:
+    if not value:
+        return ""
+    return re.sub(r"[\s._\-()]+", "", value)
+
+
+def _strip_drive_extension(value: str) -> str:
+    if "." in value:
+        return value.rsplit(".", 1)[0]
+    return value
+
+
+def _strip_drive_version_suffix(value: str) -> str:
+    return re.sub(r"v\s*\d+(?:[._\-]\d+)*$", "", value).strip()
+
+
+def _drive_name_variants(value: str) -> Tuple[str, ...]:
+    normalized = _normalize_drive_text(value)
+    if not normalized:
+        return tuple()
+
+    variants = {normalized}
+
+    squashed = _squash_drive_text(normalized)
+    if squashed:
+        variants.add(squashed)
+
+    stem = _strip_drive_extension(normalized)
+    if stem and stem != normalized:
+        variants.add(stem)
+        squashed_stem = _squash_drive_text(stem)
+        if squashed_stem:
+            variants.add(squashed_stem)
+
+    versionless = _strip_drive_version_suffix(stem)
+    if versionless and versionless not in variants:
+        variants.add(versionless)
+        squashed_versionless = _squash_drive_text(versionless)
+        if squashed_versionless:
+            variants.add(squashed_versionless)
+
+    return tuple(variant for variant in variants if len(variant) >= 2)
+
+
+def _drive_name_matches(value: str, expected: str) -> bool:
+    actual_tokens = set(_drive_name_variants(value))
+    expected_tokens = set(_drive_name_variants(expected))
+    if not actual_tokens or not expected_tokens:
+        return False
+    return bool(actual_tokens & expected_tokens)
+
+
+def _drive_suffix_matches(name: str, suffix: str) -> bool:
+    if not suffix:
+        return False
+    suffix_tokens = set(_drive_name_variants(suffix))
+    if not suffix_tokens:
+        return False
+
+    name_tokens = set(_drive_name_variants(name))
+    if not name_tokens:
+        return False
+
+    for token in name_tokens:
+        for suffix_token in suffix_tokens:
+            if suffix_token and (token.endswith(suffix_token) or suffix_token in token):
+                return True
+    return False
+
+
+def _looks_like_header_row(values: Sequence[Any], expected: Sequence[str]) -> bool:
+    if not values:
+        return False
+
+    normalized_values = [
+        _normalize_drive_text(str(value)) if value is not None else ""
+        for value in values
+    ]
+    squashed_values = [_squash_drive_text(value) for value in normalized_values]
+    normalized_expected = [_normalize_drive_text(name) for name in expected]
+    squashed_expected = [_squash_drive_text(name) for name in normalized_expected]
+
+    matches = 0
+    for expected_value, expected_squashed in zip(normalized_expected, squashed_expected):
+        if not expected_value and not expected_squashed:
+            continue
+
+        for actual_value, actual_squashed in zip(normalized_values, squashed_values):
+            if not actual_value and not actual_squashed:
+                continue
+
+            normalized_match = (
+                bool(expected_value)
+                and bool(actual_value)
+                and (
+                    actual_value == expected_value
+                    or expected_value in actual_value
+                    or actual_value in expected_value
+                )
+            )
+            squashed_match = (
+                bool(expected_squashed)
+                and bool(actual_squashed)
+                and expected_squashed in actual_squashed
+            )
+
+            if normalized_match or squashed_match:
+                matches += 1
+                break
+
+    if not matches:
+        return False
+
+    threshold = max(1, len(normalized_expected) - 1)
+    return matches >= threshold
+
+
 def _is_shared_criteria_candidate(filename: str) -> bool:
     """
     템플릿 파일명이 공유 결함판단기준표 후보들과 동일(공백/대소문자/확장자 무시)한지 판정.
@@ -107,6 +235,26 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
         "populate": populate_security_report,
     },
 }
+
+
+@dataclass
+class _ResolvedSpreadsheet:
+    rule: _SpreadsheetRule
+    tokens: StoredTokens
+    folder_id: str
+    file_id: str
+    file_name: str
+    mime_type: Optional[str]
+    modified_time: Optional[str]
+    content: Optional[bytes] = None
+
+
+_FEATURE_LIST_START_ROW = 8
+_FEATURE_LIST_SHEET_CANDIDATES: Tuple[str, ...] = (
+    "기능리스트",
+    "기능 리스트",
+    "feature list",
+)
 
 
 class GoogleDriveService:
@@ -663,17 +811,18 @@ class GoogleDriveService:
 
         raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
-    async def apply_csv_to_spreadsheet(
+    async def _resolve_menu_spreadsheet(
         self,
         *,
         project_id: str,
         menu_id: str,
-        csv_text: str,
         google_id: Optional[str],
-    ) -> None:
+        include_content: bool = False,
+        file_id: Optional[str] = None,
+    ) -> _ResolvedSpreadsheet:
         rule = _SPREADSHEET_RULES.get(menu_id)
         if not rule:
-            return
+            raise HTTPException(status_code=404, detail="지원하지 않는 스프레드시트 메뉴입니다.")
 
         self._oauth_service.ensure_credentials()
         stored_tokens = self._load_tokens(google_id)
@@ -688,26 +837,97 @@ class GoogleDriveService:
             raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['folder_name']}' 폴더를 찾을 수 없습니다.")
 
         folder_id = str(folder["id"])
-        file_entry, active_tokens = await self._find_file_by_suffix(
-            active_tokens,
-            parent_id=folder_id,
-            suffix=rule["file_suffix"],
-            mime_type=XLSX_MIME_TYPE,
-        )
-        if file_entry is None or not file_entry.get("id"):
-            raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+        file_entry: Optional[Dict[str, Any]] = None
+        if file_id:
+            file_entry, active_tokens = await self._get_file_metadata(
+                active_tokens,
+                file_id=file_id,
+            )
+            if file_entry is None or not file_entry.get("id"):
+                raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+
+            parents = file_entry.get("parents")
+            if isinstance(parents, Sequence) and parents:
+                parent_ids = {
+                    parent.decode("utf-8") if isinstance(parent, bytes) else str(parent)
+                    for parent in parents
+                    if isinstance(parent, (str, bytes))
+                }
+                if folder_id not in parent_ids:
+                    logger.warning(
+                        "Drive file is outside expected folder",
+                        extra={
+                            "project_id": project_id,
+                            "menu_id": menu_id,
+                            "expected_folder_id": folder_id,
+                            "file_parents": list(parent_ids),
+                            "file_id": file_id,
+                        },
+                    )
+        else:
+            file_entry, active_tokens = await self._find_file_by_suffix(
+                active_tokens,
+                parent_id=folder_id,
+                suffix=rule["file_suffix"],
+                mime_type=XLSX_MIME_TYPE,
+            )
+            if file_entry is None or not file_entry.get("id"):
+                raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
 
         file_id = str(file_entry["id"])
         file_name = str(file_entry.get("name", rule["file_suffix"]))
-
-        workbook_bytes, active_tokens = await self._download_file_content(
-            active_tokens,
-            file_id=file_id,
-            mime_type=file_entry.get("mimeType"),
+        mime_type = file_entry.get("mimeType")
+        normalized_mime = mime_type if isinstance(mime_type, str) else None
+        modified_time = (
+            str(file_entry.get("modifiedTime"))
+            if isinstance(file_entry.get("modifiedTime"), str)
+            else None
         )
 
+        content: Optional[bytes] = None
+        if include_content:
+            content, active_tokens = await self._download_file_content(
+                active_tokens,
+                file_id=file_id,
+                mime_type=normalized_mime,
+            )
+
+        return _ResolvedSpreadsheet(
+            rule=rule,
+            tokens=active_tokens,
+            folder_id=folder_id,
+            file_id=file_id,
+            file_name=file_name,
+            mime_type=normalized_mime,
+            modified_time=modified_time,
+            content=content,
+        )
+
+    async def apply_csv_to_spreadsheet(
+        self,
+        *,
+        project_id: str,
+        menu_id: str,
+        csv_text: str,
+        google_id: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        rule = _SPREADSHEET_RULES.get(menu_id)
+        if not rule:
+            return None
+
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id=menu_id,
+            google_id=google_id,
+            include_content=True,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="스프레드시트 내용을 불러오지 못했습니다. 다시 시도해 주세요.")
+
         try:
-            updated_bytes = rule["populate"](workbook_bytes, csv_text)
+            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -716,16 +936,232 @@ class GoogleDriveService:
             )
             raise HTTPException(status_code=500, detail="엑셀 템플릿을 업데이트하지 못했습니다. 다시 시도해주세요.") from exc
 
-        await self._update_file_content(
-            active_tokens,
-            file_id=file_id,
-            file_name=file_name,
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
             content=updated_bytes,
             content_type=XLSX_MIME_TYPE,
         )
         logger.info(
-            "Populated project spreadsheet", extra={"project_id": project_id, "menu_id": menu_id, "file_id": file_id}
+            "Populated project spreadsheet",
+            extra={"project_id": project_id, "menu_id": menu_id, "file_id": resolved.file_id},
         )
+        response: Dict[str, Any] = {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+        return response
+
+    async def get_feature_list_rows(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        buffer = io.BytesIO(workbook_bytes)
+        try:
+            workbook = load_workbook(buffer, data_only=True)
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(status_code=500, detail="엑셀 파일을 읽는 중 오류가 발생했습니다.") from exc
+
+        headers = list(FEATURE_LIST_EXPECTED_HEADERS)
+        extracted_rows: List[Dict[str, str]] = []
+        sheet_title = ""
+        start_row = _FEATURE_LIST_START_ROW
+        try:
+            sheet = workbook.active
+            selected_title = sheet.title
+            for candidate in _FEATURE_LIST_SHEET_CANDIDATES:
+                matched = False
+                for title in workbook.sheetnames:
+                    if _drive_name_matches(title, candidate):
+                        try:
+                            sheet = workbook[title]
+                            selected_title = sheet.title
+                            matched = True
+                            break
+                        except KeyError:
+                            continue
+                if matched:
+                    break
+
+            sheet_title = selected_title or ""
+            max_col = max(len(headers), sheet.max_column or len(headers))
+            header_row_index: Optional[int] = None
+            first_data_row_index: Optional[int] = None
+            for idx, row in enumerate(
+                sheet.iter_rows(min_row=1, max_col=max_col, values_only=True),
+                start=1,
+            ):
+                row_values: Sequence[Any] = row if isinstance(row, Sequence) else tuple()
+
+                has_values = False
+                for col_idx in range(len(headers)):
+                    cell_value = row_values[col_idx] if col_idx < len(row_values) else None
+                    if cell_value is None:
+                        continue
+                    if str(cell_value).strip():
+                        has_values = True
+                        break
+
+                header_match = _looks_like_header_row(row_values, headers)
+
+                if has_values and not header_match and first_data_row_index is None:
+                    first_data_row_index = idx
+
+                if header_match:
+                    header_row_index = idx
+                    break
+
+                if idx >= _FEATURE_LIST_START_ROW * 2 and first_data_row_index is not None:
+                    break
+
+            if header_row_index is not None:
+                start_row = header_row_index + 1
+            elif first_data_row_index is not None:
+                start_row = max(1, first_data_row_index)
+
+            for row in sheet.iter_rows(
+                min_row=max(1, start_row),
+                max_col=max_col,
+                values_only=True,
+            ):
+                row_values: Sequence[Any] = row if isinstance(row, Sequence) else tuple()
+
+                if _looks_like_header_row(row_values, headers):
+                    continue
+
+                values = []
+                for idx in range(len(headers)):
+                    cell_value = row_values[idx] if idx < len(row_values) else None
+                    text = "" if cell_value is None else str(cell_value).strip()
+                    values.append(text)
+
+                if not any(values):
+                    continue
+
+                extracted_rows.append(
+                    {
+                        "majorCategory": values[0] if len(values) > 0 else "",
+                        "middleCategory": values[1] if len(values) > 1 else "",
+                        "minorCategory": values[2] if len(values) > 2 else "",
+                    }
+                )
+        finally:
+            workbook.close()
+
+        if not sheet_title:
+            sheet_title = "기능리스트"
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "sheetName": sheet_title,
+            "startRow": start_row,
+            "headers": headers,
+            "rows": extracted_rows,
+            "modifiedTime": resolved.modified_time,
+        }
+
+    async def update_feature_list_rows(
+        self,
+        *,
+        project_id: str,
+        rows: Sequence[Dict[str, str]],
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        output = io.StringIO()
+        writer = csv.DictWriter(
+            output,
+            fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
+            lineterminator="\n",
+        )
+        writer.writeheader()
+
+        for row in rows:
+            major = str(row.get("majorCategory", "") or "").strip()
+            middle = str(row.get("middleCategory", "") or "").strip()
+            minor = str(row.get("minorCategory", "") or "").strip()
+            if not any([major, middle, minor]):
+                continue
+            writer.writerow({
+                "대분류": major,
+                "중분류": middle,
+                "소분류": minor,
+            })
+
+        csv_text = output.getvalue()
+
+        try:
+            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
+            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
     async def get_project_exam_number(
         self,
@@ -868,6 +1304,8 @@ class GoogleDriveService:
             "orderBy": "name_natural",
             "spaces": "drive",
             "pageSize": 100,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
         }
 
         data, updated_tokens = await self._drive_request(
@@ -899,6 +1337,8 @@ class GoogleDriveService:
             "orderBy": "name_natural",
             "spaces": "drive",
             "pageSize": 100,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
         }
 
         data, updated_tokens = await self._drive_request(
@@ -922,11 +1362,16 @@ class GoogleDriveService:
         name: str,
     ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
         folders, updated_tokens = await self._list_child_folders(tokens, parent_id=parent_id)
+        target_variants = set(_drive_name_variants(name))
         for folder in folders:
             if not isinstance(folder, dict):
                 continue
             folder_name = folder.get("name")
-            if isinstance(folder_name, str) and folder_name == name:
+            if not isinstance(folder_name, str):
+                continue
+            if folder_name == name:
+                return folder, updated_tokens
+            if target_variants and set(_drive_name_variants(folder_name)) & target_variants:
                 return folder, updated_tokens
         return None, updated_tokens
 
@@ -938,15 +1383,77 @@ class GoogleDriveService:
         suffix: str,
         mime_type: Optional[str] = None,
     ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
-        files, updated_tokens = await self._list_child_files(tokens, parent_id=parent_id, mime_type=mime_type)
-        normalized_suffix = suffix.strip()
-        for entry in files:
-            if not isinstance(entry, dict):
-                continue
-            name = entry.get("name")
-            if isinstance(name, str) and name.endswith(normalized_suffix):
-                return entry, updated_tokens
+        search_mime_types: Sequence[Optional[str]]
+        if mime_type:
+            search_mime_types = (mime_type, None)
+        else:
+            search_mime_types = (None,)
+
+        updated_tokens = tokens
+        for candidate_mime in search_mime_types:
+            files, updated_tokens = await self._list_child_files(
+                updated_tokens,
+                parent_id=parent_id,
+                mime_type=candidate_mime,
+            )
+            for entry in files:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                if isinstance(name, str):
+                    if name.endswith(suffix.strip()) or _drive_suffix_matches(name, suffix):
+                        return entry, updated_tokens
         return None, updated_tokens
+
+    async def _get_file_metadata(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        active_tokens = tokens
+        params = {
+            "fields": "id,name,mimeType,modifiedTime,parents",
+            "supportsAllDrives": "true",
+        }
+        for attempt in range(2):
+            headers = {
+                "Authorization": f"Bearer {active_tokens.access_token}",
+                "Accept": "application/json",
+            }
+
+            async with httpx.AsyncClient(timeout=10.0, base_url=DRIVE_API_BASE) as client:
+                response = await client.get(
+                    f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+                    params=params,
+                    headers=headers,
+                )
+
+            if response.status_code == 401 and attempt == 0:
+                active_tokens = await self._refresh_access_token(active_tokens)
+                continue
+
+            if response.status_code == 404:
+                return None, active_tokens
+
+            if response.is_error:
+                logger.error("Google Drive metadata fetch failed for %s: %s", file_id, response.text)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive에서 파일 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+                )
+
+            data = response.json() if response.text else {}
+            if not isinstance(data, dict):
+                logger.error("Google Drive metadata response malformed for %s: %s", file_id, data)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive 파일 정보를 확인하지 못했습니다. 다시 시도해주세요.",
+                )
+
+            return data, active_tokens
+
+        raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
     async def _find_file_by_name(
         self,

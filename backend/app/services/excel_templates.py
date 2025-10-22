@@ -155,6 +155,18 @@ def _column_to_index(letter: str) -> int:
     return result
 
 
+def _index_to_column(index: int) -> str:
+    if index <= 0:
+        index = 1
+    letters: List[str] = []
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    if not letters:
+        return "A"
+    return "".join(reversed(letters))
+
+
 def _split_cell(reference: str) -> tuple[str, int]:
     match = re.match(r"([A-Z]+)(\d+)", reference)
     if not match:
@@ -187,23 +199,40 @@ class WorksheetPopulator:
         if self._sheet_data is None:
             raise ValueError("워크시트 데이터 영역을 찾을 수 없습니다.")
 
+        self._start_row = start_row
+        self._column_specs = list(columns)
+        if not self._column_specs:
+            raise ValueError("채울 열 정보가 없습니다.")
+
         self._dimension = self._root.find("s:dimension", self._ns)
-        if self._dimension is None:
-            raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
-        ref = self._dimension.get("ref")
+        ref = ""
+        if self._dimension is not None:
+            ref = (self._dimension.get("ref") or "").strip()
+
         if not ref:
-            raise ValueError("워크시트 범위 정보를 확인할 수 없습니다.")
+            ref = self._infer_dimension()
+            if not ref:
+                raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
+
+            dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+            if self._dimension is None:
+                self._dimension = ET.Element(dimension_tag)
+                inserted = False
+                for idx, child in enumerate(list(self._root)):
+                    if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                        self._root.insert(idx, self._dimension)
+                        inserted = True
+                        break
+                if not inserted:
+                    self._root.insert(0, self._dimension)
+            self._dimension.set("ref", ref)
+
         (
             self._dimension_start_col,
             self._dimension_start_row,
             self._dimension_end_col,
             self._dimension_end_row,
         ) = _parse_dimension(ref)
-
-        self._start_row = start_row
-        self._column_specs = list(columns)
-        if not self._column_specs:
-            raise ValueError("채울 열 정보가 없습니다.")
 
         self._row_cache: Dict[int, ET.Element] = {}
         for row in self._sheet_data.findall("s:row", self._ns):
@@ -220,6 +249,70 @@ class WorksheetPopulator:
         if template_row is None:
             raise ValueError("템플릿 행을 찾을 수 없습니다.")
         self._template_row = copy.deepcopy(template_row)
+
+    def _infer_dimension(self) -> str | None:
+        min_col: int | None = None
+        max_col: int | None = None
+        min_row: int | None = None
+        max_row: int | None = None
+
+        for row in self._sheet_data.findall("s:row", self._ns):
+            row_index = _safe_int(row.get("r"))
+            if row_index is not None:
+                if min_row is None or row_index < min_row:
+                    min_row = row_index
+                if max_row is None or row_index > max_row:
+                    max_row = row_index
+
+            for cell in row.findall("s:c", self._ns):
+                ref = (cell.get("r") or "").strip()
+                if not ref:
+                    continue
+                try:
+                    column, row_number = _split_cell(ref)
+                except ValueError:
+                    if row_index is None:
+                        continue
+                    column = "".join(filter(str.isalpha, ref))
+                    if not column:
+                        continue
+                    row_number = row_index
+
+                column_index = _column_to_index(column)
+                if column_index:
+                    if min_col is None or column_index < min_col:
+                        min_col = column_index
+                    if max_col is None or column_index > max_col:
+                        max_col = column_index
+                if row_number:
+                    if min_row is None or row_number < min_row:
+                        min_row = row_number
+                    if max_row is None or row_number > max_row:
+                        max_row = row_number
+
+        if (min_col is None or max_col is None) and self._column_specs:
+            column_indices = [
+                _column_to_index(spec.letter)
+                for spec in self._column_specs
+                if spec.letter
+            ]
+            if column_indices:
+                if min_col is None:
+                    min_col = min(column_indices)
+                if max_col is None:
+                    max_col = max(column_indices)
+
+        if min_row is None:
+            min_row = self._start_row
+        if max_row is None:
+            max_row = self._start_row
+
+        if min_col is None or max_col is None:
+            return None
+
+        start_col = _index_to_column(min_col)
+        end_col = _index_to_column(max_col)
+        return f"{start_col}{min_row}:{end_col}{max_row}"
 
     def _tag(self, name: str) -> str:
         return f"{{{_SPREADSHEET_NS}}}{name}"
