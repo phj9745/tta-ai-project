@@ -1163,6 +1163,12 @@ class GoogleDriveService:
 
         return resolved.file_name, workbook_bytes
 
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
+
     async def get_project_exam_number(
         self,
         *,
