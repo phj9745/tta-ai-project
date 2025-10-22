@@ -1169,7 +1169,7 @@ class GoogleDriveService:
                     "중분류": middle,
                     "소분류": minor,
                     "기능 설명": description,
-                    "기능 개요": overview,
+                    "개요": overview,
                 }
             )
 
@@ -1211,6 +1211,70 @@ class GoogleDriveService:
             include_content=True,
             file_id=file_id,
         )
+        writer.writeheader()
+
+        for row in rows:
+            major = str(row.get("majorCategory", "") or "").strip()
+            middle = str(row.get("middleCategory", "") or "").strip()
+            minor = str(row.get("minorCategory", "") or "").strip()
+            if not any([major, middle, minor]):
+                continue
+            writer.writerow({
+                "대분류": major,
+                "중분류": middle,
+                "소분류": minor,
+            })
+
+        csv_text = output.getvalue()
+
+        try:
+            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
+            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
         workbook_bytes = resolved.content
         if workbook_bytes is None:

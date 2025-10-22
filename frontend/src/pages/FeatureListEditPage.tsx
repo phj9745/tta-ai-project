@@ -25,7 +25,7 @@ interface FeatureListResponse {
 
 type LoadState = 'idle' | 'loading' | 'error' | 'ready'
 
-const DEFAULT_HEADERS = ['대분류', '중분류', '소분류', '기능 설명', '기능 개요']
+const DEFAULT_HEADERS = ['대분류', '중분류', '소분류', '기능 설명', '개요']
 
 function createEmptyRow(): FeatureListRow {
   return {
@@ -152,7 +152,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
       middleCategory: headers[1]?.trim() || '중분류',
       minorCategory: headers[2]?.trim() || '소분류',
       featureDescription: headers[3]?.trim() || '기능 설명',
-      featureOverview: headers[4]?.trim() || '기능 개요',
+      featureOverview: headers[4]?.trim() || '개요',
     }),
     [headers],
   )
