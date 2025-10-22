@@ -1,6 +1,6 @@
 import './FeatureListEditPage.css'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
@@ -86,8 +86,21 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
   const [rows, setRows] = useState<FeatureListRow[]>([createEmptyRow()])
   const [headers, setHeaders] = useState<string[]>(DEFAULT_HEADERS)
   const [sheetName, setSheetName] = useState<string>('기능리스트')
-  const [fileName, setFileName] = useState<string>('')
-  const [modifiedTime, setModifiedTime] = useState<string | undefined>(undefined)
+  const [fileName, setFileName] = useState<string>(() => {
+    if (typeof window === 'undefined') {
+      return ''
+    }
+    const params = new URLSearchParams(window.location.search)
+    return params.get('fileName') ?? ''
+  })
+  const [modifiedTime, setModifiedTime] = useState<string | undefined>(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+    const params = new URLSearchParams(window.location.search)
+    const value = params.get('modifiedTime')
+    return value ?? undefined
+  })
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -97,6 +110,19 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
   const [isDirty, setIsDirty] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  const [fileId, setFileId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null
+    }
+    const params = new URLSearchParams(window.location.search)
+    const value = params.get('fileId')
+    return value && value.trim().length > 0 ? value : null
+  })
+  const fileIdRef = useRef<string | null>(fileId)
+
+  useEffect(() => {
+    fileIdRef.current = fileId
+  }, [fileId])
 
   const projectName = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
@@ -112,8 +138,31 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
 
     const fetchData = async () => {
       try {
+        const searchParams = new URLSearchParams()
+        let requestedFileId: string | null = null
+        let requestedFileName: string | null = null
+        let requestedModified: string | undefined
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search)
+          requestedFileId = params.get('fileId')
+          requestedFileName = params.get('fileName')
+          const modifiedParam = params.get('modifiedTime')
+          requestedModified = modifiedParam ?? undefined
+        }
+        const normalizedRequestedId =
+          requestedFileId && requestedFileId.trim().length > 0 ? requestedFileId.trim() : null
+        const currentFileId = fileIdRef.current
+        const effectiveRequestId =
+          normalizedRequestedId ??
+          (currentFileId && currentFileId.trim().length > 0 ? currentFileId.trim() : null)
+        if (effectiveRequestId) {
+          searchParams.set('fileId', effectiveRequestId)
+        }
+
         const response = await fetch(
-          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list`,
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list${
+            searchParams.toString() ? `?${searchParams.toString()}` : ''
+          }`,
           { signal: controller.signal },
         )
 
@@ -141,8 +190,21 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
         }
 
         setSheetName(payload.sheetName?.trim() || '기능리스트')
-        setFileName(payload.fileName ?? '')
-        setModifiedTime(payload.modifiedTime)
+        const nextFileName =
+          typeof payload.fileName === 'string' && payload.fileName.trim().length > 0
+            ? payload.fileName.trim()
+            : requestedFileName ?? ''
+        setFileName(nextFileName)
+        setModifiedTime(payload.modifiedTime ?? requestedModified)
+
+        const effectiveFileId =
+          typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
+            ? payload.fileId.trim()
+            : effectiveRequestId
+        setFileId((current) => {
+          const nextId = effectiveFileId && effectiveFileId.trim().length > 0 ? effectiveFileId : null
+          return current === nextId ? current : nextId
+        })
 
         const fetchedRows = Array.isArray(payload.rows)
           ? payload.rows.map((row) => normalizeRow(row))
@@ -224,8 +286,15 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
         })),
       }
 
+      const searchParams = new URLSearchParams()
+      if (fileId && fileId.trim().length > 0) {
+        searchParams.set('fileId', fileId)
+      }
+
       const response = await fetch(
-        `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list`,
+        `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list${
+          searchParams.toString() ? `?${searchParams.toString()}` : ''
+        }`,
         {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -245,9 +314,14 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
       const result = (await response.json().catch(() => ({}))) as FeatureListResponse
       setIsDirty(false)
       setSuccessMessage('기능리스트를 저장했습니다.')
-      setModifiedTime(result.modifiedTime)
+      if (typeof result.modifiedTime === 'string' && result.modifiedTime.trim().length > 0) {
+        setModifiedTime(result.modifiedTime)
+      }
       if (typeof result.fileName === 'string') {
         setFileName(result.fileName)
+      }
+      if (typeof result.fileId === 'string' && result.fileId.trim().length > 0) {
+        setFileId(result.fileId.trim())
       }
     } catch (error) {
       const message =
@@ -258,14 +332,21 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     } finally {
       setIsSaving(false)
     }
-  }, [backendUrl, projectId, rows])
+  }, [backendUrl, fileId, projectId, rows])
 
   const handleDownload = useCallback(async () => {
     setIsDownloading(true)
     setDownloadError(null)
     try {
+      const searchParams = new URLSearchParams()
+      if (fileId && fileId.trim().length > 0) {
+        searchParams.set('fileId', fileId)
+      }
+
       const response = await fetch(
-        `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list/download`,
+        `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/feature-list/download${
+          searchParams.toString() ? `?${searchParams.toString()}` : ''
+        }`,
       )
 
       if (!response.ok) {
@@ -301,7 +382,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     } finally {
       setIsDownloading(false)
     }
-  }, [backendUrl, fileName, projectId])
+  }, [backendUrl, fileId, fileName, projectId])
 
   const isSaveDisabled = loadState !== 'ready' || isSaving || (!isDirty && rows.length > 0)
 

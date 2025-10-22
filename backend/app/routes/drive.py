@@ -496,9 +496,18 @@ async def generate_project_asset(
 async def get_feature_list(
     project_id: str,
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 기능리스트 파일 ID",
+    ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> Dict[str, Any]:
-    result = await drive_service.get_feature_list_rows(project_id=project_id, google_id=google_id)
+    result = await drive_service.get_feature_list_rows(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
     return result
 
 
@@ -507,6 +516,11 @@ async def update_feature_list(
     project_id: str,
     payload: FeatureListUpdateRequest,
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 기능리스트 파일 ID",
+    ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> Dict[str, Any]:
     normalized_rows = [row.model_dump(by_alias=True) for row in payload.rows]
@@ -514,6 +528,7 @@ async def update_feature_list(
         project_id=project_id,
         rows=normalized_rows,
         google_id=google_id,
+        file_id=file_id,
     )
     return result
 
@@ -522,11 +537,17 @@ async def update_feature_list(
 async def download_feature_list(
     project_id: str,
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="다운로드할 기능리스트 파일 ID",
+    ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> StreamingResponse:
     file_name, content = await drive_service.download_feature_list_workbook(
         project_id=project_id,
         google_id=google_id,
+        file_id=file_id,
     )
     safe_name = file_name or "feature-list.xlsx"
     headers = {

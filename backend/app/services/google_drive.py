@@ -688,6 +688,7 @@ class GoogleDriveService:
         menu_id: str,
         google_id: Optional[str],
         include_content: bool = False,
+        file_id: Optional[str] = None,
     ) -> _ResolvedSpreadsheet:
         rule = _SPREADSHEET_RULES.get(menu_id)
         if not rule:
@@ -706,14 +707,33 @@ class GoogleDriveService:
             raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['folder_name']}' 폴더를 찾을 수 없습니다.")
 
         folder_id = str(folder["id"])
-        file_entry, active_tokens = await self._find_file_by_suffix(
-            active_tokens,
-            parent_id=folder_id,
-            suffix=rule["file_suffix"],
-            mime_type=XLSX_MIME_TYPE,
-        )
-        if file_entry is None or not file_entry.get("id"):
-            raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+        file_entry: Optional[Dict[str, Any]] = None
+        if file_id:
+            file_entry, active_tokens = await self._get_file_metadata(
+                active_tokens,
+                file_id=file_id,
+            )
+            if file_entry is None or not file_entry.get("id"):
+                raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+
+            parents = file_entry.get("parents")
+            if isinstance(parents, Sequence) and parents:
+                parent_ids = {
+                    parent.decode("utf-8") if isinstance(parent, bytes) else str(parent)
+                    for parent in parents
+                    if isinstance(parent, (str, bytes))
+                }
+                if folder_id not in parent_ids:
+                    raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
+        else:
+            file_entry, active_tokens = await self._find_file_by_suffix(
+                active_tokens,
+                parent_id=folder_id,
+                suffix=rule["file_suffix"],
+                mime_type=XLSX_MIME_TYPE,
+            )
+            if file_entry is None or not file_entry.get("id"):
+                raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
 
         file_id = str(file_entry["id"])
         file_name = str(file_entry.get("name", rule["file_suffix"]))
@@ -800,12 +820,14 @@ class GoogleDriveService:
         *,
         project_id: str,
         google_id: Optional[str],
+        file_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         resolved = await self._resolve_menu_spreadsheet(
             project_id=project_id,
             menu_id="feature-list",
             google_id=google_id,
             include_content=True,
+            file_id=file_id,
         )
 
         workbook_bytes = resolved.content
@@ -862,12 +884,14 @@ class GoogleDriveService:
         project_id: str,
         rows: Sequence[Dict[str, str]],
         google_id: Optional[str],
+        file_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         resolved = await self._resolve_menu_spreadsheet(
             project_id=project_id,
             menu_id="feature-list",
             google_id=google_id,
             include_content=True,
+            file_id=file_id,
         )
 
         workbook_bytes = resolved.content
@@ -923,12 +947,14 @@ class GoogleDriveService:
         *,
         project_id: str,
         google_id: Optional[str],
+        file_id: Optional[str] = None,
     ) -> Tuple[str, bytes]:
         resolved = await self._resolve_menu_spreadsheet(
             project_id=project_id,
             menu_id="feature-list",
             google_id=google_id,
             include_content=True,
+            file_id=file_id,
         )
 
         workbook_bytes = resolved.content
@@ -1157,6 +1183,56 @@ class GoogleDriveService:
             if isinstance(name, str) and name.endswith(normalized_suffix):
                 return entry, updated_tokens
         return None, updated_tokens
+
+    async def _get_file_metadata(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        active_tokens = tokens
+        params = {
+            "fields": "id,name,mimeType,modifiedTime,parents",
+            "supportsAllDrives": "true",
+        }
+        for attempt in range(2):
+            headers = {
+                "Authorization": f"Bearer {active_tokens.access_token}",
+                "Accept": "application/json",
+            }
+
+            async with httpx.AsyncClient(timeout=10.0, base_url=DRIVE_API_BASE) as client:
+                response = await client.get(
+                    f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+                    params=params,
+                    headers=headers,
+                )
+
+            if response.status_code == 401 and attempt == 0:
+                active_tokens = await self._refresh_access_token(active_tokens)
+                continue
+
+            if response.status_code == 404:
+                return None, active_tokens
+
+            if response.is_error:
+                logger.error("Google Drive metadata fetch failed for %s: %s", file_id, response.text)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive에서 파일 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+                )
+
+            data = response.json() if response.text else {}
+            if not isinstance(data, dict):
+                logger.error("Google Drive metadata response malformed for %s: %s", file_id, data)
+                raise HTTPException(
+                    status_code=502,
+                    detail="Google Drive 파일 정보를 확인하지 못했습니다. 다시 시도해주세요.",
+                )
+
+            return data, active_tokens
+
+        raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
     async def _find_file_by_name(
         self,
