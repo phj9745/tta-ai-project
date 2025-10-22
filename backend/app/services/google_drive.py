@@ -152,13 +152,41 @@ def _looks_like_header_row(values: Sequence[Any], expected: Sequence[str]) -> bo
     if not values:
         return False
 
-    normalized_values = [_normalize_drive_text(str(value)) if value is not None else "" for value in values]
+    normalized_values = [
+        _normalize_drive_text(str(value)) if value is not None else ""
+        for value in values
+    ]
+    squashed_values = [_squash_drive_text(value) for value in normalized_values]
     normalized_expected = [_normalize_drive_text(name) for name in expected]
+    squashed_expected = [_squash_drive_text(name) for name in normalized_expected]
 
     matches = 0
-    for expected_value in normalized_expected:
-        if expected_value and expected_value in normalized_values:
-            matches += 1
+    for expected_value, expected_squashed in zip(normalized_expected, squashed_expected):
+        if not expected_value and not expected_squashed:
+            continue
+
+        for actual_value, actual_squashed in zip(normalized_values, squashed_values):
+            if not actual_value and not actual_squashed:
+                continue
+
+            normalized_match = (
+                bool(expected_value)
+                and bool(actual_value)
+                and (
+                    actual_value == expected_value
+                    or expected_value in actual_value
+                    or actual_value in expected_value
+                )
+            )
+            squashed_match = (
+                bool(expected_squashed)
+                and bool(actual_squashed)
+                and expected_squashed in actual_squashed
+            )
+
+            if normalized_match or squashed_match:
+                matches += 1
+                break
 
     if not matches:
         return False
@@ -975,25 +1003,49 @@ class GoogleDriveService:
             sheet_title = selected_title or ""
             max_col = max(len(headers), sheet.max_column or len(headers))
             header_row_index: Optional[int] = None
+            first_data_row_index: Optional[int] = None
             for idx, row in enumerate(
                 sheet.iter_rows(min_row=1, max_col=max_col, values_only=True),
                 start=1,
             ):
-                if _looks_like_header_row(row, headers):
+                row_values: Sequence[Any] = row if isinstance(row, Sequence) else tuple()
+
+                has_values = False
+                for col_idx in range(len(headers)):
+                    cell_value = row_values[col_idx] if col_idx < len(row_values) else None
+                    if cell_value is None:
+                        continue
+                    if str(cell_value).strip():
+                        has_values = True
+                        break
+
+                header_match = _looks_like_header_row(row_values, headers)
+
+                if has_values and not header_match and first_data_row_index is None:
+                    first_data_row_index = idx
+
+                if header_match:
                     header_row_index = idx
                     break
-                if idx >= _FEATURE_LIST_START_ROW * 2:
+
+                if idx >= _FEATURE_LIST_START_ROW * 2 and first_data_row_index is not None:
                     break
 
             if header_row_index is not None:
                 start_row = header_row_index + 1
+            elif first_data_row_index is not None:
+                start_row = max(1, first_data_row_index)
 
             for row in sheet.iter_rows(
-                min_row=start_row,
+                min_row=max(1, start_row),
                 max_col=max_col,
                 values_only=True,
             ):
                 row_values: Sequence[Any] = row if isinstance(row, Sequence) else tuple()
+
+                if _looks_like_header_row(row_values, headers):
+                    continue
+
                 values = []
                 for idx in range(len(headers)):
                     cell_value = row_values[idx] if idx < len(row_values) else None
@@ -1110,138 +1162,6 @@ class GoogleDriveService:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
         return resolved.file_name, workbook_bytes
-
-        workbook_bytes = resolved.content
-        if workbook_bytes is None:
-            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
-
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
-            lineterminator="\n",
-        )
-        writer.writeheader()
-
-        for row in rows:
-            major = str(row.get("majorCategory", "") or "").strip()
-            middle = str(row.get("middleCategory", "") or "").strip()
-            minor = str(row.get("minorCategory", "") or "").strip()
-            if not any([major, middle, minor]):
-                continue
-            writer.writerow({
-                "대분류": major,
-                "중분류": middle,
-                "소분류": minor,
-            })
-
-        csv_text = output.getvalue()
-
-        try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # pragma: no cover - 안전망
-            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
-            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
-
-        update_info, _ = await self._update_file_content(
-            resolved.tokens,
-            file_id=resolved.file_id,
-            file_name=resolved.file_name,
-            content=updated_bytes,
-            content_type=XLSX_MIME_TYPE,
-        )
-
-        return {
-            "fileId": resolved.file_id,
-            "fileName": resolved.file_name,
-            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
-        }
-
-    async def download_feature_list_workbook(
-        self,
-        *,
-        project_id: str,
-        google_id: Optional[str],
-        file_id: Optional[str] = None,
-    ) -> Tuple[str, bytes]:
-        resolved = await self._resolve_menu_spreadsheet(
-            project_id=project_id,
-            menu_id="feature-list",
-            google_id=google_id,
-            include_content=True,
-            file_id=file_id,
-        )
-
-        workbook_bytes = resolved.content
-        if workbook_bytes is None:
-            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
-
-        return resolved.file_name, workbook_bytes
-
-        workbook_bytes = resolved.content
-        if workbook_bytes is None:
-            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
-
-        output = io.StringIO()
-        writer = csv.DictWriter(
-            output,
-            fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
-            lineterminator="\n",
-        )
-        writer.writeheader()
-
-        for row in rows:
-            major = str(row.get("majorCategory", "") or "").strip()
-            middle = str(row.get("middleCategory", "") or "").strip()
-            minor = str(row.get("minorCategory", "") or "").strip()
-            if not any([major, middle, minor]):
-                continue
-            writer.writerow({
-                "대분류": major,
-                "중분류": middle,
-                "소분류": minor,
-            })
-
-        csv_text = output.getvalue()
-
-        try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:  # pragma: no cover - 안전망
-            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
-            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
-
-        update_info, _ = await self._update_file_content(
-            resolved.tokens,
-            file_id=resolved.file_id,
-            file_name=resolved.file_name,
-            content=updated_bytes,
-            content_type=XLSX_MIME_TYPE,
-        )
-
-        return {
-            "fileId": resolved.file_id,
-            "fileName": resolved.file_name,
-            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
-        }
-
-    async def download_feature_list_workbook(
-        self,
-        *,
-        project_id: str,
-        google_id: Optional[str],
-        file_id: Optional[str] = None,
-    ) -> Tuple[str, bytes]:
-        resolved = await self._resolve_menu_spreadsheet(
-            project_id=project_id,
-            menu_id="feature-list",
-            google_id=google_id,
-            include_content=True,
-            file_id=file_id,
-        )
 
         workbook_bytes = resolved.content
         if workbook_bytes is None:
