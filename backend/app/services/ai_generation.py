@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal
+from typing import Any, Dict, Iterable, List, Literal, Optional
 import asyncio
 import csv
 import base64
@@ -1387,11 +1387,136 @@ class AIGenerationService:
             contexts.append(UploadContext(upload=upload, metadata=metadata))
         return contexts
 
+    def _locate_builtin_source(self, path_hint: str) -> tuple[Path | None, List[Path]]:
+        """Resolve the on-disk path for a builtin attachment.
+
+        Historically the API server has been executed from different working
+        directories (package install, repo checkout, Docker image).  In those
+        environments the template assets may live under either the backend
+        package directory (e.g. ``backend/template``) or directly under the
+        application root (``/app/template`` inside the container).  The
+        original implementation assumed a single location which caused
+        ``FileNotFoundError`` when the active runtime layout differed,
+        surfacing to the user as “내장 XLSX 템플릿을 찾을 수 없습니다.”.
+
+        To make the lookup resilient we try several sensible base paths and
+        keep track of the attempted locations for diagnostics.
+        """
+
+        attempted: List[Path] = []
+        requested = Path(path_hint)
+
+        def _candidate(path: Path) -> Optional[Path]:
+            resolved = path if path.is_absolute() else path.resolve()
+            attempted.append(resolved)
+            if resolved.exists() and resolved.is_file():
+                return resolved
+            return None
+
+        if requested.is_absolute():
+            resolved = _candidate(requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        override_root = getattr(self._settings, "builtin_template_root", None)
+        if override_root:
+            override_path = Path(override_root)
+
+            if override_path.is_file():
+                resolved = _candidate(override_path)
+                if resolved is not None:
+                    return resolved, attempted
+
+            relative_variants: List[Path] = []
+
+            if str(requested):
+                relative_variants.append(requested)
+
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = None
+            if relative_to_template and str(relative_to_template):
+                relative_variants.append(relative_to_template)
+
+            parts = list(requested.parts)
+            if parts and parts[0] == "backend":
+                relative_variants.append(Path(*parts[1:]))
+                if len(parts) > 1 and parts[1] == "template":
+                    relative_variants.append(Path(*parts[2:]))
+
+            seen: set[Path] = set()
+            ordered_variants: List[Path] = []
+            for variant in relative_variants:
+                variant_str = str(variant)
+                if not variant_str or variant_str == ".":
+                    continue
+                if variant in seen:
+                    continue
+                seen.add(variant)
+                ordered_variants.append(variant)
+
+            if override_path.is_dir():
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+            else:
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path.parent / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        base_path = Path(__file__).resolve().parents[2]
+        resolved = _candidate(base_path / requested)
+        if resolved is not None:
+            return resolved, attempted
+
+        repo_root = base_path.parent
+        if repo_root != base_path:
+            resolved = _candidate(repo_root / requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        template_root = base_path / "template"
+        if template_root.exists():
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = requested
+
+            resolved = _candidate(template_root / relative_to_template)
+            if resolved is not None:
+                return resolved, attempted
+
+            # As a last resort search by filename inside the template tree so
+            # renamed folders (e.g. when the repo is vendored) still resolve.
+            if requested.name:
+                for match in template_root.rglob(requested.name):
+                    resolved = _candidate(match)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        return None, attempted
+
     def _load_builtin_upload(
         self, menu_id: str, builtin: PromptBuiltinContext
     ) -> BufferedUpload:
-        base_path = Path(__file__).resolve().parents[2]
-        source_path = (base_path / builtin.source_path).resolve()
+        source_path, attempted_paths = self._locate_builtin_source(builtin.source_path)
+        if source_path is None:
+            logger.error(
+                "내장 컨텍스트 파일을 찾을 수 없습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": builtin.source_path,
+                    "label": builtin.label,
+                    "attempted_paths": [str(path) for path in attempted_paths],
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="내장 컨텍스트 파일을 찾을 수 없습니다.",
+            )
         if builtin.render_mode == "xlsx-to-pdf":
             return self._load_xlsx_as_pdf(menu_id, source_path, builtin.label)
 

@@ -10,8 +10,6 @@ from xml.etree import ElementTree as ET
 import zipfile
 from copy import copy as clone_style
 
-from openpyxl import load_workbook
-
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _XML_NS = "http://www.w3.org/XML/1998/namespace"
 _XLSX_SHEET_PATH = "xl/worksheets/sheet1.xml"
@@ -155,6 +153,18 @@ def _column_to_index(letter: str) -> int:
     return result
 
 
+def _index_to_column(index: int) -> str:
+    if index <= 0:
+        index = 1
+    letters: List[str] = []
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    if not letters:
+        return "A"
+    return "".join(reversed(letters))
+
+
 def _split_cell(reference: str) -> tuple[str, int]:
     match = re.match(r"([A-Z]+)(\d+)", reference)
     if not match:
@@ -187,23 +197,40 @@ class WorksheetPopulator:
         if self._sheet_data is None:
             raise ValueError("워크시트 데이터 영역을 찾을 수 없습니다.")
 
+        self._start_row = start_row
+        self._column_specs = list(columns)
+        if not self._column_specs:
+            raise ValueError("채울 열 정보가 없습니다.")
+
         self._dimension = self._root.find("s:dimension", self._ns)
-        if self._dimension is None:
-            raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
-        ref = self._dimension.get("ref")
+        ref = ""
+        if self._dimension is not None:
+            ref = (self._dimension.get("ref") or "").strip()
+
         if not ref:
-            raise ValueError("워크시트 범위 정보를 확인할 수 없습니다.")
+            ref = self._infer_dimension()
+            if not ref:
+                raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
+
+            dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+            if self._dimension is None:
+                self._dimension = ET.Element(dimension_tag)
+                inserted = False
+                for idx, child in enumerate(list(self._root)):
+                    if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                        self._root.insert(idx, self._dimension)
+                        inserted = True
+                        break
+                if not inserted:
+                    self._root.insert(0, self._dimension)
+            self._dimension.set("ref", ref)
+
         (
             self._dimension_start_col,
             self._dimension_start_row,
             self._dimension_end_col,
             self._dimension_end_row,
         ) = _parse_dimension(ref)
-
-        self._start_row = start_row
-        self._column_specs = list(columns)
-        if not self._column_specs:
-            raise ValueError("채울 열 정보가 없습니다.")
 
         self._row_cache: Dict[int, ET.Element] = {}
         for row in self._sheet_data.findall("s:row", self._ns):
@@ -220,6 +247,70 @@ class WorksheetPopulator:
         if template_row is None:
             raise ValueError("템플릿 행을 찾을 수 없습니다.")
         self._template_row = copy.deepcopy(template_row)
+
+    def _infer_dimension(self) -> str | None:
+        min_col: int | None = None
+        max_col: int | None = None
+        min_row: int | None = None
+        max_row: int | None = None
+
+        for row in self._sheet_data.findall("s:row", self._ns):
+            row_index = _safe_int(row.get("r"))
+            if row_index is not None:
+                if min_row is None or row_index < min_row:
+                    min_row = row_index
+                if max_row is None or row_index > max_row:
+                    max_row = row_index
+
+            for cell in row.findall("s:c", self._ns):
+                ref = (cell.get("r") or "").strip()
+                if not ref:
+                    continue
+                try:
+                    column, row_number = _split_cell(ref)
+                except ValueError:
+                    if row_index is None:
+                        continue
+                    column = "".join(filter(str.isalpha, ref))
+                    if not column:
+                        continue
+                    row_number = row_index
+
+                column_index = _column_to_index(column)
+                if column_index:
+                    if min_col is None or column_index < min_col:
+                        min_col = column_index
+                    if max_col is None or column_index > max_col:
+                        max_col = column_index
+                if row_number:
+                    if min_row is None or row_number < min_row:
+                        min_row = row_number
+                    if max_row is None or row_number > max_row:
+                        max_row = row_number
+
+        if (min_col is None or max_col is None) and self._column_specs:
+            column_indices = [
+                _column_to_index(spec.letter)
+                for spec in self._column_specs
+                if spec.letter
+            ]
+            if column_indices:
+                if min_col is None:
+                    min_col = min(column_indices)
+                if max_col is None:
+                    max_col = max(column_indices)
+
+        if min_row is None:
+            min_row = self._start_row
+        if max_row is None:
+            max_row = self._start_row
+
+        if min_col is None or max_col is None:
+            return None
+
+        start_col = _index_to_column(min_col)
+        end_col = _index_to_column(max_col)
+        return f"{start_col}{min_row}:{end_col}{max_row}"
 
     def _tag(self, name: str) -> str:
         return f"{{{_SPREADSHEET_NS}}}{name}"
@@ -381,17 +472,138 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     return records
 
 
+_FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
+    "대분류": ("대분류", "대 분류", "상위 기능", "상위기능"),
+    "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),
+    "소분류": ("소분류", "소 분류", "세부 기능", "세부기능"),
+    "기능 설명": (
+        "기능 설명",
+        "상세 설명",
+        "상세 내용",
+        "기능 상세",
+        "상세내용",
+        "상세설명",
+        "기능상세",
+        "내용",
+    ),
+    "기능 개요": ("기능 개요", "개요", "요약", "기능 요약", "요약 설명", "개요 설명"),
+}
+
+
+def _normalize_feature_header_token(value: str) -> str:
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"[\s\u00a0]+", "", cleaned)
+    cleaned = re.sub(r"[()\[\]{}<>]+", "", cleaned)
+    cleaned = cleaned.replace("-", "").replace("_", "")
+    return cleaned
+
+
+_FEATURE_LIST_NORMALIZED_HEADERS: Dict[str, str] = {}
+for canonical, variants in _FEATURE_LIST_HEADER_ALIASES.items():
+    for variant in variants:
+        normalized = _normalize_feature_header_token(variant)
+        if normalized and normalized not in _FEATURE_LIST_NORMALIZED_HEADERS:
+            _FEATURE_LIST_NORMALIZED_HEADERS[normalized] = canonical
+
+
+def match_feature_list_header(value: str) -> str | None:
+    normalized = _normalize_feature_header_token(value)
+    if not normalized:
+        return None
+    return _FEATURE_LIST_NORMALIZED_HEADERS.get(normalized)
+
+
 FEATURE_LIST_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="대분류", letter="A", style="12"),
     ColumnSpec(key="중분류", letter="B", style="8"),
     ColumnSpec(key="소분류", letter="C", style="15"),
+    ColumnSpec(key="기능 설명", letter="D", style="7"),
+    ColumnSpec(key="기능 개요", letter="E", style="9"),
 )
 
-FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = ["대분류", "중분류", "소분류"]
+FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
+    "대분류",
+    "중분류",
+    "소분류",
+    "기능 설명",
+    "기능 개요",
+]
+
+
+def summarize_feature_description(value: str) -> str:
+    cleaned = value.strip()
+    if not cleaned:
+        return ""
+
+    segments = re.split(r"[\r\n]+|(?<=[.!?])\s+", cleaned)
+    for segment in segments:
+        candidate = segment.strip(" \u2022-•·")
+        if candidate:
+            if len(candidate) > 160:
+                return candidate[:157].rstrip() + "…"
+            return candidate
+
+    if len(cleaned) > 160:
+        return cleaned[:157].rstrip() + "…"
+    return cleaned
+
+
+def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
+    stripped = csv_text.strip()
+    if not stripped:
+        return []
+
+    reader = csv.reader(io.StringIO(stripped))
+    rows = [row for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
+
+    header = [cell.strip() for cell in rows[0]]
+    if header:
+        header[0] = header[0].lstrip("\ufeff")
+
+    column_map: Dict[str, int] = {}
+    for idx, name in enumerate(header):
+        if not name:
+            continue
+        matched = match_feature_list_header(name)
+        if matched and matched not in column_map:
+            column_map[matched] = idx
+
+    for fallback_index, column_name in enumerate(FEATURE_LIST_EXPECTED_HEADERS):
+        column_map.setdefault(column_name, fallback_index)
+
+    normalized_records: List[Dict[str, str]] = []
+    for raw in rows[1:]:
+        entry: Dict[str, str] = {}
+        has_value = False
+        for column_name in FEATURE_LIST_EXPECTED_HEADERS:
+            index = column_map.get(column_name)
+            value = ""
+            if index is not None and index < len(raw):
+                value = raw[index].strip()
+            if value:
+                has_value = True
+            entry[column_name] = value
+        if not has_value:
+            continue
+
+        overview = entry.get("기능 개요", "")
+        description = entry.get("기능 설명", "")
+        if not overview and description:
+            entry["기능 개요"] = summarize_feature_description(description)
+        elif overview and not description:
+            entry["기능 설명"] = overview
+
+        normalized_records.append(entry)
+
+    return normalized_records
 
 
 def populate_feature_list(workbook_bytes: bytes, csv_text: str) -> bytes:
-    records = _parse_csv_records(csv_text, FEATURE_LIST_EXPECTED_HEADERS)
+    records = _normalize_feature_list_records(csv_text)
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
         sheet_bytes = source.read(_XLSX_SHEET_PATH)
     populator = WorksheetPopulator(sheet_bytes, start_row=8, columns=FEATURE_LIST_COLUMNS)

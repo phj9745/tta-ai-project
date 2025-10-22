@@ -56,8 +56,8 @@ def test_populate_feature_list_inserts_rows() -> None:
     csv_text = "\n".join(
         [
             ",".join(FEATURE_LIST_EXPECTED_HEADERS),
-            "대1,중1,소1",
-            "대2,중2,소2",
+            "대1,중1,소1,상세 설명1,개요1",
+            "대2,중2,소2,상세 설명2,개요2",
         ]
     )
 
@@ -67,10 +67,33 @@ def test_populate_feature_list_inserts_rows() -> None:
     assert _cell_text(root, "A8") == "대1"
     assert _cell_text(root, "B8") == "중1"
     assert _cell_text(root, "C8") == "소1"
+    assert _cell_text(root, "D8") == "상세 설명1"
+    assert _cell_text(root, "E8") == "개요1"
     assert _cell_text(root, "A9") == "대2"
     assert _cell_text(root, "B9") == "중2"
     assert _cell_text(root, "C9") == "소2"
+    assert _cell_text(root, "D9") == "상세 설명2"
+    assert _cell_text(root, "E9") == "개요2"
     assert _cell_text(root, "A10") is None
+
+
+def test_populate_feature_list_derives_overview() -> None:
+    template_path = Path("backend/template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_text = "\n".join(
+        [
+            "대분류,중분류,소분류,기능 설명",
+            "대1,중1,소1,로그인 과정을 검증하고 오류 메시지를 안내합니다. 추가 설명.",
+        ]
+    )
+
+    updated = populate_feature_list(template_bytes, csv_text)
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "A8") == "대1"
+    assert _cell_text(root, "D8") == "로그인 과정을 검증하고 오류 메시지를 안내합니다. 추가 설명."
+    assert _cell_text(root, "E8") == "로그인 과정을 검증하고 오류 메시지를 안내합니다."
 
 
 def test_populate_testcase_list_maps_columns() -> None:

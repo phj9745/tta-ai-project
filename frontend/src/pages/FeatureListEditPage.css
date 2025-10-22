@@ -1,0 +1,154 @@
+.feature-list-editor {
+  margin: 32px auto 64px;
+  width: min(1080px, 100%);
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.feature-list-editor .defect-workflow__table-wrapper {
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.feature-list-editor .defect-workflow__table {
+  min-width: 960px;
+}
+
+.feature-list-editor__meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.feature-list-editor__meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feature-list-editor__meta dt {
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a6475;
+  margin: 0;
+}
+
+.feature-list-editor__meta dd {
+  margin: 0;
+  font-size: 14px;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.feature-list-editor__workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.feature-list-editor__table-actions {
+  width: 120px;
+  text-align: center;
+}
+
+.feature-list-editor__table-input,
+.feature-list-editor__textarea {
+  width: 100%;
+  border: 1px solid #d7dceb;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #1f2937;
+  background: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.feature-list-editor__table-input:focus-visible,
+.feature-list-editor__textarea:focus-visible {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+  background: #f8f9ff;
+}
+
+.feature-list-editor__textarea {
+  min-height: 112px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.feature-list-editor__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #f5b8b5;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: #fff7f7;
+  color: #d0342c;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.feature-list-editor__remove:hover,
+.feature-list-editor__remove:focus-visible {
+  outline: none;
+  background: #fde8e8;
+  border-color: #f1a7a3;
+}
+
+.feature-list-editor__remove:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.feature-list-editor__footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.feature-list-editor__add {
+  border-style: dashed;
+}
+
+.feature-list-editor__status-note {
+  font-size: 13px;
+  color: #b45309;
+  font-weight: 600;
+}
+
+.feature-list-editor__error-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+@media (max-width: 768px) {
+  .feature-list-editor {
+    margin: 24px auto 48px;
+    padding: 0 16px;
+  }
+
+  .feature-list-editor__table-actions {
+    width: 96px;
+  }
+
+  .feature-list-editor .defect-workflow__table {
+    min-width: 720px;
+  }
+
+  .feature-list-editor__textarea {
+    min-height: 96px;
+  }
+}
