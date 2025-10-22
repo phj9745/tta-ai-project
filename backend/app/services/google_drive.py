@@ -23,10 +23,13 @@ from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
 from .excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
+    extract_feature_list_overview,
+    match_feature_list_header,
     populate_defect_report,
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,
+    summarize_feature_description,
 )
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
@@ -973,6 +976,8 @@ class GoogleDriveService:
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
+        _, project_overview = extract_feature_list_overview(workbook_bytes)
+
         buffer = io.BytesIO(workbook_bytes)
         try:
             workbook = load_workbook(buffer, data_only=True)
@@ -983,6 +988,8 @@ class GoogleDriveService:
         extracted_rows: List[Dict[str, str]] = []
         sheet_title = ""
         start_row = _FEATURE_LIST_START_ROW
+        header_row_values: Optional[Sequence[Any]] = None
+        column_map: Dict[str, int] = {}
         try:
             sheet = workbook.active
             selected_title = sheet.title
@@ -1026,6 +1033,7 @@ class GoogleDriveService:
 
                 if header_match:
                     header_row_index = idx
+                    header_row_values = row_values
                     break
 
                 if idx >= _FEATURE_LIST_START_ROW * 2 and first_data_row_index is not None:
@@ -1035,6 +1043,26 @@ class GoogleDriveService:
                 start_row = header_row_index + 1
             elif first_data_row_index is not None:
                 start_row = max(1, first_data_row_index)
+
+            if header_row_values:
+                display_headers = list(headers)
+                for idx, value in enumerate(header_row_values):
+                    if value is None:
+                        continue
+                    matched = match_feature_list_header(str(value))
+                    if matched and matched not in column_map:
+                        column_map[matched] = idx
+                        try:
+                            header_index = headers.index(matched)
+                        except ValueError:
+                            header_index = None
+                        if header_index is not None:
+                            display_headers[header_index] = str(value).strip()
+
+                headers = display_headers
+
+            for default_idx, name in enumerate(FEATURE_LIST_EXPECTED_HEADERS):
+                column_map.setdefault(name, default_idx)
 
             for row in sheet.iter_rows(
                 min_row=max(1, start_row),
@@ -1046,20 +1074,37 @@ class GoogleDriveService:
                 if _looks_like_header_row(row_values, headers):
                     continue
 
-                values = []
-                for idx in range(len(headers)):
-                    cell_value = row_values[idx] if idx < len(row_values) else None
+                row_data: Dict[str, str] = {}
+                has_values = False
+                for header_name in headers:
+                    column_index = column_map.get(header_name)
+                    cell_value = (
+                        row_values[column_index]
+                        if column_index is not None and column_index < len(row_values)
+                        else None
+                    )
                     text = "" if cell_value is None else str(cell_value).strip()
-                    values.append(text)
+                    if text:
+                        has_values = True
+                    row_data[header_name] = text
 
-                if not any(values):
+                if not has_values:
                     continue
+
+                description = row_data.get("기능 설명", "")
+                overview = row_data.get("기능 개요", "")
+                if not overview and description:
+                    overview = description
+                elif overview and not description:
+                    description = overview
 
                 extracted_rows.append(
                     {
-                        "majorCategory": values[0] if len(values) > 0 else "",
-                        "middleCategory": values[1] if len(values) > 1 else "",
-                        "minorCategory": values[2] if len(values) > 2 else "",
+                        "majorCategory": row_data.get("대분류", ""),
+                        "middleCategory": row_data.get("중분류", ""),
+                        "minorCategory": row_data.get("소분류", ""),
+                        "featureDescription": description,
+                        "featureOverview": overview,
                     }
                 )
         finally:
@@ -1076,6 +1121,7 @@ class GoogleDriveService:
             "headers": headers,
             "rows": extracted_rows,
             "modifiedTime": resolved.modified_time,
+            "projectOverview": project_overview,
         }
 
     async def update_feature_list_rows(
@@ -1083,6 +1129,7 @@ class GoogleDriveService:
         *,
         project_id: str,
         rows: Sequence[Dict[str, str]],
+        project_overview: str = "",
         google_id: Optional[str],
         file_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -1103,6 +1150,76 @@ class GoogleDriveService:
             output,
             fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
             lineterminator="\n",
+        )
+        writer.writeheader()
+
+        for row in rows:
+            major = str(row.get("majorCategory", "") or "").strip()
+            middle = str(row.get("middleCategory", "") or "").strip()
+            minor = str(row.get("minorCategory", "") or "").strip()
+            description = str(row.get("featureDescription", "") or "").strip()
+            overview = str(row.get("featureOverview", "") or "").strip()
+
+            if not overview and description:
+                overview = summarize_feature_description(description)
+            elif overview and not description:
+                description = overview
+
+            if not any([major, middle, minor, description, overview]):
+                continue
+
+            writer.writerow(
+                {
+                    "대분류": major,
+                    "중분류": middle,
+                    "소분류": minor,
+                    "기능 설명": description,
+                    "기능 개요": overview,
+                }
+            )
+
+        csv_text = output.getvalue()
+
+        try:
+            updated_bytes = resolved.rule["populate"](
+                workbook_bytes,
+                csv_text,
+                project_overview,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception("Failed to update feature list spreadsheet", extra={"project_id": project_id})
+            raise HTTPException(status_code=500, detail="기능리스트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+            "projectOverview": project_overview,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
         )
         writer.writeheader()
 
@@ -1156,6 +1273,12 @@ class GoogleDriveService:
             include_content=True,
             file_id=file_id,
         )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
         workbook_bytes = resolved.content
         if workbook_bytes is None:

@@ -59,12 +59,15 @@ class FeatureListRowModel(BaseModel):
     major_category: str = Field("", alias="majorCategory")
     middle_category: str = Field("", alias="middleCategory")
     minor_category: str = Field("", alias="minorCategory")
+    feature_description: str = Field("", alias="featureDescription")
+    feature_overview: str = Field("", alias="featureOverview")
 
     model_config = ConfigDict(populate_by_name=True)
 
 
 class FeatureListUpdateRequest(BaseModel):
     rows: List[FeatureListRowModel] = Field(default_factory=list)
+    project_overview: str = Field("", alias="projectOverview")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -527,6 +530,7 @@ async def update_feature_list(
     result = await drive_service.update_feature_list_rows(
         project_id=project_id,
         rows=normalized_rows,
+        project_overview=str(payload.project_overview or ""),
         google_id=google_id,
         file_id=file_id,
     )

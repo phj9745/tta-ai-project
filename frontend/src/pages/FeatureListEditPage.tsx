@@ -9,6 +9,8 @@ interface FeatureListRow {
   majorCategory: string
   middleCategory: string
   minorCategory: string
+  featureOverview: string
+  featureDescription: string
 }
 
 interface FeatureListResponse {
@@ -19,21 +21,35 @@ interface FeatureListResponse {
   headers?: string[]
   rows?: FeatureListRow[]
   modifiedTime?: string
+  projectOverview?: string
 }
 
 type LoadState = 'idle' | 'loading' | 'error' | 'ready'
 
-const DEFAULT_HEADERS = ['대분류', '중분류', '소분류']
+const DEFAULT_HEADERS = ['대분류', '중분류', '소분류', '기능 설명']
 
 function createEmptyRow(): FeatureListRow {
-  return { majorCategory: '', middleCategory: '', minorCategory: '' }
+  return {
+    majorCategory: '',
+    middleCategory: '',
+    minorCategory: '',
+    featureOverview: '',
+    featureDescription: '',
+  }
 }
 
 function normalizeRow(row: FeatureListRow | null | undefined): FeatureListRow {
+  const description =
+    typeof row?.featureDescription === 'string' ? row.featureDescription : ''
+  const overview = typeof row?.featureOverview === 'string' ? row.featureOverview : ''
+  const normalizedDescription = description || overview
+  const normalizedOverview = overview || description
   return {
     majorCategory: typeof row?.majorCategory === 'string' ? row.majorCategory : '',
     middleCategory: typeof row?.middleCategory === 'string' ? row.middleCategory : '',
     minorCategory: typeof row?.minorCategory === 'string' ? row.minorCategory : '',
+    featureOverview: normalizedOverview,
+    featureDescription: normalizedDescription,
   }
 }
 
@@ -84,7 +100,7 @@ interface FeatureListEditPageProps {
 export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
   const backendUrl = useMemo(() => getBackendUrl(), [])
   const [rows, setRows] = useState<FeatureListRow[]>([createEmptyRow()])
-  const [headers, setHeaders] = useState<string[]>(DEFAULT_HEADERS)
+  const [headers, setHeaders] = useState<string[]>(() => [...DEFAULT_HEADERS])
   const [sheetName, setSheetName] = useState<string>('기능리스트')
   const [fileName, setFileName] = useState<string>(() => {
     if (typeof window === 'undefined') {
@@ -101,6 +117,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     const value = params.get('modifiedTime')
     return value ?? undefined
   })
+  const [projectOverview, setProjectOverview] = useState<string>('')
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -130,6 +147,86 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
   }, [projectId])
 
   const formattedModified = useMemo(() => formatTimestamp(modifiedTime), [modifiedTime])
+
+  const hasFeatureOverview = useMemo(() => {
+    const overviewHeader = headers[4]
+    if (typeof overviewHeader === 'string' && overviewHeader.trim().length > 0) {
+      return true
+    }
+    return rows.some((row) => (row.featureOverview || '').trim().length > 0)
+  }, [headers, rows])
+
+  const columnLabels = useMemo(
+    () => ({
+      majorCategory: headers[0]?.trim() || '대분류',
+      middleCategory: headers[1]?.trim() || '중분류',
+      minorCategory: headers[2]?.trim() || '소분류',
+      featureDescription: headers[3]?.trim() || '기능 설명',
+      featureOverview: hasFeatureOverview
+        ? headers[4]?.trim() || '기능 개요'
+        : '',
+    }),
+    [headers, hasFeatureOverview],
+  )
+
+  const tableColumns = useMemo<
+    Array<{
+      key: keyof FeatureListRow
+      label: string
+      multiline?: boolean
+      placeholder: string
+    }>
+  >(
+    () => {
+      const overviewLabel = columnLabels.featureOverview || '기능 개요'
+      const descriptionLabel =
+        columnLabels.featureDescription === '기능 설명'
+          ? '상세 내용'
+          : columnLabels.featureDescription || '상세 내용'
+
+      const columns: Array<{
+        key: keyof FeatureListRow
+        label: string
+        multiline?: boolean
+        placeholder: string
+      }> = [
+        {
+          key: 'majorCategory',
+          label: columnLabels.majorCategory,
+          placeholder: `${columnLabels.majorCategory}을(를) 입력하세요`,
+        },
+        {
+          key: 'middleCategory',
+          label: columnLabels.middleCategory,
+          placeholder: `${columnLabels.middleCategory}을(를) 입력하세요`,
+        },
+        {
+          key: 'minorCategory',
+          label: columnLabels.minorCategory,
+          placeholder: `${columnLabels.minorCategory}을(를) 입력하세요`,
+        },
+      ]
+
+      if (hasFeatureOverview) {
+        columns.push({
+          key: 'featureOverview',
+          label: overviewLabel,
+          multiline: true,
+          placeholder: `${overviewLabel}을(를) 입력하세요`,
+        })
+      }
+
+      columns.push({
+        key: 'featureDescription',
+        label: descriptionLabel,
+        multiline: true,
+        placeholder: `${descriptionLabel}을(를) 입력하세요`,
+      })
+
+      return columns
+    },
+    [columnLabels, hasFeatureOverview],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -181,12 +278,26 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
         }
 
         const nextHeaders = Array.isArray(payload.headers)
-          ? payload.headers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+          ? payload.headers.filter((item): item is string => typeof item === 'string')
           : undefined
         if (nextHeaders && nextHeaders.length >= 3) {
-          setHeaders(nextHeaders.slice(0, 3))
+          const merged: string[] = []
+          nextHeaders.forEach((name, index) => {
+            const trimmed = name.trim()
+            if (index < DEFAULT_HEADERS.length) {
+              merged[index] = trimmed.length > 0 ? trimmed : DEFAULT_HEADERS[index]
+            } else {
+              merged[index] = trimmed
+            }
+          })
+          if (merged.length < DEFAULT_HEADERS.length) {
+            for (let index = merged.length; index < DEFAULT_HEADERS.length; index += 1) {
+              merged[index] = DEFAULT_HEADERS[index]
+            }
+          }
+          setHeaders(merged)
         } else {
-          setHeaders(DEFAULT_HEADERS)
+          setHeaders([...DEFAULT_HEADERS])
         }
 
         setSheetName(payload.sheetName?.trim() || '기능리스트')
@@ -196,6 +307,9 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
             : requestedFileName ?? ''
         setFileName(nextFileName)
         setModifiedTime(payload.modifiedTime ?? requestedModified)
+        setProjectOverview(
+          typeof payload.projectOverview === 'string' ? payload.projectOverview : '',
+        )
 
         const effectiveFileId =
           typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
@@ -256,6 +370,12 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     setSuccessMessage(null)
   }, [])
 
+  const handleProjectOverviewChange = useCallback((value: string) => {
+    setProjectOverview(value)
+    setIsDirty(true)
+    setSuccessMessage(null)
+  }, [])
+
   const handleAddRow = useCallback(() => {
     setRows((prev) => [...prev, createEmptyRow()])
     setIsDirty(true)
@@ -279,10 +399,13 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     setSuccessMessage(null)
     try {
       const payload = {
+        projectOverview,
         rows: rows.map((row) => ({
           majorCategory: row.majorCategory,
           middleCategory: row.middleCategory,
           minorCategory: row.minorCategory,
+          featureOverview: row.featureOverview,
+          featureDescription: row.featureDescription,
         })),
       }
 
@@ -332,7 +455,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     } finally {
       setIsSaving(false)
     }
-  }, [backendUrl, fileId, projectId, rows])
+  }, [backendUrl, fileId, projectId, projectOverview, rows])
 
   const handleDownload = useCallback(async () => {
     setIsDownloading(true)
@@ -445,7 +568,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
           </div>
         </div>
         <p className="defect-workflow__helper">
-          행을 추가하거나 내용을 수정한 뒤 저장하세요. 저장된 내용은 드라이브의 기능리스트 파일에 반영됩니다.
+          프로젝트 개요와 대·중·소 분류, 기능 개요 및 상세 내용을 편집한 뒤 저장하세요. 저장된 내용은 드라이브의 기능리스트 파일에 반영됩니다.
         </p>
 
         {loadState === 'loading' && (
@@ -465,12 +588,26 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
 
         {loadState === 'ready' && (
           <div className="feature-list-editor__workspace">
+            <div className="feature-list-editor__overview">
+              <label htmlFor="feature-project-overview" className="feature-list-editor__overview-label">
+                프로젝트 개요
+              </label>
+              <textarea
+                id="feature-project-overview"
+                className="feature-list-editor__overview-input feature-list-editor__textarea"
+                value={projectOverview}
+                onChange={(event) => handleProjectOverviewChange(event.target.value)}
+                placeholder="프로젝트 개요를 입력하세요"
+                rows={4}
+              />
+            </div>
+
             <div className="defect-workflow__table-wrapper">
               <table className="defect-workflow__table">
                 <thead>
                   <tr>
-                    {headers.map((header) => (
-                      <th key={header}>{header}</th>
+                    {tableColumns.map((column) => (
+                      <th key={column.key}>{column.label}</th>
                     ))}
                     <th className="feature-list-editor__table-actions">작업</th>
                   </tr>
@@ -478,33 +615,27 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
                 <tbody>
                   {rows.map((row, index) => (
                     <tr key={`feature-row-${index}`}>
-                      <td>
-                        <input
-                          type="text"
-                          value={row.majorCategory}
-                          onChange={(event) => handleChange(index, 'majorCategory', event.target.value)}
-                          className="feature-list-editor__table-input"
-                          placeholder="대분류"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="text"
-                          value={row.middleCategory}
-                          onChange={(event) => handleChange(index, 'middleCategory', event.target.value)}
-                          className="feature-list-editor__table-input"
-                          placeholder="중분류"
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="text"
-                          value={row.minorCategory}
-                          onChange={(event) => handleChange(index, 'minorCategory', event.target.value)}
-                          className="feature-list-editor__table-input"
-                          placeholder="소분류"
-                        />
-                      </td>
+                      {tableColumns.map((column) => (
+                        <td key={`${column.key}-${index}`}>
+                          {column.multiline ? (
+                            <textarea
+                              value={row[column.key]}
+                              onChange={(event) => handleChange(index, column.key, event.target.value)}
+                              className="feature-list-editor__textarea"
+                              placeholder={column.placeholder}
+                              rows={3}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              value={row[column.key]}
+                              onChange={(event) => handleChange(index, column.key, event.target.value)}
+                              className="feature-list-editor__table-input"
+                              placeholder={column.placeholder}
+                            />
+                          )}
+                        </td>
+                      ))}
                       <td className="feature-list-editor__table-actions">
                         <button
                           type="button"

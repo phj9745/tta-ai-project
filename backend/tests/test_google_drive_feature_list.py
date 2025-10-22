@@ -18,10 +18,10 @@ from app.services.google_drive import (  # noqa: E402
 
 
 def test_header_row_accepts_suffixes_and_whitespace():
-    values = (" 대분류 (필수)", "중분류\n항목", "소분류-예시")
+    values = (" 대분류 (필수)", "중분류\n항목", "소분류-예시", "상세 설명", "개요")
     assert _looks_like_header_row(values, FEATURE_LIST_EXPECTED_HEADERS)
 
 
 def test_header_row_requires_multiple_matches():
-    values = ("대분류", "", "기타")
+    values = ("대분류", "", "기타", "", "")
     assert not _looks_like_header_row(values, FEATURE_LIST_EXPECTED_HEADERS)
