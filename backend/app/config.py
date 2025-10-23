@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -21,6 +22,7 @@ class Settings:
     tokens_path: Path
     openai_api_key: str
     openai_model: str
+    builtin_template_root: Optional[Path] = None
 
     @property
     def frontend_origin(self) -> str:
@@ -38,6 +40,9 @@ def load_settings() -> Settings:
     tokens_env = os.getenv("GOOGLE_TOKEN_DB_PATH") or os.getenv("GOOGLE_TOKEN_PATH")
     default_tokens_path = Path(__file__).resolve().parent / "google_tokens.db"
 
+    template_root_env = os.getenv("BUILTIN_TEMPLATE_ROOT")
+    template_root = Path(template_root_env).expanduser() if template_root_env else None
+
     return Settings(
         client_id=os.getenv("GOOGLE_CLIENT_ID", ""),
         client_secret=os.getenv("GOOGLE_CLIENT_SECRET", ""),
@@ -46,4 +51,5 @@ def load_settings() -> Settings:
         tokens_path=Path(tokens_env) if tokens_env else default_tokens_path,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        builtin_template_root=template_root,
     )

@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 from types import MethodType, SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -100,21 +101,53 @@ def _build_bad_request_error(message: str) -> BadRequestError:
     return BadRequestError(message=message, response=response, body=response.json())
 
 
-def _settings() -> Settings:
-    return Settings(
-        client_id="",
-        client_secret="",
-        redirect_uri="",
-        frontend_redirect_url="http://localhost",
-        tokens_path=Path("/tmp/tokens.db"),
-        openai_api_key="test-key",
-        openai_model="gpt-test",
-    )
+def _settings(**overrides: Any) -> Settings:
+    params: dict[str, Any] = {
+        "client_id": "",
+        "client_secret": "",
+        "redirect_uri": "",
+        "frontend_redirect_url": "http://localhost",
+        "tokens_path": Path("/tmp/tokens.db"),
+        "openai_api_key": "test-key",
+        "openai_model": "gpt-test",
+        "builtin_template_root": None,
+    }
+    params.update(overrides)
+    return Settings(**params)
 
 
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def test_locate_builtin_source_uses_override_directory(tmp_path: Path) -> None:
+    template_root = tmp_path / "builtin"
+    target_dir = template_root / "가.계획"
+    target_dir.mkdir(parents=True)
+    target_file = target_dir / "override-only.xlsx"
+    target_file.write_bytes(b"dummy")
+
+    service = AIGenerationService(_settings(builtin_template_root=template_root))
+
+    resolved, attempted = service._locate_builtin_source(
+        "template/가.계획/override-only.xlsx"
+    )
+
+    assert resolved == target_file
+    assert str(target_file) in {str(path) for path in attempted}
+
+
+def test_locate_builtin_source_accepts_direct_file_override(tmp_path: Path) -> None:
+    target_file = tmp_path / "override-only.xlsx"
+    target_file.write_bytes(b"dummy")
+
+    service = AIGenerationService(_settings(builtin_template_root=target_file))
+
+    resolved, attempted = service._locate_builtin_source("template/override-only.xlsx")
+
+    assert resolved == target_file
+    assert str(target_file) in {str(path) for path in attempted}
 
 
 @pytest.mark.anyio
