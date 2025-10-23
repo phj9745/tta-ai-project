@@ -386,15 +386,102 @@ def _apply_project_overview_to_sheet(sheet_bytes: bytes, cell_ref: str, value: s
     except ValueError:
         return sheet_bytes
 
+    ns = {"s": _SPREADSHEET_NS}
+    sheet_data = root.find("s:sheetData", ns)
+    if sheet_data is None:
+        return sheet_bytes
+
     row = _find_sheet_row(root, row_index)
     if row is None:
-        return sheet_bytes
+        row_tag = f"{{{_SPREADSHEET_NS}}}row"
+        row = ET.Element(row_tag, {"r": str(row_index)})
+        inserted = False
+        for idx, existing in enumerate(sheet_data.findall("s:row", ns)):
+            existing_r = existing.get("r") or ""
+            try:
+                existing_index = int(existing_r)
+            except ValueError:
+                continue
+            if existing_index > row_index:
+                sheet_data.insert(idx, row)
+                inserted = True
+                break
+        if not inserted:
+            sheet_data.append(row)
 
     cell = _find_sheet_cell(row, column)
     if cell is None:
-        return sheet_bytes
+        cell_tag = f"{{{_SPREADSHEET_NS}}}c"
+        cell = ET.Element(cell_tag, {"r": f"{column}{row_index}"})
+
+        style_candidate = None
+        for existing in row.findall("s:c", ns):
+            style_attr = existing.get("s")
+            if style_attr:
+                style_candidate = style_attr
+                break
+        if style_candidate:
+            cell.set("s", style_candidate)
+
+        target_index = _column_to_index(column)
+        inserted = False
+        for idx, existing in enumerate(row.findall("s:c", ns)):
+            existing_ref = existing.get("r") or ""
+            existing_col = "".join(filter(str.isalpha, existing_ref))
+            if not existing_col:
+                continue
+            if _column_to_index(existing_col) > target_index:
+                row.insert(idx, cell)
+                inserted = True
+                break
+        if not inserted:
+            row.append(cell)
 
     _set_cell_text(cell, value)
+
+    dimension = root.find("s:dimension", ns)
+    if dimension is None:
+        dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+        dimension = ET.Element(dimension_tag)
+        inserted = False
+        for idx, child in enumerate(list(root)):
+            if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                root.insert(idx, dimension)
+                inserted = True
+                break
+        if not inserted:
+            root.insert(0, dimension)
+
+    ref = (dimension.get("ref") or "").strip()
+    current_col_index = _column_to_index(column)
+    if ref:
+        start_col, start_row, end_col, end_row = _parse_dimension(ref)
+        start_col_index = _column_to_index(start_col)
+        end_col_index = _column_to_index(end_col)
+    else:
+        start_row = end_row = row_index
+        start_col_index = end_col_index = current_col_index
+
+    updated = False
+    if row_index < start_row:
+        start_row = row_index
+        updated = True
+    if row_index > end_row:
+        end_row = row_index
+        updated = True
+    if current_col_index < start_col_index:
+        start_col_index = current_col_index
+        updated = True
+    if current_col_index > end_col_index:
+        end_col_index = current_col_index
+        updated = True
+
+    if updated or not ref:
+        dimension.set(
+            "ref",
+            f"{_index_to_column(start_col_index)}{start_row}:{_index_to_column(end_col_index)}{end_row}",
+        )
+
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
