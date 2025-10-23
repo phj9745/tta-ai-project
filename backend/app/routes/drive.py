@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
 from urllib.parse import quote
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,7 +24,6 @@ from ..services.security_report import SecurityReportService
 from ..services.excel_templates import (
     DefectReportImage,
     populate_defect_report,
-    populate_feature_list,
     populate_testcase_list,
     DEFECT_REPORT_EXPECTED_HEADERS
 )
@@ -52,6 +51,23 @@ class DefectCellRewriteRequest(BaseModel):
         alias="rowValues",
         description="해당 행의 다른 셀 값",
     )
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class FeatureListRowModel(BaseModel):
+    major_category: str = Field("", alias="majorCategory")
+    middle_category: str = Field("", alias="middleCategory")
+    minor_category: str = Field("", alias="minorCategory")
+    feature_description: str = Field("", alias="featureDescription")
+    feature_overview: str = Field("", alias="featureOverview")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class FeatureListUpdateRequest(BaseModel):
+    rows: List[FeatureListRowModel] = Field(default_factory=list)
+    project_overview: str = Field("", alias="projectOverview")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -95,11 +111,9 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
 
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
 _DEFECT_REPORT_TEMPLATE = _TEMPLATE_ROOT / "다.수행" / "GS-B-2X-XXXX 결함리포트 v1.0.xlsx"
-_FEATURE_LIST_TEMPLATE = _TEMPLATE_ROOT / "가.계획" / "GS-B-XX-XXXX 기능리스트 v1.0.xlsx"
 _TESTCASE_TEMPLATE = _TEMPLATE_ROOT / "나.설계" / "GS-B-XX-XXXX 테스트케이스.xlsx"
 
 _STANDARD_TEMPLATE_POPULATORS: Dict[str, tuple[Path, Callable[[bytes, str], bytes]]] = {
-    "feature-list": (_FEATURE_LIST_TEMPLATE, populate_feature_list),
     "testcase-generation": (_TESTCASE_TEMPLATE, populate_testcase_list),
 }
 
@@ -141,10 +155,10 @@ def _extract_defect_entries(text: str) -> List[Dict[str, str]]:
     return entries
 
 
-def _build_attachment_header(filename: str) -> str:
+def _build_attachment_header(filename: str, *, default_filename: str = "security-report.csv") -> str:
     ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
     if not ascii_fallback or not re.search(r"[A-Za-z0-9]", ascii_fallback):
-        ascii_fallback = "security-report.csv"
+        ascii_fallback = default_filename
     quoted = quote(filename)
     return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
 
@@ -238,7 +252,7 @@ async def generate_project_asset(
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     drive_service: GoogleDriveService = Depends(get_drive_service),
     security_report_service: SecurityReportService = Depends(get_security_report_service),
-) -> StreamingResponse:
+) -> Response:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
     if file_metadata:
@@ -362,12 +376,29 @@ async def generate_project_asset(
         metadata=metadata_entries,
     )
 
-    await drive_service.apply_csv_to_spreadsheet(
+    spreadsheet_info = await drive_service.apply_csv_to_spreadsheet(
         project_id=project_id,
         menu_id=menu_id,
         csv_text=result.csv_text,
         google_id=google_id,
+        project_overview=getattr(result, "project_overview", None),
     )
+
+    if menu_id == "feature-list":
+        if not spreadsheet_info or not spreadsheet_info.get("fileId"):
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        payload: Dict[str, Any] = {
+            "status": "updated",
+            "projectId": project_id,
+            "fileId": spreadsheet_info.get("fileId"),
+            "fileName": spreadsheet_info.get("fileName"),
+            "modifiedTime": spreadsheet_info.get("modifiedTime"),
+        }
+        if getattr(result, "filename", None):
+            payload["generatedFilename"] = result.filename
+
+        return JSONResponse(payload)
 
     if menu_id in _STANDARD_TEMPLATE_POPULATORS:
         template_path, populate_template = _STANDARD_TEMPLATE_POPULATORS[menu_id]
@@ -463,6 +494,76 @@ async def generate_project_asset(
     }
 
     return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
+
+
+@router.get("/drive/projects/{project_id}/feature-list")
+async def get_feature_list(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 기능리스트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    result = await drive_service.get_feature_list_rows(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.put("/drive/projects/{project_id}/feature-list")
+async def update_feature_list(
+    project_id: str,
+    payload: FeatureListUpdateRequest,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 기능리스트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    normalized_rows = [row.model_dump(by_alias=True) for row in payload.rows]
+    result = await drive_service.update_feature_list_rows(
+        project_id=project_id,
+        rows=normalized_rows,
+        project_overview=str(payload.project_overview or ""),
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.get("/drive/projects/{project_id}/feature-list/download")
+async def download_feature_list(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="다운로드할 기능리스트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> StreamingResponse:
+    file_name, content = await drive_service.download_feature_list_workbook(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    safe_name = file_name or "feature-list.xlsx"
+    headers = {
+        "Content-Disposition": _build_attachment_header(safe_name, default_filename="feature-list.xlsx"),
+        "Cache-Control": "no-store",
+    }
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
 
 
 @router.post("/drive/projects/{project_id}/defect-report/rewrite")
