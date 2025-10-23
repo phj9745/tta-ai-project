@@ -52,6 +52,7 @@ class GeneratedCsv:
     csv_text: str
     defect_summary: List["DefectSummaryEntry"] | None = None
     defect_images: Dict[int, List[BufferedUpload]] | None = None
+    project_overview: str | None = None
 
 
 @dataclass
@@ -641,6 +642,62 @@ class AIGenerationService:
             cleaned = fence_match.group(1).strip()
         return cleaned
 
+    @staticmethod
+    def _extract_feature_list_project_overview(
+        csv_text: str,
+    ) -> tuple[str, str | None]:
+        project_overview: str | None = None
+        rows_to_keep: list[list[str]] = []
+
+        stream = io.StringIO(csv_text)
+        reader = csv.reader(stream)
+
+        for raw_row in reader:
+            row = [cell.strip() for cell in raw_row]
+
+            if not any(row):
+                # Skip completely empty rows altogether.
+                continue
+
+            if project_overview is None and row:
+                first_cell = row[0].lstrip("\ufeff").strip()
+                colon_match = re.match(
+                    r"^(?:프로젝트\s*)?개요\s*[:：\-]\s*(.+)$",
+                    first_cell,
+                    re.IGNORECASE,
+                )
+                if colon_match:
+                    candidate = colon_match.group(1).strip()
+                    if candidate:
+                        project_overview = candidate
+                        continue
+
+                normalized_key = re.sub(r"\s+", "", first_cell.lower())
+                if normalized_key in {"프로젝트개요", "개요"}:
+                    remainder = next((cell for cell in row[1:] if cell), "").strip()
+                    if remainder:
+                        project_overview = remainder
+                        continue
+
+            rows_to_keep.append(raw_row)
+
+        if project_overview is None:
+            fallback_match = re.search(
+                r"프로젝트\s*개요\s*[:：]\s*(.+)",
+                csv_text,
+            )
+            if fallback_match:
+                project_overview = fallback_match.group(1).strip()
+
+        if not rows_to_keep:
+            return "", project_overview
+
+        output = io.StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        for row in rows_to_keep:
+            writer.writerow(row)
+        return output.getvalue().strip(), project_overview
+
     def _convert_required_documents_to_pdf(
         self,
         uploads: List[BufferedUpload],
@@ -1107,6 +1164,12 @@ class AIGenerationService:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
             sanitized = self._sanitize_csv(response_text)
+            project_overview: str | None = None
+            if menu_id == "feature-list" and sanitized:
+                sanitized, project_overview = self._extract_feature_list_project_overview(
+                    sanitized
+                )
+
             if not sanitized:
                 raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 
@@ -1121,6 +1184,7 @@ class AIGenerationService:
                 csv_text=sanitized,
                 defect_summary=defect_summary_entries,
                 defect_images=dict(defect_image_map) if defect_image_map else None,
+                project_overview=project_overview,
             )
         finally:
             if uploaded_file_records:

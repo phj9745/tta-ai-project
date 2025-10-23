@@ -913,6 +913,7 @@ class GoogleDriveService:
         menu_id: str,
         csv_text: str,
         google_id: Optional[str],
+        project_overview: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         rule = _SPREADSHEET_RULES.get(menu_id)
         if not rule:
@@ -929,8 +930,16 @@ class GoogleDriveService:
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="스프레드시트 내용을 불러오지 못했습니다. 다시 시도해 주세요.")
 
+        overview_value: Optional[str] = None
         try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+            populate = resolved.rule["populate"]
+            if menu_id == "feature-list":
+                overview_value = (
+                    str(project_overview or "") if project_overview is not None else None
+                )
+                updated_bytes = populate(workbook_bytes, csv_text, overview_value)
+            else:
+                updated_bytes = populate(workbook_bytes, csv_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -955,6 +964,8 @@ class GoogleDriveService:
             "fileName": resolved.file_name,
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
         }
+        if menu_id == "feature-list" and overview_value is not None:
+            response["projectOverview"] = overview_value
         return response
 
     async def get_feature_list_rows(

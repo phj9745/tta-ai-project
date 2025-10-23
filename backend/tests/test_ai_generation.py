@@ -42,10 +42,11 @@ class _StubFiles:
 class _StubResponses:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.output_text = "col1,col2\nvalue1,value2"
 
     def create(self, **kwargs: object) -> SimpleNamespace:
         self.calls.append(kwargs)
-        return SimpleNamespace(output_text="col1,col2\nvalue1,value2")
+        return SimpleNamespace(output_text=self.output_text)
 
 
 class _StubClient:
@@ -239,6 +240,69 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     assert stub_client.files.deleted == ["file-1"]
 
     assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.project_overview is None
+
+
+@pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요,이 프로젝트는 테스트입니다.\n"
+        "대분류,중분류,소분류,기능 설명,기능 개요\n"
+        "대1,중1,소1,기능 상세,요약"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == "이 프로젝트는 테스트입니다."
+    assert result.csv_text == (
+        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,기능 상세,요약"
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_with_colon_notation() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요:이 프로젝트는 콜론 형식을 따릅니다.\n"
+        "대분류,중분류,소분류,기능 설명,기능 개요\n"
+        "대1,중1,소1,상세,개요"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview-colon",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == "이 프로젝트는 콜론 형식을 따릅니다."
+    assert result.csv_text == (
+        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,상세,개요"
+    )
 
 
 @pytest.mark.anyio

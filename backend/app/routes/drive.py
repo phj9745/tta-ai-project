@@ -381,6 +381,7 @@ async def generate_project_asset(
         menu_id=menu_id,
         csv_text=result.csv_text,
         google_id=google_id,
+        project_overview=getattr(result, "project_overview", None),
     )
 
     if menu_id == "feature-list":
