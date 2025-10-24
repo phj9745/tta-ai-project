@@ -46,6 +46,15 @@ interface MenuItemContent {
 
 type GenerationStatus = 'idle' | 'loading' | 'success' | 'error'
 
+interface FeatureListGenerateResponse {
+  status?: string
+  projectId?: string
+  fileId?: string
+  fileName?: string
+  modifiedTime?: string
+  generatedFilename?: string
+}
+
 const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
 
 interface ItemState {
@@ -111,7 +120,6 @@ function sanitizeFileName(name: string): string {
 }
 
 const XLSX_RESULT_MENUS: Set<MenuItemId> = new Set([
-  'feature-list',
   'testcase-generation',
   'defect-report',
 ])
@@ -565,6 +573,58 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           return
         }
 
+        if (id === 'feature-list') {
+          let payload: FeatureListGenerateResponse | null = null
+          try {
+            payload = (await response.json()) as FeatureListGenerateResponse
+          } catch {
+            payload = null
+          }
+
+          if (controller.signal.aborted) {
+            return
+          }
+
+          if (!payload || typeof payload.fileId !== 'string') {
+            setItemStates((prev) => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                status: 'error',
+                errorMessage: '생성된 기능리스트 정보를 확인하지 못했습니다.',
+              },
+            }))
+            return
+          }
+
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: createItemState(menu),
+          }))
+
+          const nextParams = new URLSearchParams(window.location.search)
+          if (!nextParams.get('name') && projectName && projectName !== projectId) {
+            nextParams.set('name', projectName)
+          }
+          nextParams.set('fileId', payload.fileId)
+          if (payload.fileName) {
+            nextParams.set('fileName', payload.fileName)
+          } else {
+            nextParams.delete('fileName')
+          }
+          if (payload.modifiedTime) {
+            nextParams.set('modifiedTime', payload.modifiedTime)
+          } else {
+            nextParams.delete('modifiedTime')
+          }
+
+          const query = nextParams.toString()
+          navigate(
+            `/projects/${encodeURIComponent(projectId)}/feature-list/edit${query ? `?${query}` : ''}`,
+          )
+          return
+        }
+
         const blob = await response.blob()
         if (controller.signal.aborted) {
           return
@@ -636,7 +696,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
       }
     },
-    [backendUrl, itemStates, menuById, projectId, releaseDownloadUrl],
+    [backendUrl, itemStates, menuById, projectId, projectName, releaseDownloadUrl],
   )
 
   const handleReset = useCallback(
