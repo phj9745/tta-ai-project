@@ -17,6 +17,7 @@ from app.services.excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
     SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
+    extract_feature_list_overview,
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,

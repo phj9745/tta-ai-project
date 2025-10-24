@@ -183,6 +183,308 @@ def _parse_dimension(ref: str) -> tuple[str, int, str, int]:
     return start_col, start_row, end_col, end_row
 
 
+def _parse_shared_strings(data: bytes) -> List[str]:
+    if not data:
+        return []
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return []
+
+    ns = {"s": _SPREADSHEET_NS}
+    values: List[str] = []
+    for si in root.findall("s:si", ns):
+        text_segments: List[str] = []
+        for text_node in si.findall(".//s:t", ns):
+            if text_node.text:
+                text_segments.append(text_node.text)
+        values.append("".join(text_segments))
+    return values
+
+
+def _cell_text_from_sheet(
+    cell: ET.Element,
+    *,
+    shared_strings: Sequence[str],
+) -> str:
+    text_type = (cell.get("t") or "").strip().lower()
+    ns = {"s": _SPREADSHEET_NS}
+
+    if text_type == "inlinestr":
+        text_elem = cell.find("s:is/s:t", ns)
+        return text_elem.text if text_elem is not None and text_elem.text else ""
+
+    value_elem = cell.find("s:v", ns)
+    if value_elem is None or value_elem.text is None:
+        return ""
+
+    if text_type == "s":
+        try:
+            index = int(value_elem.text)
+        except ValueError:
+            return ""
+        if 0 <= index < len(shared_strings):
+            return shared_strings[index] or ""
+        return ""
+
+    return value_elem.text or ""
+
+
+def _find_sheet_row(root: ET.Element, row_index: int) -> ET.Element | None:
+    ns = {"s": _SPREADSHEET_NS}
+    return root.find(f"s:sheetData/s:row[@r='{row_index}']", ns)
+
+
+def _find_sheet_cell(row: ET.Element, column: str) -> ET.Element | None:
+    ns = {"s": _SPREADSHEET_NS}
+    target_index = _column_to_index(column)
+    for cell in row.findall("s:c", ns):
+        ref = (cell.get("r") or "").strip()
+        if ref:
+            cell_column = "".join(filter(str.isalpha, ref))
+        else:
+            cell_column = ""
+        if cell_column and _column_to_index(cell_column) == target_index:
+            return cell
+    return None
+
+
+def _clear_cell(cell: ET.Element) -> None:
+    if "t" in cell.attrib:
+        del cell.attrib["t"]
+    for child in list(cell):
+        cell.remove(child)
+
+
+def _set_cell_text(cell: ET.Element, value: str) -> None:
+    _clear_cell(cell)
+    cleaned = value.strip()
+    if not cleaned:
+        return
+
+    cell.set("t", "inlineStr")
+    is_elem = ET.SubElement(cell, f"{{{_SPREADSHEET_NS}}}is")
+    text_elem = ET.SubElement(is_elem, f"{{{_SPREADSHEET_NS}}}t")
+    if cleaned != value or "\n" in value:
+        text_elem.set(f"{{{_XML_NS}}}space", "preserve")
+        text_elem.text = value
+    else:
+        text_elem.text = cleaned
+
+
+def _locate_feature_list_overview(
+    sheet_bytes: bytes,
+    shared_strings: Sequence[str],
+) -> Tuple[str | None, str]:
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return None, ""
+
+    ns = {"s": _SPREADSHEET_NS}
+    sheet_data = root.find("s:sheetData", ns)
+    if sheet_data is None:
+        return None, ""
+
+    merges: List[Tuple[str, int, str, int]] = []
+    merge_container = root.find("s:mergeCells", ns)
+    if merge_container is not None:
+        for merge in merge_container.findall("s:mergeCell", ns):
+            ref = (merge.get("ref") or "").strip()
+            if not ref:
+                continue
+            try:
+                if ":" in ref:
+                    start_ref, end_ref = ref.split(":", 1)
+                else:
+                    start_ref = end_ref = ref
+                start_col, start_row = _split_cell(start_ref)
+                end_col, end_row = _split_cell(end_ref)
+            except ValueError:
+                continue
+            merges.append((start_col, start_row, end_col, end_row))
+
+    cell_map: Dict[str, ET.Element] = {}
+    for row in sheet_data.findall("s:row", ns):
+        for cell in row.findall("s:c", ns):
+            ref = (cell.get("r") or "").strip()
+            if ref:
+                cell_map[ref] = cell
+
+    for ref, cell in cell_map.items():
+        try:
+            column, row_index = _split_cell(ref)
+        except ValueError:
+            continue
+
+        if row_index >= _FEATURE_LIST_START_ROW:
+            continue
+
+        raw_text = _cell_text_from_sheet(cell, shared_strings=shared_strings).strip()
+        if not raw_text:
+            continue
+
+        normalized = match_feature_list_header(raw_text) or ""
+        normalized_token = _normalize_feature_header_token(raw_text)
+        if normalized_token not in {"개요", "프로젝트개요"} and normalized != "기능 개요":
+            continue
+
+        column_index = _column_to_index(column)
+        header_span: Tuple[str, int, str, int] | None = None
+        for start_col, start_row, end_col, end_row in merges:
+            start_index = _column_to_index(start_col)
+            end_index = _column_to_index(end_col)
+            if start_row <= row_index <= end_row and start_index <= column_index <= end_index:
+                header_span = (start_col, start_row, end_col, end_row)
+                break
+
+        candidate_ref: str | None = None
+        candidate_ranges: List[Tuple[str, int, str, int]] = []
+        if header_span is not None:
+            header_end_row = header_span[3]
+            for start_col, start_row, end_col, end_row in merges:
+                if start_col == header_span[0] and end_col == header_span[2]:
+                    if start_row > header_end_row and start_row <= header_end_row + 6:
+                        candidate_ranges.append((start_col, start_row, end_col, end_row))
+            if candidate_ranges:
+                start_col, start_row, _, _ = min(
+                    candidate_ranges, key=lambda item: (item[1], _column_to_index(item[0]))
+                )
+                candidate_ref = f"{start_col}{start_row}"
+
+        if candidate_ref is None:
+            next_row = row_index + 1
+            for start_col, start_row, end_col, end_row in merges:
+                start_index = _column_to_index(start_col)
+                end_index = _column_to_index(end_col)
+                if start_row <= next_row <= end_row and start_index <= column_index <= end_index:
+                    candidate_ref = f"{start_col}{start_row}"
+                    break
+
+        if candidate_ref is None:
+            candidate_ref = f"{column}{row_index + 1}"
+
+        cell_elem = cell_map.get(candidate_ref)
+        value = ""
+        if cell_elem is not None:
+            value = _cell_text_from_sheet(cell_elem, shared_strings=shared_strings).strip()
+
+        return candidate_ref, value
+
+    return None, ""
+
+
+def _apply_project_overview_to_sheet(sheet_bytes: bytes, cell_ref: str, value: str) -> bytes:
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return sheet_bytes
+
+    try:
+        column, row_index = _split_cell(cell_ref)
+    except ValueError:
+        return sheet_bytes
+
+    ns = {"s": _SPREADSHEET_NS}
+    sheet_data = root.find("s:sheetData", ns)
+    if sheet_data is None:
+        return sheet_bytes
+
+    row = _find_sheet_row(root, row_index)
+    if row is None:
+        row_tag = f"{{{_SPREADSHEET_NS}}}row"
+        row = ET.Element(row_tag, {"r": str(row_index)})
+        inserted = False
+        for idx, existing in enumerate(sheet_data.findall("s:row", ns)):
+            existing_r = existing.get("r") or ""
+            try:
+                existing_index = int(existing_r)
+            except ValueError:
+                continue
+            if existing_index > row_index:
+                sheet_data.insert(idx, row)
+                inserted = True
+                break
+        if not inserted:
+            sheet_data.append(row)
+
+    cell = _find_sheet_cell(row, column)
+    if cell is None:
+        cell_tag = f"{{{_SPREADSHEET_NS}}}c"
+        cell = ET.Element(cell_tag, {"r": f"{column}{row_index}"})
+
+        style_candidate = None
+        for existing in row.findall("s:c", ns):
+            style_attr = existing.get("s")
+            if style_attr:
+                style_candidate = style_attr
+                break
+        if style_candidate:
+            cell.set("s", style_candidate)
+
+        target_index = _column_to_index(column)
+        inserted = False
+        for idx, existing in enumerate(row.findall("s:c", ns)):
+            existing_ref = existing.get("r") or ""
+            existing_col = "".join(filter(str.isalpha, existing_ref))
+            if not existing_col:
+                continue
+            if _column_to_index(existing_col) > target_index:
+                row.insert(idx, cell)
+                inserted = True
+                break
+        if not inserted:
+            row.append(cell)
+
+    _set_cell_text(cell, value)
+
+    dimension = root.find("s:dimension", ns)
+    if dimension is None:
+        dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+        dimension = ET.Element(dimension_tag)
+        inserted = False
+        for idx, child in enumerate(list(root)):
+            if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                root.insert(idx, dimension)
+                inserted = True
+                break
+        if not inserted:
+            root.insert(0, dimension)
+
+    ref = (dimension.get("ref") or "").strip()
+    current_col_index = _column_to_index(column)
+    if ref:
+        start_col, start_row, end_col, end_row = _parse_dimension(ref)
+        start_col_index = _column_to_index(start_col)
+        end_col_index = _column_to_index(end_col)
+    else:
+        start_row = end_row = row_index
+        start_col_index = end_col_index = current_col_index
+
+    updated = False
+    if row_index < start_row:
+        start_row = row_index
+        updated = True
+    if row_index > end_row:
+        end_row = row_index
+        updated = True
+    if current_col_index < start_col_index:
+        start_col_index = current_col_index
+        updated = True
+    if current_col_index > end_col_index:
+        end_col_index = current_col_index
+        updated = True
+
+    if updated or not ref:
+        dimension.set(
+            "ref",
+            f"{_index_to_column(start_col_index)}{start_row}:{_index_to_column(end_col_index)}{end_row}",
+        )
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
 class WorksheetPopulator:
     def __init__(
         self,
@@ -601,14 +903,51 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
 
     return normalized_records
 
+    segments = re.split(r"[\r\n]+|(?<=[.!?])\s+", cleaned)
+    for segment in segments:
+        candidate = segment.strip(" \u2022-•·")
+        if candidate:
+            if len(candidate) > 160:
+                return candidate[:157].rstrip() + "…"
+            return candidate
 
 def populate_feature_list(workbook_bytes: bytes, csv_text: str) -> bytes:
     records = _normalize_feature_list_records(csv_text)
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
         sheet_bytes = source.read(_XLSX_SHEET_PATH)
+        try:
+            shared_strings_bytes = source.read("xl/sharedStrings.xml")
+        except KeyError:
+            shared_strings_bytes = b""
+
+    shared_strings = _parse_shared_strings(shared_strings_bytes)
+    return _locate_feature_list_overview(sheet_bytes, shared_strings)
+
+
+def populate_feature_list(
+    workbook_bytes: bytes,
+    csv_text: str,
+    project_overview: str | None = None,
+) -> bytes:
+    records = _normalize_feature_list_records(csv_text)
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
+        sheet_bytes = source.read(_XLSX_SHEET_PATH)
+        try:
+            shared_strings_bytes = source.read("xl/sharedStrings.xml")
+        except KeyError:
+            shared_strings_bytes = b""
+
+    shared_strings = _parse_shared_strings(shared_strings_bytes)
+    overview_ref, _ = _locate_feature_list_overview(sheet_bytes, shared_strings)
+
     populator = WorksheetPopulator(sheet_bytes, start_row=8, columns=FEATURE_LIST_COLUMNS)
     populator.populate(records)
-    return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+
+    updated_sheet = populator.to_bytes()
+    if overview_ref and project_overview is not None:
+        updated_sheet = _apply_project_overview_to_sheet(updated_sheet, overview_ref, project_overview)
+
+    return _replace_sheet_bytes(workbook_bytes, updated_sheet)
 
 
 TESTCASE_COLUMNS: Sequence[ColumnSpec] = (

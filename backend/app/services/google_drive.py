@@ -912,6 +912,7 @@ class GoogleDriveService:
         menu_id: str,
         csv_text: str,
         google_id: Optional[str],
+        project_overview: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         rule = _SPREADSHEET_RULES.get(menu_id)
         if not rule:
@@ -928,8 +929,16 @@ class GoogleDriveService:
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="스프레드시트 내용을 불러오지 못했습니다. 다시 시도해 주세요.")
 
+        overview_value: Optional[str] = None
         try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+            populate = resolved.rule["populate"]
+            if menu_id == "feature-list":
+                overview_value = (
+                    str(project_overview or "") if project_overview is not None else None
+                )
+                updated_bytes = populate(workbook_bytes, csv_text, overview_value)
+            else:
+                updated_bytes = populate(workbook_bytes, csv_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -954,6 +963,8 @@ class GoogleDriveService:
             "fileName": resolved.file_name,
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
         }
+        if menu_id == "feature-list" and overview_value is not None:
+            response["projectOverview"] = overview_value
         return response
 
     async def get_feature_list_rows(
@@ -974,6 +985,8 @@ class GoogleDriveService:
         workbook_bytes = resolved.content
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        _, project_overview = extract_feature_list_overview(workbook_bytes)
 
         buffer = io.BytesIO(workbook_bytes)
         try:
@@ -1118,6 +1131,7 @@ class GoogleDriveService:
             "headers": headers,
             "rows": extracted_rows,
             "modifiedTime": resolved.modified_time,
+            "projectOverview": project_overview,
         }
 
     async def update_feature_list_rows(
@@ -1125,6 +1139,7 @@ class GoogleDriveService:
         *,
         project_id: str,
         rows: Sequence[Dict[str, str]],
+        project_overview: str = "",
         google_id: Optional[str],
         file_id: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -1219,16 +1234,25 @@ class GoogleDriveService:
             minor = str(row.get("minorCategory", "") or "").strip()
             if not any([major, middle, minor]):
                 continue
-            writer.writerow({
-                "대분류": major,
-                "중분류": middle,
-                "소분류": minor,
-            })
+
+            writer.writerow(
+                {
+                    "대분류": major,
+                    "중분류": middle,
+                    "소분류": minor,
+                    "기능 설명": description,
+                    "기능 개요": overview,
+                }
+            )
 
         csv_text = output.getvalue()
 
         try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+            updated_bytes = resolved.rule["populate"](
+                workbook_bytes,
+                csv_text,
+                project_overview,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -1247,6 +1271,7 @@ class GoogleDriveService:
             "fileId": resolved.file_id,
             "fileName": resolved.file_name,
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+            "projectOverview": project_overview,
         }
 
     async def download_feature_list_workbook(

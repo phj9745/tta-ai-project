@@ -67,6 +67,7 @@ class FeatureListRowModel(BaseModel):
 
 class FeatureListUpdateRequest(BaseModel):
     rows: List[FeatureListRowModel] = Field(default_factory=list)
+    project_overview: str = Field("", alias="projectOverview")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -380,6 +381,7 @@ async def generate_project_asset(
         menu_id=menu_id,
         csv_text=result.csv_text,
         google_id=google_id,
+        project_overview=getattr(result, "project_overview", None),
     )
 
     if menu_id == "feature-list":
@@ -529,6 +531,7 @@ async def update_feature_list(
     result = await drive_service.update_feature_list_rows(
         project_id=project_id,
         rows=normalized_rows,
+        project_overview=str(payload.project_overview or ""),
         google_id=google_id,
         file_id=file_id,
     )

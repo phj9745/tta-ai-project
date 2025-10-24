@@ -21,6 +21,7 @@ interface FeatureListResponse {
   headers?: string[]
   rows?: FeatureListRow[]
   modifiedTime?: string
+  projectOverview?: string
 }
 
 type LoadState = 'idle' | 'loading' | 'error' | 'ready'
@@ -116,6 +117,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     const value = params.get('modifiedTime')
     return value ?? undefined
   })
+  const [projectOverview, setProjectOverview] = useState<string>('')
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -255,7 +257,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
         }
 
         const nextHeaders = Array.isArray(payload.headers)
-          ? payload.headers.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+          ? payload.headers.filter((item): item is string => typeof item === 'string')
           : undefined
         if (nextHeaders && nextHeaders.length >= 3) {
           const merged = [...DEFAULT_HEADERS]
@@ -276,6 +278,9 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
             : requestedFileName ?? ''
         setFileName(nextFileName)
         setModifiedTime(payload.modifiedTime ?? requestedModified)
+        setProjectOverview(
+          typeof payload.projectOverview === 'string' ? payload.projectOverview : '',
+        )
 
         const effectiveFileId =
           typeof payload.fileId === 'string' && payload.fileId.trim().length > 0
@@ -336,6 +341,12 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     setSuccessMessage(null)
   }, [])
 
+  const handleProjectOverviewChange = useCallback((value: string) => {
+    setProjectOverview(value)
+    setIsDirty(true)
+    setSuccessMessage(null)
+  }, [])
+
   const handleAddRow = useCallback(() => {
     setRows((prev) => [...prev, createEmptyRow()])
     setIsDirty(true)
@@ -359,6 +370,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     setSuccessMessage(null)
     try {
       const payload = {
+        projectOverview,
         rows: rows.map((row) => ({
           majorCategory: row.majorCategory,
           middleCategory: row.middleCategory,
@@ -414,7 +426,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     } finally {
       setIsSaving(false)
     }
-  }, [backendUrl, fileId, projectId, rows])
+  }, [backendUrl, fileId, projectId, projectOverview, rows])
 
   const handleDownload = useCallback(async () => {
     setIsDownloading(true)
@@ -547,6 +559,20 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
 
         {loadState === 'ready' && (
           <div className="feature-list-editor__workspace">
+            <div className="feature-list-editor__overview">
+              <label htmlFor="feature-project-overview" className="feature-list-editor__overview-label">
+                프로젝트 개요
+              </label>
+              <textarea
+                id="feature-project-overview"
+                className="feature-list-editor__overview-input feature-list-editor__textarea"
+                value={projectOverview}
+                onChange={(event) => handleProjectOverviewChange(event.target.value)}
+                placeholder="프로젝트 개요를 입력하세요"
+                rows={4}
+              />
+            </div>
+
             <div className="defect-workflow__table-wrapper">
               <table className="defect-workflow__table">
                 <thead>

@@ -1,6 +1,6 @@
 .feature-list-editor {
   margin: 32px auto 64px;
-  width: min(1080px, 100%);
+  width: min(1200px, 100%);
   padding: 0 20px;
   display: flex;
   flex-direction: column;
@@ -138,6 +138,10 @@
   .feature-list-editor {
     margin: 24px auto 48px;
     padding: 0 16px;
+  }
+
+  .feature-list-editor__overview {
+    padding: 16px;
   }
 
   .feature-list-editor__table-actions {
