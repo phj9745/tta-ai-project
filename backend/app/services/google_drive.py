@@ -21,6 +21,7 @@ from openpyxl import Workbook, load_workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
+from . import excel_templates as excel_templates_service
 from .excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
     extract_feature_list_overview,
@@ -29,7 +30,11 @@ from .excel_templates import (
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,
+    summarize_feature_description,
 )
+
+if "extract_feature_list_overview" not in globals():
+    extract_feature_list_overview = excel_templates_service.extract_feature_list_overview
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -1224,6 +1229,12 @@ class GoogleDriveService:
             include_content=True,
             file_id=file_id,
         )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
         workbook_bytes = resolved.content
         if workbook_bytes is None:
