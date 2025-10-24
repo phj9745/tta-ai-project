@@ -10,8 +10,6 @@ from xml.etree import ElementTree as ET
 import zipfile
 from copy import copy as clone_style
 
-from openpyxl import load_workbook
-
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 _XML_NS = "http://www.w3.org/XML/1998/namespace"
 _XLSX_SHEET_PATH = "xl/worksheets/sheet1.xml"
@@ -155,6 +153,18 @@ def _column_to_index(letter: str) -> int:
     return result
 
 
+def _index_to_column(index: int) -> str:
+    if index <= 0:
+        index = 1
+    letters: List[str] = []
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        letters.append(chr(ord("A") + remainder))
+    if not letters:
+        return "A"
+    return "".join(reversed(letters))
+
+
 def _split_cell(reference: str) -> tuple[str, int]:
     match = re.match(r"([A-Z]+)(\d+)", reference)
     if not match:
@@ -173,6 +183,309 @@ def _parse_dimension(ref: str) -> tuple[str, int, str, int]:
     return start_col, start_row, end_col, end_row
 
 
+def _parse_shared_strings(data: bytes) -> List[str]:
+    if not data:
+        return []
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        return []
+
+    ns = {"s": _SPREADSHEET_NS}
+    values: List[str] = []
+    for si in root.findall("s:si", ns):
+        text_segments: List[str] = []
+        for text_node in si.findall(".//s:t", ns):
+            if text_node.text:
+                text_segments.append(text_node.text)
+        values.append("".join(text_segments))
+    return values
+
+
+def _cell_text_from_sheet(
+    cell: ET.Element,
+    *,
+    shared_strings: Sequence[str],
+) -> str:
+    text_type = (cell.get("t") or "").strip().lower()
+    ns = {"s": _SPREADSHEET_NS}
+
+    if text_type == "inlinestr":
+        text_elem = cell.find("s:is/s:t", ns)
+        return text_elem.text if text_elem is not None and text_elem.text else ""
+
+    value_elem = cell.find("s:v", ns)
+    if value_elem is None or value_elem.text is None:
+        return ""
+
+    if text_type == "s":
+        try:
+            index = int(value_elem.text)
+        except ValueError:
+            return ""
+        if 0 <= index < len(shared_strings):
+            return shared_strings[index] or ""
+        return ""
+
+    return value_elem.text or ""
+
+
+def _find_sheet_row(root: ET.Element, row_index: int) -> ET.Element | None:
+    ns = {"s": _SPREADSHEET_NS}
+    return root.find(f"s:sheetData/s:row[@r='{row_index}']", ns)
+
+
+def _find_sheet_cell(row: ET.Element, column: str) -> ET.Element | None:
+    ns = {"s": _SPREADSHEET_NS}
+    target_index = _column_to_index(column)
+    for cell in row.findall("s:c", ns):
+        ref = (cell.get("r") or "").strip()
+        if ref:
+            cell_column = "".join(filter(str.isalpha, ref))
+        else:
+            cell_column = ""
+        if cell_column and _column_to_index(cell_column) == target_index:
+            return cell
+    return None
+
+
+def _clear_cell(cell: ET.Element) -> None:
+    if "t" in cell.attrib:
+        del cell.attrib["t"]
+    for child in list(cell):
+        cell.remove(child)
+
+
+def _set_cell_text(cell: ET.Element, value: str) -> None:
+    _clear_cell(cell)
+    cleaned = value.strip()
+    if not cleaned:
+        return
+
+    cell.set("t", "inlineStr")
+    is_elem = ET.SubElement(cell, f"{{{_SPREADSHEET_NS}}}is")
+    text_elem = ET.SubElement(is_elem, f"{{{_SPREADSHEET_NS}}}t")
+    if cleaned != value or "\n" in value:
+        text_elem.set(f"{{{_XML_NS}}}space", "preserve")
+        text_elem.text = value
+    else:
+        text_elem.text = cleaned
+
+
+def _locate_feature_list_overview(
+    sheet_bytes: bytes,
+    shared_strings: Sequence[str],
+) -> Tuple[str | None, str]:
+    feature_start_row = globals().get("_FEATURE_LIST_START_ROW", 8)
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return None, ""
+
+    ns = {"s": _SPREADSHEET_NS}
+    sheet_data = root.find("s:sheetData", ns)
+    if sheet_data is None:
+        return None, ""
+
+    merges: List[Tuple[str, int, str, int]] = []
+    merge_container = root.find("s:mergeCells", ns)
+    if merge_container is not None:
+        for merge in merge_container.findall("s:mergeCell", ns):
+            ref = (merge.get("ref") or "").strip()
+            if not ref:
+                continue
+            try:
+                if ":" in ref:
+                    start_ref, end_ref = ref.split(":", 1)
+                else:
+                    start_ref = end_ref = ref
+                start_col, start_row = _split_cell(start_ref)
+                end_col, end_row = _split_cell(end_ref)
+            except ValueError:
+                continue
+            merges.append((start_col, start_row, end_col, end_row))
+
+    cell_map: Dict[str, ET.Element] = {}
+    for row in sheet_data.findall("s:row", ns):
+        for cell in row.findall("s:c", ns):
+            ref = (cell.get("r") or "").strip()
+            if ref:
+                cell_map[ref] = cell
+
+    for ref, cell in cell_map.items():
+        try:
+            column, row_index = _split_cell(ref)
+        except ValueError:
+            continue
+
+        if row_index >= feature_start_row:
+            continue
+
+        raw_text = _cell_text_from_sheet(cell, shared_strings=shared_strings).strip()
+        if not raw_text:
+            continue
+
+        normalized = match_feature_list_header(raw_text) or ""
+        normalized_token = _normalize_feature_header_token(raw_text)
+        if normalized_token not in {"개요", "프로젝트개요"} and normalized != "기능 개요":
+            continue
+
+        column_index = _column_to_index(column)
+        header_span: Tuple[str, int, str, int] | None = None
+        for start_col, start_row, end_col, end_row in merges:
+            start_index = _column_to_index(start_col)
+            end_index = _column_to_index(end_col)
+            if start_row <= row_index <= end_row and start_index <= column_index <= end_index:
+                header_span = (start_col, start_row, end_col, end_row)
+                break
+
+        candidate_ref: str | None = None
+        candidate_ranges: List[Tuple[str, int, str, int]] = []
+        if header_span is not None:
+            header_end_row = header_span[3]
+            for start_col, start_row, end_col, end_row in merges:
+                if start_col == header_span[0] and end_col == header_span[2]:
+                    if start_row > header_end_row and start_row <= header_end_row + 6:
+                        candidate_ranges.append((start_col, start_row, end_col, end_row))
+            if candidate_ranges:
+                start_col, start_row, _, _ = min(
+                    candidate_ranges, key=lambda item: (item[1], _column_to_index(item[0]))
+                )
+                candidate_ref = f"{start_col}{start_row}"
+
+        if candidate_ref is None:
+            next_row = row_index + 1
+            for start_col, start_row, end_col, end_row in merges:
+                start_index = _column_to_index(start_col)
+                end_index = _column_to_index(end_col)
+                if start_row <= next_row <= end_row and start_index <= column_index <= end_index:
+                    candidate_ref = f"{start_col}{start_row}"
+                    break
+
+        if candidate_ref is None:
+            candidate_ref = f"{column}{row_index + 1}"
+
+        cell_elem = cell_map.get(candidate_ref)
+        value = ""
+        if cell_elem is not None:
+            value = _cell_text_from_sheet(cell_elem, shared_strings=shared_strings).strip()
+
+        return candidate_ref, value
+
+    return None, ""
+
+
+def _apply_project_overview_to_sheet(sheet_bytes: bytes, cell_ref: str, value: str) -> bytes:
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return sheet_bytes
+
+    try:
+        column, row_index = _split_cell(cell_ref)
+    except ValueError:
+        return sheet_bytes
+
+    ns = {"s": _SPREADSHEET_NS}
+    sheet_data = root.find("s:sheetData", ns)
+    if sheet_data is None:
+        return sheet_bytes
+
+    row = _find_sheet_row(root, row_index)
+    if row is None:
+        row_tag = f"{{{_SPREADSHEET_NS}}}row"
+        row = ET.Element(row_tag, {"r": str(row_index)})
+        inserted = False
+        for idx, existing in enumerate(sheet_data.findall("s:row", ns)):
+            existing_r = existing.get("r") or ""
+            try:
+                existing_index = int(existing_r)
+            except ValueError:
+                continue
+            if existing_index > row_index:
+                sheet_data.insert(idx, row)
+                inserted = True
+                break
+        if not inserted:
+            sheet_data.append(row)
+
+    cell = _find_sheet_cell(row, column)
+    if cell is None:
+        cell_tag = f"{{{_SPREADSHEET_NS}}}c"
+        cell = ET.Element(cell_tag, {"r": f"{column}{row_index}"})
+
+        style_candidate = None
+        for existing in row.findall("s:c", ns):
+            style_attr = existing.get("s")
+            if style_attr:
+                style_candidate = style_attr
+                break
+        if style_candidate:
+            cell.set("s", style_candidate)
+
+        target_index = _column_to_index(column)
+        inserted = False
+        for idx, existing in enumerate(row.findall("s:c", ns)):
+            existing_ref = existing.get("r") or ""
+            existing_col = "".join(filter(str.isalpha, existing_ref))
+            if not existing_col:
+                continue
+            if _column_to_index(existing_col) > target_index:
+                row.insert(idx, cell)
+                inserted = True
+                break
+        if not inserted:
+            row.append(cell)
+
+    _set_cell_text(cell, value)
+
+    dimension = root.find("s:dimension", ns)
+    if dimension is None:
+        dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+        dimension = ET.Element(dimension_tag)
+        inserted = False
+        for idx, child in enumerate(list(root)):
+            if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                root.insert(idx, dimension)
+                inserted = True
+                break
+        if not inserted:
+            root.insert(0, dimension)
+
+    ref = (dimension.get("ref") or "").strip()
+    current_col_index = _column_to_index(column)
+    if ref:
+        start_col, start_row, end_col, end_row = _parse_dimension(ref)
+        start_col_index = _column_to_index(start_col)
+        end_col_index = _column_to_index(end_col)
+    else:
+        start_row = end_row = row_index
+        start_col_index = end_col_index = current_col_index
+
+    updated = False
+    if row_index < start_row:
+        start_row = row_index
+        updated = True
+    if row_index > end_row:
+        end_row = row_index
+        updated = True
+    if current_col_index < start_col_index:
+        start_col_index = current_col_index
+        updated = True
+    if current_col_index > end_col_index:
+        end_col_index = current_col_index
+        updated = True
+
+    if updated or not ref:
+        dimension.set(
+            "ref",
+            f"{_index_to_column(start_col_index)}{start_row}:{_index_to_column(end_col_index)}{end_row}",
+        )
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
 class WorksheetPopulator:
     def __init__(
         self,
@@ -187,23 +500,40 @@ class WorksheetPopulator:
         if self._sheet_data is None:
             raise ValueError("워크시트 데이터 영역을 찾을 수 없습니다.")
 
+        self._start_row = start_row
+        self._column_specs = list(columns)
+        if not self._column_specs:
+            raise ValueError("채울 열 정보가 없습니다.")
+
         self._dimension = self._root.find("s:dimension", self._ns)
-        if self._dimension is None:
-            raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
-        ref = self._dimension.get("ref")
+        ref = ""
+        if self._dimension is not None:
+            ref = (self._dimension.get("ref") or "").strip()
+
         if not ref:
-            raise ValueError("워크시트 범위 정보를 확인할 수 없습니다.")
+            ref = self._infer_dimension()
+            if not ref:
+                raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
+
+            dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
+            if self._dimension is None:
+                self._dimension = ET.Element(dimension_tag)
+                inserted = False
+                for idx, child in enumerate(list(self._root)):
+                    if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
+                        self._root.insert(idx, self._dimension)
+                        inserted = True
+                        break
+                if not inserted:
+                    self._root.insert(0, self._dimension)
+            self._dimension.set("ref", ref)
+
         (
             self._dimension_start_col,
             self._dimension_start_row,
             self._dimension_end_col,
             self._dimension_end_row,
         ) = _parse_dimension(ref)
-
-        self._start_row = start_row
-        self._column_specs = list(columns)
-        if not self._column_specs:
-            raise ValueError("채울 열 정보가 없습니다.")
 
         self._row_cache: Dict[int, ET.Element] = {}
         for row in self._sheet_data.findall("s:row", self._ns):
@@ -220,6 +550,70 @@ class WorksheetPopulator:
         if template_row is None:
             raise ValueError("템플릿 행을 찾을 수 없습니다.")
         self._template_row = copy.deepcopy(template_row)
+
+    def _infer_dimension(self) -> str | None:
+        min_col: int | None = None
+        max_col: int | None = None
+        min_row: int | None = None
+        max_row: int | None = None
+
+        for row in self._sheet_data.findall("s:row", self._ns):
+            row_index = _safe_int(row.get("r"))
+            if row_index is not None:
+                if min_row is None or row_index < min_row:
+                    min_row = row_index
+                if max_row is None or row_index > max_row:
+                    max_row = row_index
+
+            for cell in row.findall("s:c", self._ns):
+                ref = (cell.get("r") or "").strip()
+                if not ref:
+                    continue
+                try:
+                    column, row_number = _split_cell(ref)
+                except ValueError:
+                    if row_index is None:
+                        continue
+                    column = "".join(filter(str.isalpha, ref))
+                    if not column:
+                        continue
+                    row_number = row_index
+
+                column_index = _column_to_index(column)
+                if column_index:
+                    if min_col is None or column_index < min_col:
+                        min_col = column_index
+                    if max_col is None or column_index > max_col:
+                        max_col = column_index
+                if row_number:
+                    if min_row is None or row_number < min_row:
+                        min_row = row_number
+                    if max_row is None or row_number > max_row:
+                        max_row = row_number
+
+        if (min_col is None or max_col is None) and self._column_specs:
+            column_indices = [
+                _column_to_index(spec.letter)
+                for spec in self._column_specs
+                if spec.letter
+            ]
+            if column_indices:
+                if min_col is None:
+                    min_col = min(column_indices)
+                if max_col is None:
+                    max_col = max(column_indices)
+
+        if min_row is None:
+            min_row = self._start_row
+        if max_row is None:
+            max_row = self._start_row
+
+        if min_col is None or max_col is None:
+            return None
+
+        start_col = _index_to_column(min_col)
+        end_col = _index_to_column(max_col)
+        return f"{start_col}{min_row}:{end_col}{max_row}"
 
     def _tag(self, name: str) -> str:
         return f"{{{_SPREADSHEET_NS}}}{name}"
@@ -381,22 +775,154 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     return records
 
 
+_FEATURE_LIST_START_ROW = 8
+
+_FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
+    "대분류": ("대분류", "대 분류", "상위 기능", "상위기능"),
+    "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),
+    "소분류": ("소분류", "소 분류", "세부 기능", "세부기능"),
+    "기능 설명": (
+        "기능 설명",
+        "상세 설명",
+        "상세 내용",
+        "기능 상세",
+        "상세내용",
+        "상세설명",
+        "기능상세",
+        "내용",
+    ),
+    "기능 개요": ("기능 개요", "개요", "요약", "기능 요약", "요약 설명", "개요 설명"),
+}
+
+
+def _normalize_feature_header_token(value: str) -> str:
+    cleaned = value.strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = re.sub(r"[\s\u00a0]+", "", cleaned)
+    cleaned = re.sub(r"[()\[\]{}<>]+", "", cleaned)
+    cleaned = cleaned.replace("-", "").replace("_", "")
+    return cleaned
+
+
+_FEATURE_LIST_NORMALIZED_HEADERS: Dict[str, str] = {}
+for canonical, variants in _FEATURE_LIST_HEADER_ALIASES.items():
+    for variant in variants:
+        normalized = _normalize_feature_header_token(variant)
+        if normalized and normalized not in _FEATURE_LIST_NORMALIZED_HEADERS:
+            _FEATURE_LIST_NORMALIZED_HEADERS[normalized] = canonical
+
+
+def match_feature_list_header(value: str) -> str | None:
+    normalized = _normalize_feature_header_token(value)
+    if not normalized:
+        return None
+    return _FEATURE_LIST_NORMALIZED_HEADERS.get(normalized)
+
+
 FEATURE_LIST_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="대분류", letter="A", style="12"),
     ColumnSpec(key="중분류", letter="B", style="8"),
     ColumnSpec(key="소분류", letter="C", style="15"),
+    ColumnSpec(key="기능 설명", letter="D", style="7"),
 )
 
-FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = ["대분류", "중분류", "소분류"]
+FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
+    "대분류",
+    "중분류",
+    "소분류",
+    "기능 설명",
+]
 
 
-def populate_feature_list(workbook_bytes: bytes, csv_text: str) -> bytes:
-    records = _parse_csv_records(csv_text, FEATURE_LIST_EXPECTED_HEADERS)
+def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
+    stripped = csv_text.strip()
+    if not stripped:
+        return []
+
+    reader = csv.reader(io.StringIO(stripped))
+    rows = [row for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
+
+    header = [cell.strip() for cell in rows[0]]
+    if header:
+        header[0] = header[0].lstrip("\ufeff")
+
+    column_map: Dict[str, int] = {}
+    overview_index: int | None = None
+    for idx, name in enumerate(header):
+        if not name:
+            continue
+        matched = match_feature_list_header(name)
+        if matched == "기능 개요":
+            overview_index = idx
+            continue
+        if matched and matched not in column_map:
+            column_map[matched] = idx
+
+    if "기능 설명" not in column_map and overview_index is not None:
+        column_map["기능 설명"] = overview_index
+
+    for fallback_index, column_name in enumerate(FEATURE_LIST_EXPECTED_HEADERS):
+        column_map.setdefault(column_name, fallback_index)
+
+    normalized_records: List[Dict[str, str]] = []
+    for raw in rows[1:]:
+        entry: Dict[str, str] = {}
+        has_value = False
+        for column_name in FEATURE_LIST_EXPECTED_HEADERS:
+            index = column_map.get(column_name)
+            value = ""
+            if index is not None and index < len(raw):
+                value = raw[index].strip()
+            if value:
+                has_value = True
+            entry[column_name] = value
+        if not has_value:
+            continue
+
+        normalized_records.append(entry)
+
+    return normalized_records
+
+
+def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
         sheet_bytes = source.read(_XLSX_SHEET_PATH)
+        try:
+            shared_strings_bytes = source.read("xl/sharedStrings.xml")
+        except KeyError:
+            shared_strings_bytes = b""
+
+    shared_strings = _parse_shared_strings(shared_strings_bytes)
+    return _locate_feature_list_overview(sheet_bytes, shared_strings)
+
+
+def populate_feature_list(
+    workbook_bytes: bytes,
+    csv_text: str,
+    project_overview: str | None = None,
+) -> bytes:
+    records = _normalize_feature_list_records(csv_text)
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
+        sheet_bytes = source.read(_XLSX_SHEET_PATH)
+        try:
+            shared_strings_bytes = source.read("xl/sharedStrings.xml")
+        except KeyError:
+            shared_strings_bytes = b""
+
+    shared_strings = _parse_shared_strings(shared_strings_bytes)
+    overview_ref, _ = _locate_feature_list_overview(sheet_bytes, shared_strings)
+
     populator = WorksheetPopulator(sheet_bytes, start_row=8, columns=FEATURE_LIST_COLUMNS)
     populator.populate(records)
-    return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+
+    updated_sheet = populator.to_bytes()
+    if overview_ref and project_overview is not None:
+        updated_sheet = _apply_project_overview_to_sheet(updated_sheet, overview_ref, project_overview)
+
+    return _replace_sheet_bytes(workbook_bytes, updated_sheet)
 
 
 TESTCASE_COLUMNS: Sequence[ColumnSpec] = (
