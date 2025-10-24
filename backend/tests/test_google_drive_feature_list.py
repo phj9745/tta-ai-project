@@ -18,7 +18,7 @@ from app.services.google_drive import (  # noqa: E402
 
 
 def test_header_row_accepts_suffixes_and_whitespace():
-    values = (" 대분류 (필수)", "중분류\n항목", "소분류-예시", "상세 설명", "개요")
+    values = (" 대분류 (필수)", "중분류\n항목", "소분류-예시", "상세 설명")
     assert _looks_like_header_row(values, FEATURE_LIST_EXPECTED_HEADERS)
 
 

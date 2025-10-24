@@ -825,7 +825,6 @@ FEATURE_LIST_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="중분류", letter="B", style="8"),
     ColumnSpec(key="소분류", letter="C", style="15"),
     ColumnSpec(key="기능 설명", letter="D", style="7"),
-    ColumnSpec(key="기능 개요", letter="E", style="9"),
 )
 
 FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
@@ -833,27 +832,71 @@ FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
     "중분류",
     "소분류",
     "기능 설명",
-    "기능 개요",
 ]
 
 
-def summarize_feature_description(value: str) -> str:
-    cleaned = value.strip()
-    if not cleaned:
-        return ""
+def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
+    stripped = csv_text.strip()
+    if not stripped:
+        return []
 
-    segments = re.split(r"[\r\n]+|(?<=[.!?])\s+", cleaned)
-    for segment in segments:
-        candidate = segment.strip(" \u2022-•·")
-        if candidate:
-            if len(candidate) > 160:
-                return candidate[:157].rstrip() + "…"
-            return candidate
+    reader = csv.reader(io.StringIO(stripped))
+    rows = [row for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
 
-    if len(cleaned) > 160:
-        return cleaned[:157].rstrip() + "…"
-    return cleaned
+    header = [cell.strip() for cell in rows[0]]
+    if header:
+        header[0] = header[0].lstrip("\ufeff")
 
+    column_map: Dict[str, int] = {}
+    overview_index: int | None = None
+    for idx, name in enumerate(header):
+        if not name:
+            continue
+        matched = match_feature_list_header(name)
+        if matched == "기능 개요":
+            overview_index = idx
+            continue
+        if matched and matched not in column_map:
+            column_map[matched] = idx
+
+    if "기능 설명" not in column_map and overview_index is not None:
+        column_map["기능 설명"] = overview_index
+
+    for fallback_index, column_name in enumerate(FEATURE_LIST_EXPECTED_HEADERS):
+        column_map.setdefault(column_name, fallback_index)
+
+    normalized_records: List[Dict[str, str]] = []
+    for raw in rows[1:]:
+        entry: Dict[str, str] = {}
+        has_value = False
+        for column_name in FEATURE_LIST_EXPECTED_HEADERS:
+            index = column_map.get(column_name)
+            value = ""
+            if index is not None and index < len(raw):
+                value = raw[index].strip()
+            if value:
+                has_value = True
+            entry[column_name] = value
+        if not has_value:
+            continue
+
+        normalized_records.append(entry)
+
+    return normalized_records
+
+
+def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
+        sheet_bytes = source.read(_XLSX_SHEET_PATH)
+        try:
+            shared_strings_bytes = source.read("xl/sharedStrings.xml")
+        except KeyError:
+            shared_strings_bytes = b""
+
+    shared_strings = _parse_shared_strings(shared_strings_bytes)
+    return _locate_feature_list_overview(sheet_bytes, shared_strings)
 
 def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     stripped = csv_text.strip()
@@ -894,28 +937,6 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
             entry[column_name] = value
         if not has_value:
             continue
-
-        overview = entry.get("기능 개요", "")
-        description = entry.get("기능 설명", "")
-        if not overview and description:
-            entry["기능 개요"] = summarize_feature_description(description)
-
-        normalized_records.append(entry)
-
-    return normalized_records
-
-
-def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
-        try:
-            shared_strings_bytes = source.read("xl/sharedStrings.xml")
-        except KeyError:
-            shared_strings_bytes = b""
-
-    shared_strings = _parse_shared_strings(shared_strings_bytes)
-    return _locate_feature_list_overview(sheet_bytes, shared_strings)
-
 
 def populate_feature_list(
     workbook_bytes: bytes,

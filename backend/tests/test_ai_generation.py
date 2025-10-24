@@ -251,8 +251,8 @@ async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
 
     stub_client.responses.output_text = (
         "프로젝트 개요,이 프로젝트는 테스트입니다.\n"
-        "대분류,중분류,소분류,기능 설명,기능 개요\n"
-        "대1,중1,소1,기능 상세,요약"
+        "대분류,중분류,소분류,기능 설명\n"
+        "대1,중1,소1,기능 상세"
     )
 
     upload = UploadFile(
@@ -270,7 +270,7 @@ async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
 
     assert result.project_overview == "이 프로젝트는 테스트입니다."
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,기능 상세,요약"
+        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,기능 상세"
     )
 
 
@@ -282,8 +282,8 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
 
     stub_client.responses.output_text = (
         "프로젝트 개요:이 프로젝트는 콜론 형식을 따릅니다.\n"
-        "대분류,중분류,소분류,기능 설명,기능 개요\n"
-        "대1,중1,소1,상세,개요"
+        "대분류,중분류,소분류,기능 설명\n"
+        "대1,중1,소1,상세"
     )
 
     upload = UploadFile(
@@ -301,7 +301,7 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
 
     assert result.project_overview == "이 프로젝트는 콜론 형식을 따릅니다."
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,상세,개요"
+        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
     )
 
 
@@ -314,8 +314,8 @@ async def test_generate_csv_extracts_project_overview_from_followup_row() -> Non
     stub_client.responses.output_text = (
         "프로젝트 개요\n"
         "이 프로젝트는 행이 나뉘어 제공됩니다.\n"
-        "대분류,중분류,소분류,기능 설명,기능 개요\n"
-        "대1,중1,소1,상세,요약"
+        "대분류,중분류,소분류,기능 설명\n"
+        "대1,중1,소1,상세"
     )
 
     upload = UploadFile(
@@ -333,7 +333,7 @@ async def test_generate_csv_extracts_project_overview_from_followup_row() -> Non
 
     assert result.project_overview == "이 프로젝트는 행이 나뉘어 제공됩니다."
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,상세,요약"
+        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
     )
 
 

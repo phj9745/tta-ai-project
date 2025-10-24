@@ -60,7 +60,6 @@ class FeatureListRowModel(BaseModel):
     middle_category: str = Field("", alias="middleCategory")
     minor_category: str = Field("", alias="minorCategory")
     feature_description: str = Field("", alias="featureDescription")
-    feature_overview: str = Field("", alias="featureOverview")
 
     model_config = ConfigDict(populate_by_name=True)
 
