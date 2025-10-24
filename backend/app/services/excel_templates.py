@@ -855,6 +855,8 @@ def match_feature_list_header(value: str) -> str | None:
     return _FEATURE_LIST_NORMALIZED_HEADERS.get(normalized)
 
 
+# Keep these column declarations flush-left; earlier packaging issues inserted
+# accidental leading spaces which triggered IndentationError during import.
 FEATURE_LIST_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="대분류", letter="A", style="12"),
     ColumnSpec(key="중분류", letter="B", style="8"),
@@ -869,10 +871,8 @@ FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
     "기능 설명",
 ]
 
-    reader = csv.reader(io.StringIO(stripped))
-    rows = [row for row in reader if any(cell.strip() for cell in row)]
-    if not rows:
-        return []
+    if "기능 설명" not in column_map and overview_index is not None:
+        column_map["기능 설명"] = overview_index
 
 def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     stripped = csv_text.strip()
