@@ -871,6 +871,8 @@ FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
     "기능 설명",
 ]
 
+    if "기능 설명" not in column_map and overview_index is not None:
+        column_map["기능 설명"] = overview_index
 
 def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     stripped = csv_text.strip()
