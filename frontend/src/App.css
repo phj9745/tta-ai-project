@@ -1954,7 +1954,6 @@
 }
 
 .defect-workflow__table-wrapper {
-  flex: 1 1 0;
   min-width: 0;
   max-height: 460px;
   overflow: auto;
