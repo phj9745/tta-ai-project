@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
 import asyncio
 import csv
 import base64
@@ -33,6 +33,7 @@ from openai import (
 )
 
 from ..config import Settings
+from .excel_templates import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import PromptBuiltinContext, PromptConfigService
 from .prompt_request_log import PromptRequestLogService
@@ -52,6 +53,7 @@ class GeneratedCsv:
     csv_text: str
     defect_summary: List["DefectSummaryEntry"] | None = None
     defect_images: Dict[int, List[BufferedUpload]] | None = None
+    project_overview: str | None = None
 
 
 @dataclass
@@ -641,6 +643,207 @@ class AIGenerationService:
             cleaned = fence_match.group(1).strip()
         return cleaned
 
+    @staticmethod
+    def _extract_feature_list_project_overview(
+        csv_text: str,
+    ) -> tuple[str, str | None]:
+        project_overview: str | None = None
+        rows_to_keep: list[list[str]] = []
+        awaiting_overview_value = False
+
+        stream = io.StringIO(csv_text)
+        reader = csv.reader(stream)
+
+        for raw_row in reader:
+            row = [cell.strip() for cell in raw_row]
+
+            if not any(row):
+                # Skip completely empty rows altogether.
+                continue
+
+            if awaiting_overview_value and project_overview is None:
+                candidate_indexes = [idx for idx, cell in enumerate(row) if cell]
+                if len(candidate_indexes) == 1:
+                    candidate = row[candidate_indexes[0]].strip()
+                    if candidate:
+                        project_overview = candidate
+                        awaiting_overview_value = False
+                        continue
+                awaiting_overview_value = False
+
+            if project_overview is None and row:
+                first_cell = row[0].lstrip("\ufeff").strip()
+                colon_match = re.match(
+                    r"^(?:프로젝트\s*)?개요\s*[:：\-]\s*(.+)$",
+                    first_cell,
+                    re.IGNORECASE,
+                )
+                if colon_match:
+                    candidate = colon_match.group(1).strip()
+                    if candidate:
+                        project_overview = candidate
+                        continue
+
+                normalized_key = re.sub(r"\s+", "", first_cell.lower())
+                if normalized_key in {"프로젝트개요", "개요"}:
+                    remainder = next((cell for cell in row[1:] if cell), "").strip()
+                    if remainder:
+                        project_overview = remainder
+                        continue
+                    awaiting_overview_value = True
+                    continue
+
+            rows_to_keep.append(raw_row)
+
+        if project_overview is None:
+            fallback_match = re.search(
+                r"(?:^|\n)\s*(?:프로젝트\s*)?개요\s*(?:[:：\-]\s*)?(.+)",
+                csv_text,
+            )
+            if fallback_match:
+                project_overview = fallback_match.group(1).strip()
+
+        if not rows_to_keep:
+            return "", project_overview
+
+        output = io.StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        for row in rows_to_keep:
+            writer.writerow(row)
+        return output.getvalue().strip(), project_overview
+
+    @staticmethod
+    def _format_feature_list_program_overview(
+        records: Sequence[Mapping[str, str]],
+        raw_overview: str | None,
+        *,
+        max_features: int = 6,
+    ) -> str:
+        def _clean_descriptor(value: str | None) -> str:
+            if value is None:
+                return ""
+
+            text = str(value).strip()
+            if not text:
+                return ""
+
+            text = re.sub(r"^(?:프로젝트|프로그램)\s*개요[:：\-]?\s*", "", text, flags=re.IGNORECASE)
+            text = text.replace("\r", " ").replace("\n", " ")
+            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"^이\s*(?:프로그램|프로젝트)\s*는\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"[.。．]+$", "", text).strip()
+
+            replacements = [
+                ("입니다", ""),
+                ("이다", ""),
+                ("합니다", "하는"),
+                ("됩니다", "되는"),
+                ("구성됩니다", "구성되는"),
+                ("제공합니다", "제공하는"),
+                ("제공됩니다", "제공되는"),
+                ("포함합니다", "포함하는"),
+                ("포함됩니다", "포함되는"),
+                ("지원합니다", "지원하는"),
+                ("지원됩니다", "지원되는"),
+                ("운영됩니다", "운영되는"),
+                ("연동됩니다", "연동되는"),
+                ("실행됩니다", "실행되는"),
+                ("따릅니다", "따르는"),
+            ]
+
+            for suffix, replacement in replacements:
+                if text.endswith(suffix):
+                    text = text[: -len(suffix)] + replacement
+                    break
+
+            text = text.strip()
+            if text.endswith("다"):
+                text = text[:-1].strip()
+            if text.endswith("요"):
+                text = text[:-1].strip()
+
+            return text.strip()
+
+        def _fallback_descriptor(entries: Sequence[Mapping[str, str]]) -> str:
+            for key in ("대분류", "중분류", "소분류"):
+                seen: set[str] = set()
+                ordered: list[str] = []
+                for entry in entries:
+                    candidate = str(entry.get(key, "") or "").strip()
+                    if not candidate:
+                        continue
+                    normalized = re.sub(r"\s+", " ", candidate)
+                    if normalized and normalized not in seen:
+                        seen.add(normalized)
+                        ordered.append(normalized)
+                if ordered:
+                    if len(ordered) == 1:
+                        return f"{ordered[0]} 관련"
+                    joined = ", ".join(ordered[:3])
+                    return f"{joined} 관련"
+            return "주요 업무를 지원하는"
+
+        def _compose_sentence(descriptor: str) -> str:
+            descriptor = re.sub(r"\s+", " ", descriptor).strip()
+            if not descriptor:
+                descriptor = "주요 업무를 지원하는"
+
+            suffix_candidates = (
+                "프로그램",
+                "시스템",
+                "플랫폼",
+                "솔루션",
+                "서비스",
+                "애플리케이션",
+                "앱",
+            )
+
+            if any(descriptor.endswith(suffix) for suffix in suffix_candidates):
+                body = descriptor
+            else:
+                body = f"{descriptor} 프로그램"
+
+            sentence = f"이 프로그램은 {body}이다."
+            sentence = re.sub(r"\s+", " ", sentence).strip()
+            if not sentence.endswith("."):
+                sentence += "."
+            return sentence
+
+        def _collect_feature_summaries(entries: Sequence[Mapping[str, str]]) -> list[str]:
+            summaries: list[str] = []
+            seen: set[str] = set()
+            for entry in entries:
+                for key in ("기능 설명", "소분류", "중분류", "대분류"):
+                    raw_value = entry.get(key, "")
+                    if not raw_value:
+                        continue
+                    candidate = re.sub(r"\s+", " ", str(raw_value).strip())
+                    if not candidate:
+                        continue
+                    if candidate in seen:
+                        continue
+                    seen.add(candidate)
+                    summaries.append(candidate)
+                    break
+                if len(summaries) >= max_features:
+                    break
+
+            if not summaries:
+                summaries.append("주요 업무를 지원하는 기능")
+
+            return summaries
+
+        descriptor = _clean_descriptor(raw_overview)
+        if not descriptor:
+            descriptor = _fallback_descriptor(records)
+
+        first_line = _compose_sentence(descriptor)
+        features = _collect_feature_summaries(records)
+
+        lines = [first_line, "기능은"]
+        lines.extend(f"- {feature}" for feature in features)
+        return "\n".join(lines)
+
     def _convert_required_documents_to_pdf(
         self,
         uploads: List[BufferedUpload],
@@ -1107,6 +1310,17 @@ class AIGenerationService:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
             sanitized = self._sanitize_csv(response_text)
+            project_overview: str | None = None
+            if menu_id == "feature-list" and sanitized:
+                sanitized, raw_project_overview = self._extract_feature_list_project_overview(
+                    sanitized
+                )
+                records = normalize_feature_list_records(sanitized)
+                project_overview = self._format_feature_list_program_overview(
+                    records,
+                    raw_project_overview,
+                )
+
             if not sanitized:
                 raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 
@@ -1121,6 +1335,7 @@ class AIGenerationService:
                 csv_text=sanitized,
                 defect_summary=defect_summary_entries,
                 defect_images=dict(defect_image_map) if defect_image_map else None,
+                project_overview=project_overview,
             )
         finally:
             if uploaded_file_records:
@@ -1387,11 +1602,136 @@ class AIGenerationService:
             contexts.append(UploadContext(upload=upload, metadata=metadata))
         return contexts
 
+    def _locate_builtin_source(self, path_hint: str) -> tuple[Path | None, List[Path]]:
+        """Resolve the on-disk path for a builtin attachment.
+
+        Historically the API server has been executed from different working
+        directories (package install, repo checkout, Docker image).  In those
+        environments the template assets may live under either the backend
+        package directory (e.g. ``backend/template``) or directly under the
+        application root (``/app/template`` inside the container).  The
+        original implementation assumed a single location which caused
+        ``FileNotFoundError`` when the active runtime layout differed,
+        surfacing to the user as “내장 XLSX 템플릿을 찾을 수 없습니다.”.
+
+        To make the lookup resilient we try several sensible base paths and
+        keep track of the attempted locations for diagnostics.
+        """
+
+        attempted: List[Path] = []
+        requested = Path(path_hint)
+
+        def _candidate(path: Path) -> Optional[Path]:
+            resolved = path if path.is_absolute() else path.resolve()
+            attempted.append(resolved)
+            if resolved.exists() and resolved.is_file():
+                return resolved
+            return None
+
+        if requested.is_absolute():
+            resolved = _candidate(requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        override_root = getattr(self._settings, "builtin_template_root", None)
+        if override_root:
+            override_path = Path(override_root)
+
+            if override_path.is_file():
+                resolved = _candidate(override_path)
+                if resolved is not None:
+                    return resolved, attempted
+
+            relative_variants: List[Path] = []
+
+            if str(requested):
+                relative_variants.append(requested)
+
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = None
+            if relative_to_template and str(relative_to_template):
+                relative_variants.append(relative_to_template)
+
+            parts = list(requested.parts)
+            if parts and parts[0] == "backend":
+                relative_variants.append(Path(*parts[1:]))
+                if len(parts) > 1 and parts[1] == "template":
+                    relative_variants.append(Path(*parts[2:]))
+
+            seen: set[Path] = set()
+            ordered_variants: List[Path] = []
+            for variant in relative_variants:
+                variant_str = str(variant)
+                if not variant_str or variant_str == ".":
+                    continue
+                if variant in seen:
+                    continue
+                seen.add(variant)
+                ordered_variants.append(variant)
+
+            if override_path.is_dir():
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+            else:
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path.parent / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        base_path = Path(__file__).resolve().parents[2]
+        resolved = _candidate(base_path / requested)
+        if resolved is not None:
+            return resolved, attempted
+
+        repo_root = base_path.parent
+        if repo_root != base_path:
+            resolved = _candidate(repo_root / requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        template_root = base_path / "template"
+        if template_root.exists():
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = requested
+
+            resolved = _candidate(template_root / relative_to_template)
+            if resolved is not None:
+                return resolved, attempted
+
+            # As a last resort search by filename inside the template tree so
+            # renamed folders (e.g. when the repo is vendored) still resolve.
+            if requested.name:
+                for match in template_root.rglob(requested.name):
+                    resolved = _candidate(match)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        return None, attempted
+
     def _load_builtin_upload(
         self, menu_id: str, builtin: PromptBuiltinContext
     ) -> BufferedUpload:
-        base_path = Path(__file__).resolve().parents[2]
-        source_path = (base_path / builtin.source_path).resolve()
+        source_path, attempted_paths = self._locate_builtin_source(builtin.source_path)
+        if source_path is None:
+            logger.error(
+                "내장 컨텍스트 파일을 찾을 수 없습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": builtin.source_path,
+                    "label": builtin.label,
+                    "attempted_paths": [str(path) for path in attempted_paths],
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="내장 컨텍스트 파일을 찾을 수 없습니다.",
+            )
         if builtin.render_mode == "xlsx-to-pdf":
             return self._load_xlsx_as_pdf(menu_id, source_path, builtin.label)
 
