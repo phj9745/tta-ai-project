@@ -869,6 +869,10 @@ FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
     "기능 설명",
 ]
 
+    reader = csv.reader(io.StringIO(stripped))
+    rows = [row for row in reader if any(cell.strip() for cell in row)]
+    if not rows:
+        return []
 
 def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     stripped = csv_text.strip()

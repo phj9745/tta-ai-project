@@ -29,6 +29,7 @@ from .excel_templates import (
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,
+    summarize_feature_description,
 )
 
 if "extract_feature_list_overview" not in globals():
