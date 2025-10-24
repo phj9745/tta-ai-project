@@ -306,6 +306,38 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
 
 
 @pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_from_followup_row() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요\n"
+        "이 프로젝트는 행이 나뉘어 제공됩니다.\n"
+        "대분류,중분류,소분류,기능 설명,기능 개요\n"
+        "대1,중1,소1,상세,요약"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview-followup",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == "이 프로젝트는 행이 나뉘어 제공됩니다."
+    assert result.csv_text == (
+        "대분류,중분류,소분류,기능 설명,기능 개요\n대1,중1,소1,상세,요약"
+    )
+
+
+@pytest.mark.anyio
 async def test_generate_csv_converts_required_csv_documents_to_pdf() -> None:
     service = AIGenerationService(_settings())
     stub_client = _StubClient()

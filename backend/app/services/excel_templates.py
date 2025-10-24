@@ -277,6 +277,7 @@ def _locate_feature_list_overview(
     sheet_bytes: bytes,
     shared_strings: Sequence[str],
 ) -> Tuple[str | None, str]:
+    feature_start_row = globals().get("_FEATURE_LIST_START_ROW", 8)
     try:
         root = ET.fromstring(sheet_bytes)
     except ET.ParseError:
@@ -318,7 +319,7 @@ def _locate_feature_list_overview(
         except ValueError:
             continue
 
-        if row_index >= _FEATURE_LIST_START_ROW:
+        if row_index >= feature_start_row:
             continue
 
         raw_text = _cell_text_from_sheet(cell, shared_strings=shared_strings).strip()
@@ -774,6 +775,8 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     return records
 
 
+_FEATURE_LIST_START_ROW = 8
+
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
     "대분류": ("대분류", "대 분류", "상위 기능", "상위기능"),
     "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),
@@ -896,23 +899,13 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
         description = entry.get("기능 설명", "")
         if not overview and description:
             entry["기능 개요"] = summarize_feature_description(description)
-        elif overview and not description:
-            entry["기능 설명"] = overview
 
         normalized_records.append(entry)
 
     return normalized_records
 
-    segments = re.split(r"[\r\n]+|(?<=[.!?])\s+", cleaned)
-    for segment in segments:
-        candidate = segment.strip(" \u2022-•·")
-        if candidate:
-            if len(candidate) > 160:
-                return candidate[:157].rstrip() + "…"
-            return candidate
 
-def populate_feature_list(workbook_bytes: bytes, csv_text: str) -> bytes:
-    records = _normalize_feature_list_records(csv_text)
+def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
         sheet_bytes = source.read(_XLSX_SHEET_PATH)
         try:

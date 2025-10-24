@@ -21,6 +21,7 @@ from openpyxl import Workbook, load_workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
+from . import excel_templates as excel_templates_service
 from .excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
     match_feature_list_header,
@@ -30,6 +31,9 @@ from .excel_templates import (
     populate_testcase_list,
     summarize_feature_description,
 )
+
+if "extract_feature_list_overview" not in globals():
+    extract_feature_list_overview = excel_templates_service.extract_feature_list_overview
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -1103,10 +1107,6 @@ class GoogleDriveService:
 
                 description = row_data.get("기능 설명", "")
                 overview = row_data.get("기능 개요", "")
-                if not overview and description:
-                    overview = description
-                elif overview and not description:
-                    description = overview
 
                 extracted_rows.append(
                     {
@@ -1172,8 +1172,6 @@ class GoogleDriveService:
 
             if not overview and description:
                 overview = summarize_feature_description(description)
-            elif overview and not description:
-                description = overview
 
             if not any([major, middle, minor, description, overview]):
                 continue
@@ -1184,14 +1182,18 @@ class GoogleDriveService:
                     "중분류": middle,
                     "소분류": minor,
                     "기능 설명": description,
-                    "개요": overview,
+                    "기능 개요": overview,
                 }
             )
 
         csv_text = output.getvalue()
 
         try:
-            updated_bytes = resolved.rule["populate"](workbook_bytes, csv_text)
+            updated_bytes = resolved.rule["populate"](
+                workbook_bytes,
+                csv_text,
+                project_overview,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:  # pragma: no cover - 안전망
@@ -1205,6 +1207,34 @@ class GoogleDriveService:
             content=updated_bytes,
             content_type=XLSX_MIME_TYPE,
         )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+            "projectOverview": project_overview,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
 
         return {
             "fileId": resolved.file_id,

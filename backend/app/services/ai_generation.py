@@ -648,6 +648,7 @@ class AIGenerationService:
     ) -> tuple[str, str | None]:
         project_overview: str | None = None
         rows_to_keep: list[list[str]] = []
+        awaiting_overview_value = False
 
         stream = io.StringIO(csv_text)
         reader = csv.reader(stream)
@@ -658,6 +659,16 @@ class AIGenerationService:
             if not any(row):
                 # Skip completely empty rows altogether.
                 continue
+
+            if awaiting_overview_value and project_overview is None:
+                candidate_indexes = [idx for idx, cell in enumerate(row) if cell]
+                if len(candidate_indexes) == 1:
+                    candidate = row[candidate_indexes[0]].strip()
+                    if candidate:
+                        project_overview = candidate
+                        awaiting_overview_value = False
+                        continue
+                awaiting_overview_value = False
 
             if project_overview is None and row:
                 first_cell = row[0].lstrip("\ufeff").strip()
@@ -678,12 +689,14 @@ class AIGenerationService:
                     if remainder:
                         project_overview = remainder
                         continue
+                    awaiting_overview_value = True
+                    continue
 
             rows_to_keep.append(raw_row)
 
         if project_overview is None:
             fallback_match = re.search(
-                r"프로젝트\s*개요\s*[:：]\s*(.+)",
+                r"(?:^|\n)\s*(?:프로젝트\s*)?개요\s*(?:[:：\-]\s*)?(.+)",
                 csv_text,
             )
             if fallback_match:

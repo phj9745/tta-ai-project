@@ -26,7 +26,7 @@ interface FeatureListResponse {
 
 type LoadState = 'idle' | 'loading' | 'error' | 'ready'
 
-const DEFAULT_HEADERS = ['대분류', '중분류', '소분류', '기능 설명', '개요']
+const DEFAULT_HEADERS = ['대분류', '중분류', '소분류', '기능 설명']
 
 function createEmptyRow(): FeatureListRow {
   return {
@@ -148,15 +148,25 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
 
   const formattedModified = useMemo(() => formatTimestamp(modifiedTime), [modifiedTime])
 
+  const hasFeatureOverview = useMemo(() => {
+    const overviewHeader = headers[4]
+    if (typeof overviewHeader === 'string' && overviewHeader.trim().length > 0) {
+      return true
+    }
+    return rows.some((row) => (row.featureOverview || '').trim().length > 0)
+  }, [headers, rows])
+
   const columnLabels = useMemo(
     () => ({
       majorCategory: headers[0]?.trim() || '대분류',
       middleCategory: headers[1]?.trim() || '중분류',
       minorCategory: headers[2]?.trim() || '소분류',
       featureDescription: headers[3]?.trim() || '기능 설명',
-      featureOverview: headers[4]?.trim() || '개요',
+      featureOverview: hasFeatureOverview
+        ? headers[4]?.trim() || '기능 개요'
+        : '',
     }),
-    [headers],
+    [headers, hasFeatureOverview],
   )
 
   const tableColumns = useMemo<
@@ -168,13 +178,18 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     }>
   >(
     () => {
-      const overviewLabel = columnLabels.featureOverview
+      const overviewLabel = columnLabels.featureOverview || '기능 개요'
       const descriptionLabel =
         columnLabels.featureDescription === '기능 설명'
           ? '상세 내용'
           : columnLabels.featureDescription || '상세 내용'
 
-      return [
+      const columns: Array<{
+        key: keyof FeatureListRow
+        label: string
+        multiline?: boolean
+        placeholder: string
+      }> = [
         {
           key: 'majorCategory',
           label: columnLabels.majorCategory,
@@ -190,21 +205,27 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
           label: columnLabels.minorCategory,
           placeholder: `${columnLabels.minorCategory}을(를) 입력하세요`,
         },
-        {
+      ]
+
+      if (hasFeatureOverview) {
+        columns.push({
           key: 'featureOverview',
           label: overviewLabel,
           multiline: true,
           placeholder: `${overviewLabel}을(를) 입력하세요`,
-        },
-        {
-          key: 'featureDescription',
-          label: descriptionLabel,
-          multiline: true,
-          placeholder: `${descriptionLabel}을(를) 입력하세요`,
-        },
-      ]
+        })
+      }
+
+      columns.push({
+        key: 'featureDescription',
+        label: descriptionLabel,
+        multiline: true,
+        placeholder: `${descriptionLabel}을(를) 입력하세요`,
+      })
+
+      return columns
     },
-    [columnLabels],
+    [columnLabels, hasFeatureOverview],
   )
 
   useEffect(() => {
@@ -260,12 +281,20 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
           ? payload.headers.filter((item): item is string => typeof item === 'string')
           : undefined
         if (nextHeaders && nextHeaders.length >= 3) {
-          const merged = [...DEFAULT_HEADERS]
+          const merged: string[] = []
           nextHeaders.forEach((name, index) => {
-            if (index < merged.length) {
-              merged[index] = name
+            const trimmed = name.trim()
+            if (index < DEFAULT_HEADERS.length) {
+              merged[index] = trimmed.length > 0 ? trimmed : DEFAULT_HEADERS[index]
+            } else {
+              merged[index] = trimmed
             }
           })
+          if (merged.length < DEFAULT_HEADERS.length) {
+            for (let index = merged.length; index < DEFAULT_HEADERS.length; index += 1) {
+              merged[index] = DEFAULT_HEADERS[index]
+            }
+          }
           setHeaders(merged)
         } else {
           setHeaders([...DEFAULT_HEADERS])
@@ -539,7 +568,7 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
           </div>
         </div>
         <p className="defect-workflow__helper">
-          대·중·소 분류와 기능 개요, 상세 내용을 편집한 뒤 저장하세요. 저장된 내용은 드라이브의 기능리스트 파일에 반영됩니다.
+          프로젝트 개요와 대·중·소 분류, 기능 개요 및 상세 내용을 편집한 뒤 저장하세요. 저장된 내용은 드라이브의 기능리스트 파일에 반영됩니다.
         </p>
 
         {loadState === 'loading' && (

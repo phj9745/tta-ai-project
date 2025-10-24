@@ -395,6 +395,8 @@ async def generate_project_asset(
             "fileName": spreadsheet_info.get("fileName"),
             "modifiedTime": spreadsheet_info.get("modifiedTime"),
         }
+        if "projectOverview" in spreadsheet_info:
+            payload["projectOverview"] = spreadsheet_info.get("projectOverview")
         if getattr(result, "filename", None):
             payload["generatedFilename"] = result.filename
 

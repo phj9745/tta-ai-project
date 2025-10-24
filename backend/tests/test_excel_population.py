@@ -97,6 +97,27 @@ def test_populate_feature_list_derives_overview() -> None:
     assert _cell_text(root, "E8") == "로그인 과정을 검증하고 오류 메시지를 안내합니다."
 
 
+def test_populate_feature_list_sets_project_overview() -> None:
+    template_path = Path("backend/template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_text = "\n".join(
+        [
+            ",".join(FEATURE_LIST_EXPECTED_HEADERS),
+            "대1,중1,소1,기능 상세,요약",
+        ]
+    )
+
+    overview_text = "이 프로젝트는 신규 인증 기능을 제공합니다."
+    updated = populate_feature_list(template_bytes, csv_text, project_overview=overview_text)
+    root = _load_sheet(updated)
+
+    ref, value = extract_feature_list_overview(updated)
+    assert ref is not None
+    assert value == overview_text
+    assert _cell_text(root, ref) == overview_text
+
+
 def test_populate_testcase_list_maps_columns() -> None:
     template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
     template_bytes = template_path.read_bytes()
