@@ -31,10 +31,10 @@ class Container:
         api_key = self._settings.openai_api_key
         openai_client = OpenAI(api_key=api_key) if api_key else OpenAI()
         self._security_report_service = SecurityReportService(
-            self._drive_service,
-            self._prompt_config_service,
-            self._prompt_request_log_service,
-            openai_client,
+            drive_service=self._drive_service,
+            prompt_config_service=self._prompt_config_service,
+            prompt_request_log_service=self._prompt_request_log_service,
+            openai_client=openai_client,
         )
 
     @property
