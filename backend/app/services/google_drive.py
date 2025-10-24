@@ -1236,6 +1236,34 @@ class GoogleDriveService:
 
         return resolved.file_name, workbook_bytes
 
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+            "projectOverview": project_overview,
+        }
+
+    async def download_feature_list_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="feature-list",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
+
         workbook_bytes = resolved.content
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")

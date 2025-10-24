@@ -240,7 +240,9 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     assert stub_client.files.deleted == ["file-1"]
 
     assert result.csv_text == "col1,col2\nvalue1,value2"
-    assert result.project_overview is None
+    assert result.project_overview == (
+        "이 프로그램은 value1 관련 프로그램이다.\n기능은\n- value2"
+    )
 
 
 @pytest.mark.anyio
@@ -268,7 +270,9 @@ async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
         metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
     )
 
-    assert result.project_overview == "이 프로젝트는 테스트입니다."
+    assert result.project_overview == (
+        "이 프로그램은 테스트 프로그램이다.\n기능은\n- 기능 상세"
+    )
     assert result.csv_text == (
         "대분류,중분류,소분류,기능 설명\n대1,중1,소1,기능 상세"
     )
@@ -299,7 +303,9 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
         metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
     )
 
-    assert result.project_overview == "이 프로젝트는 콜론 형식을 따릅니다."
+    assert result.project_overview == (
+        "이 프로그램은 콜론 형식을 따르는 프로그램이다.\n기능은\n- 상세"
+    )
     assert result.csv_text == (
         "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
     )
@@ -331,7 +337,9 @@ async def test_generate_csv_extracts_project_overview_from_followup_row() -> Non
         metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
     )
 
-    assert result.project_overview == "이 프로젝트는 행이 나뉘어 제공됩니다."
+    assert result.project_overview == (
+        "이 프로그램은 행이 나뉘어 제공되는 프로그램이다.\n기능은\n- 상세"
+    )
     assert result.csv_text == (
         "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
     )

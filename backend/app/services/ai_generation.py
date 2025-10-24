@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
 import asyncio
 import csv
 import base64
@@ -33,6 +33,7 @@ from openai import (
 )
 
 from ..config import Settings
+from .excel_templates import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import PromptBuiltinContext, PromptConfigService
 from .prompt_request_log import PromptRequestLogService
@@ -711,6 +712,138 @@ class AIGenerationService:
             writer.writerow(row)
         return output.getvalue().strip(), project_overview
 
+    @staticmethod
+    def _format_feature_list_program_overview(
+        records: Sequence[Mapping[str, str]],
+        raw_overview: str | None,
+        *,
+        max_features: int = 6,
+    ) -> str:
+        def _clean_descriptor(value: str | None) -> str:
+            if value is None:
+                return ""
+
+            text = str(value).strip()
+            if not text:
+                return ""
+
+            text = re.sub(r"^(?:프로젝트|프로그램)\s*개요[:：\-]?\s*", "", text, flags=re.IGNORECASE)
+            text = text.replace("\r", " ").replace("\n", " ")
+            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"^이\s*(?:프로그램|프로젝트)\s*는\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"[.。．]+$", "", text).strip()
+
+            replacements = [
+                ("입니다", ""),
+                ("이다", ""),
+                ("합니다", "하는"),
+                ("됩니다", "되는"),
+                ("구성됩니다", "구성되는"),
+                ("제공합니다", "제공하는"),
+                ("제공됩니다", "제공되는"),
+                ("포함합니다", "포함하는"),
+                ("포함됩니다", "포함되는"),
+                ("지원합니다", "지원하는"),
+                ("지원됩니다", "지원되는"),
+                ("운영됩니다", "운영되는"),
+                ("연동됩니다", "연동되는"),
+                ("실행됩니다", "실행되는"),
+                ("따릅니다", "따르는"),
+            ]
+
+            for suffix, replacement in replacements:
+                if text.endswith(suffix):
+                    text = text[: -len(suffix)] + replacement
+                    break
+
+            text = text.strip()
+            if text.endswith("다"):
+                text = text[:-1].strip()
+            if text.endswith("요"):
+                text = text[:-1].strip()
+
+            return text.strip()
+
+        def _fallback_descriptor(entries: Sequence[Mapping[str, str]]) -> str:
+            for key in ("대분류", "중분류", "소분류"):
+                seen: set[str] = set()
+                ordered: list[str] = []
+                for entry in entries:
+                    candidate = str(entry.get(key, "") or "").strip()
+                    if not candidate:
+                        continue
+                    normalized = re.sub(r"\s+", " ", candidate)
+                    if normalized and normalized not in seen:
+                        seen.add(normalized)
+                        ordered.append(normalized)
+                if ordered:
+                    if len(ordered) == 1:
+                        return f"{ordered[0]} 관련"
+                    joined = ", ".join(ordered[:3])
+                    return f"{joined} 관련"
+            return "주요 업무를 지원하는"
+
+        def _compose_sentence(descriptor: str) -> str:
+            descriptor = re.sub(r"\s+", " ", descriptor).strip()
+            if not descriptor:
+                descriptor = "주요 업무를 지원하는"
+
+            suffix_candidates = (
+                "프로그램",
+                "시스템",
+                "플랫폼",
+                "솔루션",
+                "서비스",
+                "애플리케이션",
+                "앱",
+            )
+
+            if any(descriptor.endswith(suffix) for suffix in suffix_candidates):
+                body = descriptor
+            else:
+                body = f"{descriptor} 프로그램"
+
+            sentence = f"이 프로그램은 {body}이다."
+            sentence = re.sub(r"\s+", " ", sentence).strip()
+            if not sentence.endswith("."):
+                sentence += "."
+            return sentence
+
+        def _collect_feature_summaries(entries: Sequence[Mapping[str, str]]) -> list[str]:
+            summaries: list[str] = []
+            seen: set[str] = set()
+            for entry in entries:
+                for key in ("기능 설명", "소분류", "중분류", "대분류"):
+                    raw_value = entry.get(key, "")
+                    if not raw_value:
+                        continue
+                    candidate = re.sub(r"\s+", " ", str(raw_value).strip())
+                    if not candidate:
+                        continue
+                    if candidate in seen:
+                        continue
+                    seen.add(candidate)
+                    summaries.append(candidate)
+                    break
+                if len(summaries) >= max_features:
+                    break
+
+            if not summaries:
+                summaries.append("주요 업무를 지원하는 기능")
+
+            return summaries
+
+        descriptor = _clean_descriptor(raw_overview)
+        if not descriptor:
+            descriptor = _fallback_descriptor(records)
+
+        first_line = _compose_sentence(descriptor)
+        features = _collect_feature_summaries(records)
+
+        lines = [first_line, "기능은"]
+        lines.extend(f"- {feature}" for feature in features)
+        return "\n".join(lines)
+
     def _convert_required_documents_to_pdf(
         self,
         uploads: List[BufferedUpload],
@@ -1179,8 +1312,13 @@ class AIGenerationService:
             sanitized = self._sanitize_csv(response_text)
             project_overview: str | None = None
             if menu_id == "feature-list" and sanitized:
-                sanitized, project_overview = self._extract_feature_list_project_overview(
+                sanitized, raw_project_overview = self._extract_feature_list_project_overview(
                     sanitized
+                )
+                records = normalize_feature_list_records(sanitized)
+                project_overview = self._format_feature_list_program_overview(
+                    records,
+                    raw_project_overview,
                 )
 
             if not sanitized:
