@@ -21,20 +21,12 @@ from openpyxl import Workbook, load_workbook
 
 from ..config import Settings
 from ..token_store import StoredTokens, TokenStorage
-from . import excel_templates as excel_templates_service
-from .excel_templates import (
+from .excel_templates import defect_report, feature_list, security_report, testcases
+from .excel_templates.models import (
+    DEFECT_REPORT_EXPECTED_HEADERS,
+    DefectReportImage,
     FEATURE_LIST_EXPECTED_HEADERS,
-    extract_feature_list_overview,
-    match_feature_list_header,
-    populate_defect_report,
-    populate_feature_list,
-    populate_security_report,
-    populate_testcase_list,
-    summarize_feature_description,
 )
-
-if "extract_feature_list_overview" not in globals():
-    extract_feature_list_overview = excel_templates_service.extract_feature_list_overview
 from .oauth import GOOGLE_TOKEN_ENDPOINT, GoogleOAuthService
 
 logger = logging.getLogger(__name__)
@@ -224,22 +216,22 @@ _SPREADSHEET_RULES: Dict[str, _SpreadsheetRule] = {
     "feature-list": {
         "folder_name": "가.계획",
         "file_suffix": "기능리스트 v1.0.xlsx",
-        "populate": populate_feature_list,
+        "populate": feature_list.populate_feature_list,
     },
     "testcase-generation": {
         "folder_name": "나.설계",
         "file_suffix": "테스트케이스.xlsx",
-        "populate": populate_testcase_list,
+        "populate": testcases.populate_testcase_list,
     },
     "defect-report": {
         "folder_name": "다.수행",
         "file_suffix": "결함리포트 v1.0.xlsx",
-        "populate": populate_defect_report,
+        "populate": defect_report.populate_defect_report,
     },
     "security-report": {
         "folder_name": "다.수행",
         "file_suffix": "결함리포트 v1.0.xlsx",
-        "populate": populate_security_report,
+        "populate": security_report.populate_security_report,
     },
 }
 
@@ -991,7 +983,7 @@ class GoogleDriveService:
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
-        _, project_overview = extract_feature_list_overview(workbook_bytes)
+        _, project_overview = feature_list.extract_feature_list_overview(workbook_bytes)
 
         buffer = io.BytesIO(workbook_bytes)
         try:
@@ -1064,7 +1056,7 @@ class GoogleDriveService:
                 for idx, value in enumerate(header_row_values):
                     if value is None:
                         continue
-                    matched = match_feature_list_header(str(value))
+                    matched = feature_list.match_feature_list_header(str(value))
                     if matched and matched not in column_map:
                         column_map[matched] = idx
                         try:

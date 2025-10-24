@@ -21,11 +21,10 @@ from ..dependencies import (
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
 from ..services.security_report import SecurityReportService
-from ..services.excel_templates import (
+from ..services.excel_templates import defect_report, testcases
+from ..services.excel_templates.models import (
+    DEFECT_REPORT_EXPECTED_HEADERS,
     DefectReportImage,
-    populate_defect_report,
-    populate_testcase_list,
-    DEFECT_REPORT_EXPECTED_HEADERS
 )
 
 router = APIRouter()
@@ -113,7 +112,7 @@ _DEFECT_REPORT_TEMPLATE = _TEMPLATE_ROOT / "다.수행" / "GS-B-2X-XXXX 결함�
 _TESTCASE_TEMPLATE = _TEMPLATE_ROOT / "나.설계" / "GS-B-XX-XXXX 테스트케이스.xlsx"
 
 _STANDARD_TEMPLATE_POPULATORS: Dict[str, tuple[Path, Callable[[bytes, str], bytes]]] = {
-    "testcase-generation": (_TESTCASE_TEMPLATE, populate_testcase_list),
+    "testcase-generation": (_TESTCASE_TEMPLATE, testcases.populate_testcase_list),
 }
 
 
@@ -467,7 +466,7 @@ async def generate_project_asset(
                     attachment_notes[entry.index] = names
 
         try:
-            workbook_bytes = populate_defect_report(
+            workbook_bytes = defect_report.populate_defect_report(
                 template_bytes,
                 result.csv_text,
                 images=image_map,
@@ -679,7 +678,7 @@ async def compile_defect_report(
         raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 읽을 수 없습니다.") from exc
 
     try:
-        workbook_bytes = populate_defect_report(
+        workbook_bytes = defect_report.populate_defect_report(
             template_bytes,
             csv_text,
             images=image_map if image_map else None,

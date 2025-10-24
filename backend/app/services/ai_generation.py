@@ -33,7 +33,7 @@ from openai import (
 )
 
 from ..config import Settings
-from .excel_templates import normalize_feature_list_records
+from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import PromptBuiltinContext, PromptConfigService
 from .prompt_request_log import PromptRequestLogService
