@@ -774,8 +774,6 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     return records
 
 
-_FEATURE_LIST_START_ROW = 8
-
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
     "대분류": ("대분류", "대 분류", "상위 기능", "상위기능"),
     "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),
@@ -905,8 +903,16 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
 
     return normalized_records
 
+    segments = re.split(r"[\r\n]+|(?<=[.!?])\s+", cleaned)
+    for segment in segments:
+        candidate = segment.strip(" \u2022-•·")
+        if candidate:
+            if len(candidate) > 160:
+                return candidate[:157].rstrip() + "…"
+            return candidate
 
-def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
+def populate_feature_list(workbook_bytes: bytes, csv_text: str) -> bytes:
+    records = _normalize_feature_list_records(csv_text)
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
         sheet_bytes = source.read(_XLSX_SHEET_PATH)
         try:
