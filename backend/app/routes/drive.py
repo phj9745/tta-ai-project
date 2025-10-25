@@ -9,7 +9,7 @@ import io
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TypedDict
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, TypedDict
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response
@@ -90,6 +90,11 @@ class TestcaseScenarioModel(BaseModel):
     expected: str = Field("", description="기대 출력 또는 사후조건")
 
 
+class ConversationMessageModel(BaseModel):
+    role: Literal["user", "assistant"] = Field(..., description="메시지 역할")
+    text: str = Field("", description="대화 내용")
+
+
 class TestcaseScenarioGroup(BaseModel):
     major_category: str = Field("", alias="majorCategory")
     middle_category: str = Field("", alias="middleCategory")
@@ -101,6 +106,24 @@ class TestcaseScenarioGroup(BaseModel):
 
 
 class TestcaseScenarioResponse(BaseModel):
+    scenarios: List[TestcaseScenarioModel] = Field(default_factory=list)
+
+
+class TestcaseRewriteRequest(BaseModel):
+    project_overview: str | None = Field(None, alias="projectOverview")
+    major_category: str = Field(..., alias="majorCategory")
+    middle_category: str = Field(..., alias="middleCategory")
+    minor_category: str = Field(..., alias="minorCategory")
+    feature_description: str = Field("", alias="featureDescription")
+    scenarios: List[TestcaseScenarioModel] = Field(default_factory=list)
+    instructions: str = Field(..., description="GPT에게 전달할 수정 지시")
+    conversation: List[ConversationMessageModel] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseRewriteResponse(BaseModel):
+    reply: str = Field("", description="GPT 응답 요약")
     scenarios: List[TestcaseScenarioModel] = Field(default_factory=list)
 
 
@@ -785,6 +808,41 @@ async def generate_testcase_scenarios(
 
     return TestcaseScenarioResponse(
         scenarios=[TestcaseScenarioModel(**entry) for entry in suggestions]
+    )
+
+
+@router.post("/drive/projects/{project_id}/testcases/workflow/rewrite")
+async def rewrite_testcase_scenarios(
+    project_id: str,
+    payload: TestcaseRewriteRequest,
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> TestcaseRewriteResponse:
+    normalized_conversation = [
+        {"role": message.role, "text": message.text}
+        for message in payload.conversation
+        if message.text.strip()
+    ]
+
+    normalized_scenarios = [
+        scenario.model_dump(by_alias=True)
+        for scenario in payload.scenarios
+    ]
+
+    result = await ai_generation_service.rewrite_testcase_scenarios(
+        project_id=project_id,
+        project_overview=payload.project_overview or "",
+        major_category=payload.major_category,
+        middle_category=payload.middle_category,
+        minor_category=payload.minor_category,
+        feature_description=payload.feature_description,
+        scenarios=normalized_scenarios,
+        instructions=payload.instructions,
+        conversation=normalized_conversation,
+    )
+
+    return TestcaseRewriteResponse(
+        reply=result.get("reply", ""),
+        scenarios=[TestcaseScenarioModel(**entry) for entry in result.get("scenarios", [])],
     )
 
 
