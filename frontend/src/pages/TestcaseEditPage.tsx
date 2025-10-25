@@ -49,6 +49,23 @@ const DEFAULT_HEADERS = [
   '비고',
 ]
 
+const COLUMN_CONFIG: Array<{
+  key: keyof TestcaseRow
+  fallback: string
+  input: 'text' | 'textarea'
+}> = [
+  { key: 'majorCategory', fallback: DEFAULT_HEADERS[0], input: 'text' },
+  { key: 'middleCategory', fallback: DEFAULT_HEADERS[1], input: 'text' },
+  { key: 'minorCategory', fallback: DEFAULT_HEADERS[2], input: 'text' },
+  { key: 'testcaseId', fallback: DEFAULT_HEADERS[3], input: 'text' },
+  { key: 'scenario', fallback: DEFAULT_HEADERS[4], input: 'textarea' },
+  { key: 'input', fallback: DEFAULT_HEADERS[5], input: 'textarea' },
+  { key: 'expected', fallback: DEFAULT_HEADERS[6], input: 'textarea' },
+  { key: 'result', fallback: DEFAULT_HEADERS[7], input: 'text' },
+  { key: 'detail', fallback: DEFAULT_HEADERS[8], input: 'textarea' },
+  { key: 'note', fallback: DEFAULT_HEADERS[9], input: 'textarea' },
+]
+
 function normalizeRow(row: Partial<TestcaseRow> | null | undefined): TestcaseRow {
   return {
     majorCategory: typeof row?.majorCategory === 'string' ? row.majorCategory : '',
@@ -567,92 +584,43 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
           <table className="testcase-edit__table">
             <thead>
               <tr>
-                <th>{headers[0]}</th>
-                <th>{headers[1]}</th>
-                <th>{headers[2]}</th>
-                <th>{headers[3]}</th>
-                <th>{headers[4]}</th>
-                <th>{headers[5]}</th>
-                <th>{headers[6]}</th>
-                <th>{headers[7]}</th>
-                <th>{headers[8]}</th>
-                <th>{headers[9]}</th>
+                {COLUMN_CONFIG.map((column, index) => (
+                  <th key={column.key}>{headers[index] ?? column.fallback}</th>
+                ))}
                 <th className="testcase-edit__actions-cell">작업</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id}>
-                  <td>
-                    <input
-                      className="testcase-edit__input"
-                      value={row.majorCategory}
-                      onChange={(event) => handleChangeField(row.id, 'majorCategory', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="testcase-edit__input"
-                      value={row.middleCategory}
-                      onChange={(event) => handleChangeField(row.id, 'middleCategory', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="testcase-edit__input"
-                      value={row.minorCategory}
-                      onChange={(event) => handleChangeField(row.id, 'minorCategory', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="testcase-edit__input"
-                      value={row.testcaseId}
-                      onChange={(event) => handleChangeField(row.id, 'testcaseId', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <textarea
-                      className="testcase-edit__textarea"
-                      value={row.scenario}
-                      onChange={(event) => handleChangeField(row.id, 'scenario', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <textarea
-                      className="testcase-edit__textarea"
-                      value={row.input}
-                      onChange={(event) => handleChangeField(row.id, 'input', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <textarea
-                      className="testcase-edit__textarea"
-                      value={row.expected}
-                      onChange={(event) => handleChangeField(row.id, 'expected', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="testcase-edit__input"
-                      value={row.result}
-                      onChange={(event) => handleChangeField(row.id, 'result', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <textarea
-                      className="testcase-edit__textarea"
-                      value={row.detail}
-                      onChange={(event) => handleChangeField(row.id, 'detail', event.target.value)}
-                    />
-                  </td>
-                  <td>
-                    <textarea
-                      className="testcase-edit__textarea"
-                      value={row.note}
-                      onChange={(event) => handleChangeField(row.id, 'note', event.target.value)}
-                    />
-                  </td>
+                  {COLUMN_CONFIG.map((column) => {
+                    const value = row[column.key]
+                    const label = column.key
+                    if (column.input === 'textarea') {
+                      return (
+                        <td key={label}>
+                          <textarea
+                            className="testcase-edit__textarea"
+                            value={value}
+                            onChange={(event) =>
+                              handleChangeField(row.id, column.key, event.target.value)
+                            }
+                          />
+                        </td>
+                      )
+                    }
+                    return (
+                      <td key={label}>
+                        <input
+                          className="testcase-edit__input"
+                          value={value}
+                          onChange={(event) =>
+                            handleChangeField(row.id, column.key, event.target.value)
+                          }
+                        />
+                      </td>
+                    )
+                  })}
                   <td className="testcase-edit__actions-cell">
                     <button
                       type="button"
