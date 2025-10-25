@@ -23,7 +23,7 @@ export function Dropzone({
   const helperText = enableDragAndDrop
     ? '이미지를 클릭해서 추가하거나 드래그 앤 드롭하세요.'
     : allowPaste
-      ? '이미지를 클릭해서 추가하거나 붙여넣기(Ctrl+V)를 사용하세요.'
+      ? '이미지를 클릭해서 추가하세요.'
       : '이미지를 클릭해서 추가하세요.'
 
   const prompt = enableDragAndDrop ? (

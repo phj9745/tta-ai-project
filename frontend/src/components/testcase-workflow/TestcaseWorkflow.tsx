@@ -691,7 +691,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                     <span className="testcase-workflow__card-badge">소분류 {index + 1}</span>
                     {group.isCollapsed ? (
                       <p className="testcase-workflow__card-name">
-                        기능명
+                        {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory}
                         <span className="testcase-workflow__card-name-value">
                           {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
                         </span>
@@ -728,19 +728,17 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                     <div className="testcase-workflow__card-body">
                       <div className="testcase-workflow__card-grid">
                         <div className="testcase-workflow__attachments">
-                          <h4 className="testcase-workflow__attachments-title">참고 이미지</h4>
+                          <h4 className="testcase-workflow__attachments-title">참고 이미지 첨부</h4>
                           <p className="testcase-workflow__attachments-helper">
-                            클릭해서 파일을 선택하거나 Ctrl+V로 붙여넣어 이미지를 추가하세요.
-                          </p>
-                          <FileUploader
-                            allowedTypes={ATTACHMENT_FILE_TYPES}
-                            files={group.files}
-                            onChange={(nextFiles) => handleSetGroupFiles(index, nextFiles)}
+                            기능 이해를 위한 이미지을 선택하세요.
+                          </p>          
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="testcase-workflow__attachments-input"
+                            onChange={(event) => handleSetGroupFiles(index, Array.from(event.target.files ?? []))}
                             disabled={group.status === 'loading'}
-                            variant="grid"
-                            enableDragAndDrop={false}
-                            allowPaste
-                            appearance="compact"
                           />
                         </div>
                         <div className="testcase-workflow__card-actions" aria-live="polite">
