@@ -33,6 +33,7 @@ from openai import (
 )
 
 from ..config import Settings
+from .excel_templates import TESTCASE_EXPECTED_HEADERS
 from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import PromptBuiltinContext, PromptConfigService
