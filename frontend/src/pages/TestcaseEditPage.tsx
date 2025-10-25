@@ -269,7 +269,7 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
         setFileId(effectiveFileId ? effectiveFileId : null)
 
         const fetchedRows = Array.isArray(payload.rows)
-          ? payload.rows.map((row) => normalizeRow(row))
+          ? payload.rows.slice(1).map((row) => normalizeRow(row)) // 첫 번째 행 스킵
           : []
 
         idRef.current = 0

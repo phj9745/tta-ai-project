@@ -422,7 +422,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
               <article key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`} className="testcase-workflow__card">
                 <div className="testcase-workflow__card-header">
                   <span className="testcase-workflow__card-title">
-                    {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory} {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
+                    {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory} | {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
                   </span>          
                 </div>
 
