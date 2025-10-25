@@ -95,9 +95,12 @@ class GoogleDriveClient:
             "email": tokens.email,
         }
 
-        refreshed = StoredTokens.from_payload(merged_payload)
-        self._token_storage.save(refreshed)
-        return refreshed
+        return self._token_storage.save(
+            google_id=tokens.google_id,
+            display_name=tokens.display_name,
+            email=tokens.email,
+            payload=merged_payload,
+        )
 
     async def ensure_valid_tokens(self, tokens: StoredTokens) -> StoredTokens:
         if self._is_token_expired(tokens):
