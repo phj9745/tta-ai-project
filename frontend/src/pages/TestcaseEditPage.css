@@ -1,0 +1,240 @@
+.testcase-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 2rem 0;
+}
+
+.testcase-edit__header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.testcase-edit__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  margin: 0.5rem 0 0;
+}
+
+.testcase-edit__meta dt {
+  font-weight: 600;
+  color: #111827;
+}
+
+.testcase-edit__meta dd {
+  margin: 0.25rem 0 0;
+  color: #4b5563;
+}
+
+.testcase-edit__back {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 0;
+}
+
+.testcase-edit__back:hover,
+.testcase-edit__back:focus-visible {
+  text-decoration: underline;
+}
+
+.testcase-edit__title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0;
+}
+
+.testcase-edit__description {
+  margin: 0;
+  color: #4b5563;
+  font-size: 1rem;
+}
+
+.testcase-edit__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+.testcase-edit__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+
+.testcase-edit__file-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 220px;
+}
+
+.testcase-edit__input,
+.testcase-edit__textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  font-family: inherit;
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.testcase-edit__input:focus,
+.testcase-edit__textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.testcase-edit__textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+}
+
+.testcase-edit__button {
+  background-color: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: 0.5rem;
+  padding: 0.65rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.testcase-edit__button:disabled {
+  background-color: #93c5fd;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.testcase-edit__button:not(:disabled):hover,
+.testcase-edit__button:not(:disabled):focus-visible {
+  background-color: #1d4ed8;
+  box-shadow: 0 10px 25px -15px rgba(37, 99, 235, 0.7);
+}
+
+.testcase-edit__secondary {
+  background-color: transparent;
+  color: #2563eb;
+  border: 1px solid #2563eb;
+  border-radius: 0.5rem;
+  padding: 0.6rem 1.2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.testcase-edit__secondary:hover,
+.testcase-edit__secondary:focus-visible {
+  background-color: rgba(37, 99, 235, 0.08);
+  box-shadow: 0 10px 25px -20px rgba(37, 99, 235, 0.8);
+}
+
+.testcase-edit__secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.testcase-edit__table-wrapper {
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  background-color: #fff;
+  box-shadow: 0 10px 40px -25px rgba(15, 23, 42, 0.25);
+}
+
+.testcase-edit__table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 960px;
+}
+
+.testcase-edit__table th,
+.testcase-edit__table td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #e5e7eb;
+  vertical-align: top;
+  text-align: left;
+  background-color: #fff;
+}
+
+.testcase-edit__table th {
+  background-color: #f3f4f6;
+  font-weight: 600;
+  color: #111827;
+  white-space: nowrap;
+}
+
+.testcase-edit__status {
+  border-radius: 0.75rem;
+  padding: 1rem 1.25rem;
+  font-size: 0.95rem;
+}
+
+.testcase-edit__status--info {
+  background-color: #eef2ff;
+  color: #3730a3;
+}
+
+.testcase-edit__status--error {
+  background-color: #fee2e2;
+  color: #b91c1c;
+}
+
+.testcase-edit__status--success {
+  background-color: #dcfce7;
+  color: #15803d;
+}
+
+.testcase-edit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.testcase-edit__loading {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: #4b5563;
+}
+
+.testcase-edit__actions-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.testcase-edit__remove {
+  background-color: transparent;
+  border: 1px solid #ef4444;
+  color: #b91c1c;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+.testcase-edit__remove:hover,
+.testcase-edit__remove:focus-visible {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+.testcase-edit__remove:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
