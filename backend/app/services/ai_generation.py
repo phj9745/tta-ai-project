@@ -866,6 +866,238 @@ class AIGenerationService:
             if uploaded_records:
                 await self._cleanup_openai_files(client, uploaded_records)
 
+    async def rewrite_testcase_scenarios(
+        self,
+        *,
+        project_id: str,
+        project_overview: str,
+        major_category: str,
+        middle_category: str,
+        minor_category: str,
+        feature_description: str,
+        scenarios: Sequence[Mapping[str, Any]],
+        instructions: str,
+        conversation: Sequence[Mapping[str, str]] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_instructions = (instructions or "").strip()
+        if not normalized_instructions:
+            raise HTTPException(status_code=422, detail="변경 요청 내용을 입력해 주세요.")
+
+        normalized_scenarios: List[Dict[str, str]] = []
+        for entry in scenarios:
+            if not isinstance(entry, Mapping):
+                continue
+            scenario_text = str(
+                entry.get("scenario")
+                or entry.get("테스트 시나리오")
+                or ""
+            ).strip()
+            input_text = str(
+                entry.get("input")
+                or entry.get("입력(사전조건 포함)")
+                or ""
+            ).strip()
+            expected_text = str(
+                entry.get("expected")
+                or entry.get("기대 출력(사후조건 포함)")
+                or ""
+            ).strip()
+            if not scenario_text:
+                continue
+            normalized_scenarios.append(
+                {
+                    "scenario": scenario_text,
+                    "input": input_text,
+                    "expected": expected_text,
+                }
+            )
+
+        if not normalized_scenarios:
+            raise HTTPException(status_code=422, detail="수정할 테스트케이스가 없습니다.")
+
+        scenario_lines: List[str] = []
+        for index, entry in enumerate(normalized_scenarios, start=1):
+            scenario_lines.append(f"{index}. 테스트 시나리오: {entry['scenario']}")
+            scenario_lines.append(
+                "   입력(사전조건 포함): "
+                + (entry["input"] or "-")
+            )
+            scenario_lines.append(
+                "   기대 출력(사후조건 포함): "
+                + (entry["expected"] or "-")
+            )
+
+        overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+        feature_lines = [
+            f"대분류: {major_category or '-'}",
+            f"중분류: {middle_category or '-'}",
+            f"소분류: {minor_category or '-'}",
+        ]
+        description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
+
+        response_instructions = [
+            "아래 JSON 형식으로만 응답하세요.",
+            (
+                '{"reply": "요약 또는 변경 이유", "scenarios": '
+                '[{"테스트 시나리오": "...", "입력(사전조건 포함)": "...", '
+                '"기대 출력(사후조건 포함)": "..."}, ...]}'
+            ),
+            "scenarios 배열 길이는 최소 1개 이상이어야 하며 가능하면 현재 개수와 동일하게 유지하세요.",
+            "각 항목은 한글 레이블을 그대로 사용하고 줄바꿈은 그대로 유지하세요.",
+            "reply는 1~3문장으로 변경 사항을 요약하세요.",
+        ]
+
+        user_parts = [
+            "프로젝트 개요:",
+            overview_text,
+            "",
+            "기능 분류:",
+            "\n".join(feature_lines),
+            "",
+            "기능 설명:",
+            description_text,
+            "",
+            "현재 테스트케이스:",
+            "\n".join(scenario_lines),
+            "",
+            "사용자 요청:",
+            normalized_instructions,
+            "",
+            "응답 형식 지침:",
+            "\n".join(f"- {line}" for line in response_instructions),
+        ]
+
+        user_prompt = "\n".join(part for part in user_parts if part is not None)
+
+        system_prompt = (
+            "당신은 소프트웨어 테스트 전문가입니다. "
+            "사용자의 테스트케이스를 개선하고 명확하게 다듬어 주세요."
+        )
+
+        messages = [OpenAIMessageBuilder.text_message("system", system_prompt)]
+
+        if conversation:
+            for entry in conversation:
+                role = entry.get("role")
+                text = str(entry.get("text") or "").strip()
+                if role not in {"user", "assistant"}:
+                    continue
+                if not text:
+                    continue
+                messages.append(OpenAIMessageBuilder.text_message(str(role), text))
+
+        messages.append(OpenAIMessageBuilder.text_message("user", user_prompt))
+
+        client = self._get_client()
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=messages,
+                temperature=0.2,
+                top_p=0.9,
+                max_output_tokens=900,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while requesting testcase rewrite",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "testcase-generation",
+                },
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="테스트케이스를 다시 작성하는 중 예기치 않은 오류가 발생했습니다.",
+            ) from exc
+
+        response_text = self._extract_response_text(response) or ""
+        cleaned = self._sanitize_json(response_text)
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+            ) from exc
+
+        reply_text = ""
+        scenarios_payload: Any = []
+
+        if isinstance(payload, Mapping):
+            reply_text = str(
+                payload.get("reply")
+                or payload.get("message")
+                or ""
+            ).strip()
+            scenarios_payload = payload.get("scenarios")
+        else:
+            scenarios_payload = payload
+
+        if not isinstance(scenarios_payload, Sequence):
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답에서 수정된 테스트케이스를 찾을 수 없습니다.",
+            )
+
+        normalized_results: List[Dict[str, str]] = []
+        for entry in scenarios_payload:
+            if not isinstance(entry, Mapping):
+                continue
+            scenario_text = str(
+                entry.get("테스트 시나리오")
+                or entry.get("scenario")
+                or ""
+            ).strip()
+            input_text = str(
+                entry.get("입력(사전조건 포함)")
+                or entry.get("input")
+                or ""
+            ).strip()
+            expected_text = str(
+                entry.get("기대 출력(사후조건 포함)")
+                or entry.get("expected")
+                or ""
+            ).strip()
+            if not scenario_text:
+                continue
+            normalized_results.append(
+                {
+                    "scenario": scenario_text,
+                    "input": input_text,
+                    "expected": expected_text,
+                }
+            )
+
+        if not normalized_results:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답에서 유효한 테스트케이스를 찾을 수 없습니다.",
+            )
+
+        return {
+            "reply": reply_text,
+            "scenarios": normalized_results,
+        }
+
     async def generate_testcases_from_scenarios(
         self,
         *,

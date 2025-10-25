@@ -164,7 +164,7 @@
 
 @media (min-width: 960px) {
   .testcase-workflow__card-grid {
-    grid-template-columns: 1fr minmax(240px, 0.8fr);
+    grid-template-columns: minmax(160px, 0.55fr) minmax(0, 1.45fr);
     align-items: stretch;
   }
 }
@@ -173,6 +173,10 @@
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.testcase-workflow__attachments .file-uploader__dropzone {
+  min-height: 140px;
 }
 
 .testcase-workflow__attachments-title {
@@ -275,17 +279,121 @@
   border: 1px solid #e2e8f0;
   padding: 0.75rem;
   display: grid;
-  gap: 0.5rem;
+  gap: 0.75rem;
 }
 
 .testcase-workflow__scenario-fields {
   display: grid;
-  gap: 0.5rem;
+  gap: 0.75rem;
+}
+
+.testcase-workflow__scenario-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #1f2937;
 }
 
 .testcase-workflow__scenario-actions {
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+@media (min-width: 1024px) {
+  .testcase-workflow__scenario {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .testcase-workflow__scenario-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .testcase-workflow__scenario-actions {
+    justify-content: flex-start;
+  }
+}
+
+.testcase-workflow__scenario-field textarea {
+  min-height: 6rem;
+}
+
+.testcase-workflow__chat {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.testcase-workflow__chat-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.testcase-workflow__chat-helper {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.testcase-workflow__chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 0.75rem;
+}
+
+.testcase-workflow__chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.testcase-workflow__chat-message span {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.testcase-workflow__chat-message--user span {
+  color: #1d4ed8;
+}
+
+.testcase-workflow__chat-message--assistant span {
+  color: #047857;
+}
+
+.testcase-workflow__chat-message p {
+  margin: 0;
+  color: #1f2937;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.testcase-workflow__chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.testcase-workflow__chat-actions {
+  display: flex;
   justify-content: flex-end;
+}
+
+.testcase-workflow__chat .testcase-workflow__textarea {
+  min-height: 4.5rem;
 }
 
 .testcase-workflow__step-actions {

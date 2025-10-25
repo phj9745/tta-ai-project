@@ -20,6 +20,11 @@ interface ScenarioEntry {
   expected: string
 }
 
+interface ConversationMessage {
+  role: 'user' | 'assistant'
+  text: string
+}
+
 interface ScenarioGroupState {
   feature: FeatureRow
   scenarios: ScenarioEntry[]
@@ -27,6 +32,10 @@ interface ScenarioGroupState {
   scenarioCount: number
   status: 'idle' | 'loading' | 'success' | 'error'
   error: string | null
+  rewriteMessages: ConversationMessage[]
+  rewriteInput: string
+  rewriteStatus: 'idle' | 'loading' | 'success' | 'error'
+  rewriteError: string | null
 }
 
 interface TestcaseWorkflowProps {
@@ -111,6 +120,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
         }
 
         setProjectOverview(payload.projectOverview ?? '')
+        idRef.current = 0
         setGroups(
           rows.map((feature) => ({
             feature,
@@ -119,6 +129,10 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             scenarioCount: 3,
             status: 'idle',
             error: null,
+            rewriteMessages: [],
+            rewriteInput: '',
+            rewriteStatus: 'idle',
+            rewriteError: null,
           })),
         )
         setStep('scenarios')
@@ -239,6 +253,11 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             scenarios: nextScenarios,
             status: 'success',
             error: null,
+            scenarioCount: Math.max(3, nextScenarios.length),
+            rewriteMessages: [],
+            rewriteInput: '',
+            rewriteStatus: 'idle',
+            rewriteError: null,
           }
           return nextGroups
         })
@@ -273,6 +292,11 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       nextGroups[groupIndex] = {
         ...prev[groupIndex],
         scenarios: nextScenarios,
+        rewriteStatus:
+          prev[groupIndex].rewriteStatus === 'loading'
+            ? 'loading'
+            : 'idle',
+        rewriteError: null,
       }
       return nextGroups
     })
@@ -287,6 +311,11 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       nextGroups[groupIndex] = {
         ...prev[groupIndex],
         scenarios: prev[groupIndex].scenarios.filter((scenario) => scenario.id !== scenarioId),
+        rewriteStatus:
+          prev[groupIndex].rewriteStatus === 'loading'
+            ? 'loading'
+            : 'idle',
+        rewriteError: null,
       }
       return nextGroups
     })
@@ -310,10 +339,171 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             expected: '',
           },
         ],
+        rewriteStatus:
+          prev[groupIndex].rewriteStatus === 'loading'
+            ? 'loading'
+            : 'idle',
+        rewriteError: null,
       }
       return nextGroups
     })
   }, [])
+
+  const handleChangeRewriteInput = useCallback((groupIndex: number, value: string) => {
+    setGroups((prev) => {
+      if (groupIndex < 0 || groupIndex >= prev.length) {
+        return prev
+      }
+      const nextGroups = [...prev]
+      const nextStatus = prev[groupIndex].rewriteStatus
+      nextGroups[groupIndex] = {
+        ...prev[groupIndex],
+        rewriteInput: value,
+        rewriteStatus:
+          nextStatus === 'success' || nextStatus === 'error' ? 'idle' : nextStatus,
+        rewriteError: null,
+      }
+      return nextGroups
+    })
+  }, [])
+
+  const handleSubmitRewrite = useCallback(
+    async (groupIndex: number) => {
+      const group = groups[groupIndex]
+      if (!group) {
+        return
+      }
+
+      const message = group.rewriteInput.trim()
+      if (!message) {
+        setGroups((prev) => {
+          if (groupIndex < 0 || groupIndex >= prev.length) {
+            return prev
+          }
+          const nextGroups = [...prev]
+          nextGroups[groupIndex] = {
+            ...prev[groupIndex],
+            rewriteError: 'GPT에게 전달할 내용을 입력해 주세요.',
+            rewriteStatus: 'error',
+          }
+          return nextGroups
+        })
+        return
+      }
+
+      const nextMessages: ConversationMessage[] = [
+        ...group.rewriteMessages,
+        { role: 'user', text: message },
+      ]
+
+      setGroups((prev) => {
+        if (groupIndex < 0 || groupIndex >= prev.length) {
+          return prev
+        }
+        const nextGroups = [...prev]
+        nextGroups[groupIndex] = {
+          ...prev[groupIndex],
+          rewriteMessages: nextMessages,
+          rewriteInput: '',
+          rewriteStatus: 'loading',
+          rewriteError: null,
+        }
+        return nextGroups
+      })
+
+      const payload = {
+        projectOverview,
+        majorCategory: group.feature.majorCategory,
+        middleCategory: group.feature.middleCategory,
+        minorCategory: group.feature.minorCategory,
+        featureDescription: group.feature.featureDescription,
+        scenarios: group.scenarios.map((scenario) => ({
+          scenario: scenario.scenario,
+          input: scenario.input,
+          expected: scenario.expected,
+        })),
+        instructions: message,
+        conversation: nextMessages.map((entry) => ({ role: entry.role, text: entry.text })),
+      }
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/testcases/workflow/rewrite`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+          },
+        )
+
+        if (!response.ok) {
+          const body = await response.json().catch(() => null)
+          const detail = typeof body?.detail === 'string' ? body.detail : 'GPT 응답을 가져오지 못했습니다.'
+          throw new Error(detail)
+        }
+
+        const body = (await response.json()) as {
+          reply?: string
+          scenarios?: Array<{ scenario?: string; input?: string; expected?: string }>
+        }
+
+        const scenarios = Array.isArray(body.scenarios) ? body.scenarios : []
+        if (scenarios.length === 0) {
+          throw new Error('GPT 응답에서 테스트케이스를 찾을 수 없습니다.')
+        }
+
+        const assistantMessage = typeof body.reply === 'string' && body.reply.trim().length > 0
+          ? body.reply.trim()
+          : 'GPT 응답이 도착했습니다.'
+
+        setGroups((prev) => {
+          if (groupIndex < 0 || groupIndex >= prev.length) {
+            return prev
+          }
+
+          const nextGroups = [...prev]
+          const nextScenarios: ScenarioEntry[] = scenarios.map((entry) => {
+            idRef.current += 1
+            return {
+              id: `scenario-${idRef.current}`,
+              scenario: entry?.scenario?.trim() ?? '',
+              input: entry?.input?.trim() ?? '',
+              expected: entry?.expected?.trim() ?? '',
+            }
+          })
+
+          nextGroups[groupIndex] = {
+            ...prev[groupIndex],
+            scenarios: nextScenarios,
+            scenarioCount: Math.max(3, nextScenarios.length),
+            rewriteMessages: [...nextMessages, { role: 'assistant', text: assistantMessage }],
+            rewriteStatus: 'success',
+            rewriteError: null,
+          }
+
+          return nextGroups
+        })
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'GPT 응답을 가져오지 못했습니다.'
+        setGroups((prev) => {
+          if (groupIndex < 0 || groupIndex >= prev.length) {
+            return prev
+          }
+          const nextGroups = [...prev]
+          nextGroups[groupIndex] = {
+            ...prev[groupIndex],
+            rewriteMessages: nextMessages,
+            rewriteStatus: 'error',
+            rewriteError: detail,
+          }
+          return nextGroups
+        })
+      }
+    },
+    [backendUrl, groups, projectId, projectOverview],
+  )
 
   const canProceedToReview = useMemo(
     () => groups.length > 0 && groups.every((group) => group.scenarios.length >= 3),
@@ -537,7 +727,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                       {group.scenarios.map((scenario) => (
                         <div key={scenario.id} className="testcase-workflow__scenario">
                           <div className="testcase-workflow__scenario-fields">
-                            <label>
+                            <label className="testcase-workflow__scenario-field">
                               <span>테스트 시나리오</span>
                               <textarea
                                 className="testcase-workflow__textarea"
@@ -547,7 +737,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                                 }
                               />
                             </label>
-                            <label>
+                            <label className="testcase-workflow__scenario-field">
                               <span>입력(사전조건 포함)</span>
                               <textarea
                                 className="testcase-workflow__textarea"
@@ -557,7 +747,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                                 }
                               />
                             </label>
-                            <label>
+                            <label className="testcase-workflow__scenario-field">
                               <span>기대 출력(사후조건 포함)</span>
                               <textarea
                                 className="testcase-workflow__textarea"
@@ -579,6 +769,62 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                  {group.scenarios.length > 0 && (
+                    <div className="testcase-workflow__chat">
+                      <h4 className="testcase-workflow__chat-title">GPT와 테스트케이스 다듬기</h4>
+                      <p className="testcase-workflow__chat-helper">
+                        수정이 필요한 방향을 설명하면 현재 테스트케이스를 참고해 GPT가 새로운 안을 제안합니다.
+                      </p>
+                      <div className="testcase-workflow__chat-log" role="log" aria-live="polite">
+                        {group.rewriteMessages.length === 0 && (
+                          <p className="testcase-workflow__chat-helper">아직 대화가 없습니다.</p>
+                        )}
+                        {group.rewriteMessages.map((message, messageIndex) => (
+                          <div
+                            key={`${message.role}-${messageIndex}`}
+                            className={`testcase-workflow__chat-message testcase-workflow__chat-message--${message.role}`}
+                          >
+                            <span>{message.role === 'user' ? '요청' : 'GPT 응답'}</span>
+                            <p>{message.text}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {group.rewriteError && (
+                        <p className="testcase-workflow__status testcase-workflow__status--error" role="alert">
+                          {group.rewriteError}
+                        </p>
+                      )}
+                      {group.rewriteStatus === 'success' && !group.rewriteError && (
+                        <p className="testcase-workflow__status testcase-workflow__status--success">
+                          GPT 응답을 테스트케이스에 반영했습니다.
+                        </p>
+                      )}
+                      <form
+                        className="testcase-workflow__chat-form"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          void handleSubmitRewrite(index)
+                        }}
+                      >
+                        <textarea
+                          className="testcase-workflow__textarea"
+                          value={group.rewriteInput}
+                          onChange={(event) => handleChangeRewriteInput(index, event.target.value)}
+                          placeholder="예: 2번 테스트를 로그인 실패 케이스로 바꿔줘"
+                          disabled={group.rewriteStatus === 'loading'}
+                        />
+                        <div className="testcase-workflow__chat-actions">
+                          <button
+                            type="submit"
+                            className="testcase-workflow__button"
+                            disabled={group.rewriteStatus === 'loading' || group.scenarios.length === 0}
+                          >
+                            {group.rewriteStatus === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
+                          </button>
+                        </div>
+                      </form>
                     </div>
                   )}
                 </div>
