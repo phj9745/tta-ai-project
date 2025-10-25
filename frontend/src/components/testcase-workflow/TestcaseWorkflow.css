@@ -27,10 +27,38 @@
   line-height: 1.5;
 }
 
-.testcase-workflow__uploader {
+.testcase-workflow__overview {
+  margin: 0 0 1.25rem;
+  padding: 1rem;
+  border-radius: 10px;
+  border: 1px solid #dbe3f0;
+  background: #f5f9ff;
+}
+
+.testcase-workflow__overview-title {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.testcase-workflow__overview-description {
+  margin: 0;
+  color: #475569;
+  line-height: 1.5;
+  font-size: 0.95rem;
+}
+
+.testcase-workflow__upload {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.testcase-workflow__upload-helper {
+  margin: 0;
+  color: #4d5f78;
+  font-size: 0.95rem;
 }
 
 .testcase-workflow__status {
@@ -70,9 +98,30 @@
 
 .testcase-workflow__card-header {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.testcase-workflow__card-header-main {
+  display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  margin-bottom: 0.75rem;
+}
+
+.testcase-workflow__card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #3730a3;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .testcase-workflow__card-title {
@@ -86,22 +135,78 @@
   font-size: 0.9rem;
 }
 
-.testcase-workflow__card-description {
+.testcase-workflow__card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   color: #475569;
-  background: #fff;
-  border-radius: 8px;
-  padding: 0.75rem;
-  border: 1px solid #e2e8f0;
-  font-size: 0.95rem;
-  line-height: 1.45;
+  font-size: 0.9rem;
 }
 
-.testcase-workflow__controls {
+.testcase-workflow__card-meta-count {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #312e81;
+  font-weight: 600;
+}
+
+.testcase-workflow__card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.testcase-workflow__card-grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 960px) {
+  .testcase-workflow__card-grid {
+    grid-template-columns: 1fr minmax(240px, 0.8fr);
+    align-items: stretch;
+  }
+}
+
+.testcase-workflow__attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.testcase-workflow__attachments-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.testcase-workflow__attachments-helper {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.testcase-workflow__card-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.testcase-workflow__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+
+.testcase-workflow__action-buttons {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-top: 1rem;
-  align-items: center;
+  gap: 0.5rem;
 }
 
 .testcase-workflow__input,
