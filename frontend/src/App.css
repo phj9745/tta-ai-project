@@ -691,6 +691,11 @@
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
+.file-uploader__dropzone--compact {
+  padding: 1rem 1.25rem;
+  min-height: 96px;
+}
+
 .file-uploader__dropzone--preview {
   align-items: stretch;
   justify-content: flex-start;

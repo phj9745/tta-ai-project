@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileUploader } from '../components/FileUploader'
 import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
 import { DefectReportWorkflow } from '../components/DefectReportWorkflow'
+import { TestcaseWorkflow } from '../components/testcase-workflow/TestcaseWorkflow'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -267,6 +268,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
   const isDefectReport = activeContent.id === 'defect-report'
+  const isTestcaseWorkflow = activeContent.id === 'testcase-generation'
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
   const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
@@ -800,167 +802,177 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             <p className="project-management-content__description">{activeContent.description}</p>
           </div>
 
-          {activeState.status !== 'success' && (
-            isDefectReport ? (
-              <DefectReportWorkflow
-                backendUrl={backendUrl}
-                projectId={projectId}
-                onPreviewModeChange={setIsDefectPreviewVisible}
-              />
-            ) : hasRequiredDocuments ? (
-              <>
-                <section
-                  aria-labelledby="required-upload-section"
-                  className="project-management-content__section"
-                >
-                  <h2
-                    id="required-upload-section"
-                    className="project-management-content__section-title"
-                  >
-                    필수 문서 업로드
-                  </h2>
-                  <div className="project-management-required__list">
-                    {(activeContent.requiredDocuments ?? []).map((doc) => {
-                      const fileList = activeState.requiredFiles[doc.id] ?? []
-                      const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
-                      const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
+          {isTestcaseWorkflow ? (
+            <TestcaseWorkflow
+              backendUrl={backendUrl}
+              projectId={projectId}
+              projectName={projectName}
+            />
+          ) : (
+            <>
+              {activeState.status !== 'success' && (
+                isDefectReport ? (
+                  <DefectReportWorkflow
+                    backendUrl={backendUrl}
+                    projectId={projectId}
+                    onPreviewModeChange={setIsDefectPreviewVisible}
+                  />
+                ) : hasRequiredDocuments ? (
+                  <>
+                    <section
+                      aria-labelledby="required-upload-section"
+                      className="project-management-content__section"
+                    >
+                      <h2
+                        id="required-upload-section"
+                        className="project-management-content__section-title"
+                      >
+                        필수 문서 업로드
+                      </h2>
+                      <div className="project-management-required__list">
+                        {(activeContent.requiredDocuments ?? []).map((doc) => {
+                          const fileList = activeState.requiredFiles[doc.id] ?? []
+                          const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
+                          const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
 
-                      return (
-                        <div key={doc.id} className="project-management-required__item">
-                          <span className="project-management-required__label">{doc.label}</span>
-                          <FileUploader
-                            allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
-                            files={fileList}
-                            onChange={(nextFiles) =>
-                              handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
-                            }
-                            disabled={activeState.status === 'loading'}
-                            multiple={allowMultiple}
-                            hideDropzoneWhenFilled
-                          />
-                        </div>
-                      )
-                    })}
-                  </div>
+                          return (
+                            <div key={doc.id} className="project-management-required__item">
+                              <span className="project-management-required__label">{doc.label}</span>
+                              <FileUploader
+                                allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
+                                files={fileList}
+                                onChange={(nextFiles) =>
+                                  handleSetRequiredFiles(activeContent.id, doc.id, nextFiles)
+                                }
+                                disabled={activeState.status === 'loading'}
+                                multiple={allowMultiple}
+                                hideDropzoneWhenFilled
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
 
-                  <div className="project-management-additional project-management-additional--inline">
-                    <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
+                      <div className="project-management-additional project-management-additional--inline">
+                        <h3 className="project-management-additional__title">추가 파일 업로드 (선택)</h3>
+                        <FileUploader
+                          allowedTypes={activeContent.allowedTypes}
+                          files={[]}
+                          onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
+                          disabled={activeState.status === 'loading'}
+                        />
+                        {activeState.additionalFiles.length > 0 && (
+                          <ul className="project-management-additional__list">
+                            {activeState.additionalFiles.map((entry) => (
+                              <li key={entry.id} className="project-management-additional__item">
+                                <div className="project-management-additional__file">{entry.file.name}</div>
+                                <label className="project-management-additional__description">
+                                  <span>문서 종류</span>
+                                  <input
+                                    type="text"
+                                    value={entry.description}
+                                    onChange={(event) =>
+                                      handleUpdateAdditionalDescription(
+                                        activeContent.id,
+                                        entry.id,
+                                        event.target.value,
+                                      )
+                                    }
+                                    placeholder="예: 테스트 보고서"
+                                    disabled={activeState.status === 'loading'}
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  className="project-management-additional__remove"
+                                  onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
+                                  disabled={activeState.status === 'loading'}
+                                >
+                                  제거
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </section>
+                  </>
+                ) : (
+                  <section aria-labelledby="upload-section" className="project-management-content__section">
+                    <h2 id="upload-section" className="project-management-content__section-title">
+                      자료 업로드
+                    </h2>
+                    <p className="project-management-content__helper">{activeContent.helper}</p>
                     <FileUploader
                       allowedTypes={activeContent.allowedTypes}
-                      files={[]}
-                      onChange={(nextFiles) => handleAddAdditionalFiles(activeContent.id, nextFiles)}
+                      files={activeState.files}
+                      onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
                       disabled={activeState.status === 'loading'}
+                      maxFiles={activeContent.maxFiles}
+                      hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
+                      variant={activeContent.uploaderVariant}
                     />
-                    {activeState.additionalFiles.length > 0 && (
-                      <ul className="project-management-additional__list">
-                        {activeState.additionalFiles.map((entry) => (
-                          <li key={entry.id} className="project-management-additional__item">
-                            <div className="project-management-additional__file">{entry.file.name}</div>
-                            <label className="project-management-additional__description">
-                              <span>문서 종류</span>
-                              <input
-                                type="text"
-                                value={entry.description}
-                                onChange={(event) =>
-                                  handleUpdateAdditionalDescription(
-                                    activeContent.id,
-                                    entry.id,
-                                    event.target.value,
-                                  )
-                                }
-                                placeholder="예: 테스트 보고서"
-                                disabled={activeState.status === 'loading'}
-                              />
-                            </label>
-                            <button
-                              type="button"
-                              className="project-management-additional__remove"
-                              onClick={() => handleRemoveAdditionalFile(activeContent.id, entry.id)}
-                              disabled={activeState.status === 'loading'}
-                            >
-                              제거
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </section>
-              </>
-            ) : (
-              <section aria-labelledby="upload-section" className="project-management-content__section">
-                <h2 id="upload-section" className="project-management-content__section-title">
-                  자료 업로드
-                </h2>
-                <p className="project-management-content__helper">{activeContent.helper}</p>
-                <FileUploader
-                  allowedTypes={activeContent.allowedTypes}
-                  files={activeState.files}
-                  onChange={(nextFiles) => handleChangeFiles(activeContent.id, nextFiles)}
-                  disabled={activeState.status === 'loading'}
-                  maxFiles={activeContent.maxFiles}
-                  hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
-                  variant={activeContent.uploaderVariant}
-                />
-              </section>
-            )
-          )}
-
-          {!isDefectReport && (
-            <div className="project-management-content__actions">
-              {activeState.status !== 'success' && (
-                <>
-                  <button
-                    type="button"
-                    className="project-management-content__button"
-                    onClick={() => handleGenerate(activeContent.id)}
-                    disabled={activeState.status === 'loading'}
-                  >
-                    {activeState.status === 'loading' ? '생성 중…' : activeContent.buttonLabel}
-                  </button>
-                  <p className="project-management-content__footnote">
-                    업로드된 문서는 프로젝트 드라이브에 안전하게 보관되며, 생성된 결과는 별도의 탭에서 확인할 수 있습니다.
-                  </p>
-                </>
+                  </section>
+                )
               )}
 
-              {activeState.status === 'loading' && (
-                <div
-                  className="project-management-content__status project-management-content__status--loading"
-                  role="status"
-                >
-                  업로드한 자료를 기반으로 결과를 준비하고 있습니다…
+              {!isDefectReport && (
+                <div className="project-management-content__actions">
+                  {activeState.status !== 'success' && (
+                    <>
+                      <button
+                        type="button"
+                        className="project-management-content__button"
+                        onClick={() => handleGenerate(activeContent.id)}
+                        disabled={activeState.status === 'loading'}
+                      >
+                        {activeState.status === 'loading' ? '생성 중…' : activeContent.buttonLabel}
+                      </button>
+                      <p className="project-management-content__footnote">
+                        업로드된 문서는 프로젝트 드라이브에 안전하게 보관되며, 생성된 결과는 별도의 탭에서 확인할 수 있습니다.
+                      </p>
+                    </>
+                  )}
+
+                  {activeState.status === 'loading' && (
+                    <div
+                      className="project-management-content__status project-management-content__status--loading"
+                      role="status"
+                    >
+                      업로드한 자료를 기반으로 결과를 준비하고 있습니다…
+                    </div>
+                  )}
+
+                  {activeState.status === 'error' && (
+                    <div className="project-management-content__status project-management-content__status--error" role="alert">
+                      {activeState.errorMessage}
+                    </div>
+                  )}
+
+                  {activeState.status === 'success' && (
+                    <div className="project-management-content__result">
+                      <a
+                        href={activeState.downloadUrl ?? undefined}
+                        className="project-management-content__button project-management-content__download"
+                        download={activeState.downloadName ?? undefined}
+                      >
+                        CSV 다운로드
+                      </a>
+                      <button
+                        type="button"
+                        className="project-management-content__secondary"
+                        onClick={() => handleReset(activeContent.id)}
+                      >
+                        다시 생성하기
+                      </button>
+                      <p className="project-management-content__footnote">
+                        생성된 결과는 프로젝트 드라이브에도 저장되며 필요 시 언제든지 다시 다운로드할 수 있습니다.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
-
-              {activeState.status === 'error' && (
-                <div className="project-management-content__status project-management-content__status--error" role="alert">
-                  {activeState.errorMessage}
-                </div>
-              )}
-
-              {activeState.status === 'success' && (
-                <div className="project-management-content__result">
-                  <a
-                    href={activeState.downloadUrl ?? undefined}
-                    className="project-management-content__button project-management-content__download"
-                    download={activeState.downloadName ?? undefined}
-                  >
-                    CSV 다운로드
-                  </a>
-                  <button
-                    type="button"
-                    className="project-management-content__secondary"
-                    onClick={() => handleReset(activeContent.id)}
-                  >
-                    다시 생성하기
-                  </button>
-                  <p className="project-management-content__footnote">
-                    생성된 결과는 프로젝트 드라이브에도 저장되며 필요 시 언제든지 다시 다운로드할 수 있습니다.
-                  </p>
-                </div>
-              )}
-            </div>
+            </>
           )}
         </div>
       </main>

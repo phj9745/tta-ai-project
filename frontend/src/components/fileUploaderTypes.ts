@@ -2,6 +2,7 @@ export type FileType =
   | 'pdf'
   | 'docx'
   | 'xlsx'
+  | 'xls'
   | 'txt'
   | 'jpg'
   | 'png'
@@ -35,6 +36,11 @@ export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     ],
     extensions: ['xlsx'],
+  },
+  xls: {
+    label: 'XLS',
+    accept: ['.xls', 'application/vnd.ms-excel'],
+    extensions: ['xls'],
   },
   txt: {
     label: 'TXT',
