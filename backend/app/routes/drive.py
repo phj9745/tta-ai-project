@@ -8,7 +8,6 @@ import csv
 import io
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TypedDict
 from urllib.parse import quote
@@ -128,14 +127,22 @@ class TestcaseFinalizeRequest(BaseModel):
 
 
 class TestcaseFinalizeResponse(BaseModel):
-    csv_text: str = Field(..., alias="csvText")
+    file_id: str = Field(..., alias="fileId")
     file_name: str = Field(..., alias="fileName")
-    rows: List[TestcaseFinalizeRowModel]
-    xlsx_base64: str = Field(..., alias="xlsxBase64")
+    modified_time: str | None = Field(None, alias="modifiedTime")
+    rows: List[TestcaseFinalizeRowModel] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class TestcaseExportRequest(BaseModel):
     rows: List[TestcaseFinalizeRowModel]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseUpdateRequest(BaseModel):
+    rows: List[TestcaseFinalizeRowModel] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -785,6 +792,8 @@ async def generate_testcase_scenarios(
 async def finalize_testcases(
     project_id: str,
     payload: TestcaseFinalizeRequest,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
 ) -> TestcaseFinalizeResponse:
     if not payload.groups:
         raise HTTPException(status_code=422, detail="시나리오 정보가 없습니다.")
@@ -855,32 +864,100 @@ async def finalize_testcases(
     if not rows:
         raise HTTPException(status_code=422, detail="생성된 테스트케이스 행을 찾을 수 없습니다.")
 
-    csv_text = _csv_from_testcase_rows(rows)
+    update_payload = [row.model_dump(by_alias=True) for row in rows]
 
-    try:
-        template_bytes = _TESTCASE_TEMPLATE.read_bytes()
-    except FileNotFoundError as exc:  # pragma: no cover - 방어
-        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 찾을 수 없습니다.") from exc
-    except OSError as exc:  # pragma: no cover - 방어
-        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 읽는 중 오류가 발생했습니다.") from exc
+    result = await drive_service.update_testcase_rows(
+        project_id=project_id,
+        rows=update_payload,
+        google_id=google_id,
+    )
 
-    try:
-        workbook_bytes = testcases.populate_testcase_list(template_bytes, csv_text)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    file_id = result.get("fileId") if isinstance(result, dict) else None
+    file_name = result.get("fileName") if isinstance(result, dict) else None
+    modified_time = result.get("modifiedTime") if isinstance(result, dict) else None
 
-    workbook_base64 = base64.b64encode(workbook_bytes).decode("ascii")
+    if not isinstance(file_id, str) or not file_id.strip():
+        raise HTTPException(status_code=500, detail="테스트케이스 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
 
-    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
-    file_stem = f"{safe_project}_testcase_workflow_{timestamp}"
-    xlsx_name = f"{file_stem}.xlsx"
+    safe_name = file_name if isinstance(file_name, str) and file_name.strip() else "테스트케이스.xlsx"
 
     return TestcaseFinalizeResponse(
-        csvText=csv_text,
-        fileName=xlsx_name,
+        file_id=file_id,
+        file_name=safe_name,
+        modified_time=modified_time if isinstance(modified_time, str) else None,
         rows=rows,
-        xlsxBase64=workbook_base64,
+    )
+
+
+@router.get("/drive/projects/{project_id}/testcases")
+async def get_testcases(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 테스트케이스 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    result = await drive_service.get_testcase_rows(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.put("/drive/projects/{project_id}/testcases")
+async def update_testcases(
+    project_id: str,
+    payload: TestcaseUpdateRequest,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="업데이트할 테스트케이스 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    normalized_rows = [row.model_dump(by_alias=True) for row in payload.rows]
+
+    result = await drive_service.update_testcase_rows(
+        project_id=project_id,
+        rows=normalized_rows,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.get("/drive/projects/{project_id}/testcases/download")
+async def download_testcases(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="다운로드할 테스트케이스 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> StreamingResponse:
+    file_name, content = await drive_service.download_testcase_workbook(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+
+    safe_name = file_name or "testcases.xlsx"
+    headers = {
+        "Content-Disposition": _build_attachment_header(safe_name, default_filename="testcases.xlsx"),
+        "Cache-Control": "no-store",
+    }
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
     )
 
 

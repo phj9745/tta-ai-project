@@ -30,6 +30,7 @@ interface ScenarioGroupState {
 interface TestcaseWorkflowProps {
   projectId: string
   backendUrl: string
+  projectName?: string
 }
 
 type Step = 'feature' | 'scenarios'
@@ -49,11 +50,12 @@ interface FinalizeResponseRow {
 
 interface FinalizeResponsePayload {
   rows?: FinalizeResponseRow[]
+  fileId?: string
   fileName?: string
-  xlsxBase64?: string
+  modifiedTime?: string
 }
 
-export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProps) {
+export function TestcaseWorkflow({ projectId, backendUrl, projectName }: TestcaseWorkflowProps) {
   const [step, setStep] = useState<Step>('feature')
   const [projectOverview, setProjectOverview] = useState<string>('')
   const [featureStatus, setFeatureStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -347,47 +349,37 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
         throw new Error('생성된 테스트케이스가 없습니다.')
       }
 
-      const sessionData = {
-        projectId,
-        fileName:
-          typeof body.fileName === 'string' && body.fileName.trim().length > 0
-            ? body.fileName
-            : 'testcases.xlsx',
-        xlsxBase64: typeof body.xlsxBase64 === 'string' ? body.xlsxBase64 : '',
-        rows,
-        createdAt: Date.now(),
+      const fileId = typeof body.fileId === 'string' ? body.fileId.trim() : ''
+      if (!fileId) {
+        throw new Error('테스트케이스 파일 정보를 확인하지 못했습니다.')
       }
 
-      let sessionKey = ''
-      try {
-        sessionKey = `testcase-workflow-${projectId}-${Date.now()}`
-        if (typeof window !== 'undefined' && window.sessionStorage) {
-          window.sessionStorage.setItem(sessionKey, JSON.stringify(sessionData))
-        }
-      } catch (storageError) {
-        console.warn('테스트케이스 세션 정보를 저장하지 못했습니다.', storageError)
-        sessionKey = ''
+      const nextParams = new URLSearchParams(window.location.search)
+      if (projectName && projectName !== projectId && !nextParams.get('name')) {
+        nextParams.set('name', projectName)
+      }
+      nextParams.set('fileId', fileId)
+      if (typeof body.fileName === 'string' && body.fileName.trim().length > 0) {
+        nextParams.set('fileName', body.fileName.trim())
+      } else {
+        nextParams.delete('fileName')
+      }
+      if (typeof body.modifiedTime === 'string' && body.modifiedTime.trim().length > 0) {
+        nextParams.set('modifiedTime', body.modifiedTime.trim())
+      } else {
+        nextParams.delete('modifiedTime')
       }
 
-      if (!sessionKey) {
-        throw new Error('브라우저 저장소에 접근하지 못했습니다. 새 창이나 다른 브라우저에서 다시 시도해 주세요.')
-      }
-
-      const params = new URLSearchParams()
-      if (sessionKey) {
-        params.set('sessionKey', sessionKey)
-      }
+      const query = nextParams.toString()
       navigate(
-        `/projects/${encodeURIComponent(projectId)}/testcases/edit${
-          params.toString() ? `?${params.toString()}` : ''
-        }`,
+        `/projects/${encodeURIComponent(projectId)}/testcases/edit${query ? `?${query}` : ''}`,
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : '테스트케이스를 완성하지 못했습니다.'
       setFinalStatus('error')
       setFinalError(message)
     }
-  }, [backendUrl, groups, projectId, projectOverview])
+  }, [backendUrl, groups, projectId, projectOverview, projectName])
 
   return (
     <div className="testcase-workflow">
@@ -418,7 +410,7 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
       )}
 
       {step === 'scenarios' && (
-        <section className="t프로젝트 개요: estcase-workflow__section" aria-labelledby="testcase-scenario-step">
+        <section className="testcase-workflow__section" aria-labelledby="testcase-scenario-step">
           <h2 id="testcase-scenario-step" className="testcase-workflow__title">
             소분류별 테스트 시나리오 설계
           </h2>
@@ -430,9 +422,11 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
               <article key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`} className="testcase-workflow__card">
                 <div className="testcase-workflow__card-header">
                   <span className="testcase-workflow__card-title">
-                    {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory} {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
+                    {group.feature.majorCategory} / {group.feature.middleCategory} / {group.feature.minorCategory}
                   </span>
+                  <span className="testcase-workflow__card-subtitle">프로젝트 개요: {projectOverview || '미제공'}</span>
                 </div>
+                <p className="testcase-workflow__card-description">{group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}</p>
 
                 <div className="testcase-workflow__controls">
                   <label>

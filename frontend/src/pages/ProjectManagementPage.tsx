@@ -803,7 +803,11 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           </div>
 
           {isTestcaseWorkflow ? (
-            <TestcaseWorkflow backendUrl={backendUrl} projectId={projectId} />
+            <TestcaseWorkflow
+              backendUrl={backendUrl}
+              projectId={projectId}
+              projectName={projectName}
+            />
           ) : (
             <>
               {activeState.status !== 'success' && (

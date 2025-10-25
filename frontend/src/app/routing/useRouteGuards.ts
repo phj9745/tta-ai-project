@@ -5,6 +5,7 @@ import { navigate } from '../../navigation'
 
 const PROJECT_PATH_PATTERN = /^\/projects\/(.+)$/
 const FEATURE_LIST_EDIT_PATH_PATTERN = /^\/projects\/[^/]+\/feature-list\/edit$/
+const TESTCASE_EDIT_PATH_PATTERN = /^\/projects\/[^/]+\/testcases\/edit$/
 const PROJECTS_ROOT_PATH = '/projects'
 const LEGACY_DRIVE_PATH = '/drive'
 const ADMIN_PROMPTS_PATH = '/admin/prompts'
@@ -18,7 +19,11 @@ function isKnownPathname(pathname: string): boolean {
   ) {
     return true
   }
-  return PROJECT_PATH_PATTERN.test(pathname) || FEATURE_LIST_EDIT_PATH_PATTERN.test(pathname)
+  return (
+    PROJECT_PATH_PATTERN.test(pathname) ||
+    FEATURE_LIST_EDIT_PATH_PATTERN.test(pathname) ||
+    TESTCASE_EDIT_PATH_PATTERN.test(pathname)
+  )
 }
 
 export function useRouteGuards(pathname: string, authStatus: AuthStatus) {

@@ -19,7 +19,7 @@ from .templates import (
     SPREADSHEET_RULES,
     replace_placeholders,
 )
-from . import feature_lists, security_reports, templates
+from . import feature_lists, security_reports, templates, testcases
 from ..excel_templates.feature_list import extract_feature_list_overview
 
 logger = logging.getLogger(__name__)
@@ -246,6 +246,39 @@ class GoogleDriveService:
             project_overview=project_overview,
         )
 
+    async def get_testcase_rows(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="testcase-generation",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="테스트케이스 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        sheet_title, start_row, headers, extracted_rows = testcases.parse_testcase_workbook(
+            workbook_bytes
+        )
+
+        return testcases.prepare_testcase_response(
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            sheet_name=sheet_title,
+            start_row=start_row,
+            headers=headers,
+            rows=extracted_rows,
+            modified_time=resolved.modified_time,
+        )
+
     async def update_feature_list_rows(
         self,
         *,
@@ -296,6 +329,56 @@ class GoogleDriveService:
             "projectOverview": project_overview,
         }
 
+    async def update_testcase_rows(
+        self,
+        *,
+        project_id: str,
+        rows: Sequence[Dict[str, str]],
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="testcase-generation",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="테스트케이스 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        csv_text = testcases.build_testcase_rows_csv(rows)
+
+        try:
+            updated_bytes = resolved.rule["populate"](
+                workbook_bytes,
+                csv_text,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - safety net
+            logger.exception(
+                "Failed to update testcase spreadsheet",
+                extra={"project_id": project_id},
+            )
+            raise HTTPException(status_code=500, detail="테스트케이스를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._client.update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
     async def download_feature_list_workbook(
         self,
         *,
@@ -314,6 +397,27 @@ class GoogleDriveService:
         workbook_bytes = resolved.content
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="기능리스트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
+
+    async def download_testcase_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="testcase-generation",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="테스트케이스 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
         return resolved.file_name, workbook_bytes
 
