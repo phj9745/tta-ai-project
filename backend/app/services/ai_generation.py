@@ -56,6 +56,17 @@ class GeneratedCsv:
     project_overview: str | None = None
 
 
+TESTCASE_SCENARIO_SYSTEM_PROMPT = (
+    "당신은 소프트웨어 QA 테스터입니다. 제공된 기능 설명과 참고 이미지를 바탕으로 "
+    "실행 가능한 테스트 시나리오 후보를 정리합니다."
+)
+
+TESTCASE_FINALIZE_SYSTEM_PROMPT = (
+    "당신은 소프트웨어 QA 테스터입니다. 기능별로 정리된 시나리오 요약을 바탕으로 "
+    "테스트케이스 표를 완성합니다."
+)
+
+
 @dataclass
 class UploadContext:
     upload: BufferedUpload
@@ -642,6 +653,353 @@ class AIGenerationService:
         if fence_match:
             cleaned = fence_match.group(1).strip()
         return cleaned
+
+    @staticmethod
+    def _sanitize_json(text: str) -> str:
+        cleaned = text.strip()
+        fence_match = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
+        return cleaned
+
+    async def suggest_testcase_scenarios(
+        self,
+        *,
+        project_id: str,
+        major_category: str,
+        middle_category: str,
+        minor_category: str,
+        feature_description: str,
+        project_overview: str,
+        scenario_count: int,
+        attachments: Sequence[UploadFile],
+    ) -> List[Dict[str, str]]:
+        normalized_count = max(1, min(5, scenario_count))
+        buffered_uploads: List[BufferedUpload] = []
+        metadata_entries: List[Dict[str, Any]] = []
+
+        for index, upload in enumerate(attachments, start=1):
+            try:
+                content = await upload.read()
+            finally:
+                await upload.close()
+
+            name = upload.filename or f"attachment-{index}"
+            buffered_uploads.append(
+                BufferedUpload(
+                    name=name,
+                    content=content,
+                    content_type=upload.content_type,
+                )
+            )
+            metadata_entries.append(
+                {
+                    "label": f"{minor_category or '소분류'} 참고 자료 {index}",
+                    "role": "additional",
+                }
+            )
+
+        contexts: List[UploadContext] = [
+            UploadContext(upload=upload, metadata=metadata)
+            for upload, metadata in zip(buffered_uploads, metadata_entries)
+        ]
+
+        client = self._get_client()
+        uploaded_records: List[tuple[str, bool]] = []
+        attachments_payload: List[AttachmentMetadata] = []
+
+        try:
+            for context in contexts:
+                kind = self._attachment_kind(context.upload)
+                if kind == "image":
+                    attachments_payload.append(
+                        {
+                            "kind": "image",
+                            "image_url": self._image_data_url(context.upload),
+                        }
+                    )
+                else:
+                    file_id = await self._upload_openai_file(client, context)
+                    uploaded_records.append((file_id, False))
+                    attachments_payload.append({"kind": kind, "file_id": file_id})
+
+            feature_lines = [
+                f"대분류: {major_category or '-'}",
+                f"중분류: {middle_category or '-'}",
+                f"소분류: {minor_category or '-'}",
+            ]
+            description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
+            overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+
+            instructions = [
+                f"다음 기능에 대해 {normalized_count}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.",
+                "각 시나리오는 'scenario', 'input', 'expected' 키를 포함한 객체여야 합니다.",
+                "전체 응답은 {\"scenarios\": [...]} 형태의 JSON 한 개만 반환하세요.",
+                "시나리오는 구체적인 단계와 기대 결과를 포함해야 하며 중복을 피하세요.",
+            ]
+
+            user_prompt_parts = [
+                "프로젝트 개요:",
+                overview_text,
+                "",
+                "기능 분류:",
+                "\n".join(feature_lines),
+                "",
+                "기능 설명:",
+                description_text,
+                "",
+                "지시사항:",
+                "\n".join(f"- {line}" for line in instructions),
+            ]
+
+            user_prompt = "\n".join(part for part in user_prompt_parts if part is not None)
+
+            messages = [
+                OpenAIMessageBuilder.text_message("system", TESTCASE_SCENARIO_SYSTEM_PROMPT),
+                OpenAIMessageBuilder.text_message(
+                    "user",
+                    user_prompt,
+                    attachments=attachments_payload if attachments_payload else None,
+                ),
+            ]
+
+            normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+
+            try:
+                response = await asyncio.to_thread(
+                    client.responses.create,
+                    model=self._settings.openai_model,
+                    input=normalized_messages,
+                    temperature=0.2,
+                    top_p=0.9,
+                    max_output_tokens=800,
+                )
+            except RateLimitError as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "OpenAI 사용량 한도를 초과했습니다. "
+                        "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                        f" ({detail})"
+                    ),
+                ) from exc
+            except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                ) from exc
+            except Exception as exc:  # pragma: no cover - 안전망
+                logger.exception(
+                    "Unexpected error while requesting scenario suggestions",
+                    extra={"project_id": project_id},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="테스트 시나리오를 생성하는 중 예기치 않은 오류가 발생했습니다.",
+                ) from exc
+
+            response_text = self._extract_response_text(response) or ""
+            cleaned = self._sanitize_json(response_text)
+            try:
+                payload = json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+                ) from exc
+
+            scenarios_raw: Any
+            if isinstance(payload, dict):
+                scenarios_raw = payload.get("scenarios")
+            else:
+                scenarios_raw = payload
+
+            if not isinstance(scenarios_raw, Sequence):
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답에서 시나리오 목록을 찾을 수 없습니다.",
+                )
+
+            normalized: List[Dict[str, str]] = []
+            for entry in scenarios_raw:
+                if not isinstance(entry, Mapping):
+                    continue
+                scenario_text = str(entry.get("scenario") or "").strip()
+                input_text = str(entry.get("input") or "").strip()
+                expected_text = str(entry.get("expected") or "").strip()
+                if not scenario_text:
+                    continue
+                normalized.append(
+                    {
+                        "scenario": scenario_text,
+                        "input": input_text,
+                        "expected": expected_text,
+                    }
+                )
+
+            if not normalized:
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답에서 유효한 테스트 시나리오를 찾을 수 없습니다.",
+                )
+
+            return normalized
+        finally:
+            if uploaded_records:
+                await self._cleanup_openai_files(client, uploaded_records)
+
+    async def generate_testcases_from_scenarios(
+        self,
+        *,
+        project_id: str,
+        project_overview: str,
+        groups: Sequence[Mapping[str, Any]],
+    ) -> GeneratedCsv:
+        if not groups:
+            raise HTTPException(status_code=422, detail="생성할 시나리오가 제공되지 않았습니다.")
+
+        summary_blocks: List[str] = []
+        total_scenarios = 0
+
+        for group in groups:
+            if not isinstance(group, Mapping):
+                continue
+            major = str(group.get("majorCategory") or "").strip()
+            middle = str(group.get("middleCategory") or "").strip()
+            minor = str(group.get("minorCategory") or "").strip()
+            description = str(group.get("featureDescription") or "").strip()
+            scenarios = group.get("scenarios")
+            if not isinstance(scenarios, Sequence):
+                continue
+
+            scenario_lines: List[str] = []
+            for index, entry in enumerate(scenarios, start=1):
+                if not isinstance(entry, Mapping):
+                    continue
+                scenario_text = str(entry.get("scenario") or "").strip()
+                input_text = str(entry.get("input") or "").strip()
+                expected_text = str(entry.get("expected") or "").strip()
+                if not scenario_text:
+                    continue
+                total_scenarios += 1
+                scenario_lines.append(
+                    "\n".join(
+                        [
+                            f"{index}. 시나리오: {scenario_text}",
+                            f"   입력: {input_text or '-'}",
+                            f"   기대 출력: {expected_text or '-'}",
+                        ]
+                    )
+                )
+
+            if not scenario_lines:
+                continue
+
+            block_parts = [
+                f"대분류: {major or '-'}",
+                f"중분류: {middle or '-'}",
+                f"소분류: {minor or '-'}",
+            ]
+            if description:
+                block_parts.append(f"기능 설명: {description}")
+            block_parts.append("시나리오:")
+            block_parts.extend(scenario_lines)
+            summary_blocks.append("\n".join(block_parts))
+
+        if not summary_blocks or total_scenarios == 0:
+            raise HTTPException(status_code=422, detail="시나리오 요약이 비어 있습니다.")
+
+        summary_text = "\n\n".join(summary_blocks)
+        overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+        headers_text = ", ".join(TESTCASE_EXPECTED_HEADERS)
+
+        user_prompt_parts = [
+            "프로젝트 개요:",
+            overview_text,
+            "",
+            "기능별 시나리오 요약:",
+            summary_text,
+            "",
+            "작성 지침:",
+            "- 위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
+            f"- CSV 열은 {headers_text} 순서를 따릅니다.",
+            "- 각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고",
+            "  XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
+            "- '테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼",
+            "  간결하고 자연스러운 한 문장으로 작성하세요.",
+            "- '입력(사전조건 포함)' 열은 실제 예시값을 포함한 단계 번호 목록을 작성하고 각 단계는",
+            "  '1. ...' 형식으로 시작하며 줄바꿈으로 구분하세요.",
+            "- '기대 출력(사후조건 포함)' 열은 기대 결과를 한 문장으로 요약하고 안내 문구나 불필요한 설명을",
+            "  추가하지 마세요.",
+            "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
+            "- 여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
+            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 CSV 쉼표로 구분됩니다):",
+            "  TC-001-001, 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인, \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\", 기업이 정상적으로 생성됨, 미실행, ,",
+            "- CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
+        ]
+
+        user_prompt = "\n".join(user_prompt_parts)
+
+        client = self._get_client()
+        messages = [
+            OpenAIMessageBuilder.text_message("system", TESTCASE_FINALIZE_SYSTEM_PROMPT),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
+        normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=normalized_messages,
+                temperature=0.2,
+                top_p=0.9,
+                max_output_tokens=1800,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while finalising testcases",
+                extra={"project_id": project_id},
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="테스트케이스를 완성하는 중 예기치 않은 오류가 발생했습니다.",
+            ) from exc
+
+        response_text = self._extract_response_text(response) or ""
+        sanitized = self._sanitize_csv(response_text)
+        if not sanitized:
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+
+        encoded = sanitized.encode("utf-8-sig")
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
+        filename = f"{safe_project}_testcase_workflow_{timestamp}.csv"
+
+        return GeneratedCsv(
+            filename=filename,
+            content=encoded,
+            csv_text=sanitized,
+        )
 
     @staticmethod
     def _extract_feature_list_project_overview(
