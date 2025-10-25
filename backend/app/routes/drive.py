@@ -3,11 +3,14 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import base64
+import csv
+import io
 import json
 import re
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
 from urllib.parse import quote
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,10 +23,13 @@ from ..dependencies import (
 )
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
+from ..services.google_drive import feature_lists as drive_feature_lists
 from ..services.security_report import SecurityReportService
 from ..services.excel_templates import defect_report, testcases
+from ..services.excel_templates import feature_list as feature_list_templates
 from ..services.excel_templates.models import (
     DEFECT_REPORT_EXPECTED_HEADERS,
+    TESTCASE_EXPECTED_HEADERS,
     DefectReportImage,
 )
 
@@ -66,6 +72,69 @@ class FeatureListRowModel(BaseModel):
 class FeatureListUpdateRequest(BaseModel):
     rows: List[FeatureListRowModel] = Field(default_factory=list)
     project_overview: str = Field("", alias="projectOverview")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseFeatureListResponse(BaseModel):
+    file_name: str = Field("", alias="fileName")
+    project_overview: str = Field("", alias="projectOverview")
+    rows: List[FeatureListRowModel] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseScenarioModel(BaseModel):
+    scenario: str = Field("", description="테스트 시나리오 요약")
+    input: str = Field("", description="입력 또는 사전조건")
+    expected: str = Field("", description="기대 출력 또는 사후조건")
+
+
+class TestcaseScenarioGroup(BaseModel):
+    major_category: str = Field("", alias="majorCategory")
+    middle_category: str = Field("", alias="middleCategory")
+    minor_category: str = Field("", alias="minorCategory")
+    feature_description: str = Field("", alias="featureDescription")
+    scenarios: List[TestcaseScenarioModel] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseScenarioResponse(BaseModel):
+    scenarios: List[TestcaseScenarioModel] = Field(default_factory=list)
+
+
+class TestcaseFinalizeRowModel(BaseModel):
+    major_category: str = Field("", alias="majorCategory")
+    middle_category: str = Field("", alias="middleCategory")
+    minor_category: str = Field("", alias="minorCategory")
+    testcase_id: str = Field("", alias="testcaseId")
+    scenario: str = Field("", alias="scenario")
+    input: str = Field("", alias="input")
+    expected: str = Field("", alias="expected")
+    result: str = Field("", alias="result")
+    detail: str = Field("", alias="detail")
+    note: str = Field("", alias="note")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseFinalizeRequest(BaseModel):
+    project_overview: str | None = Field(None, alias="projectOverview")
+    groups: List[TestcaseScenarioGroup] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TestcaseFinalizeResponse(BaseModel):
+    csv_text: str = Field(..., alias="csvText")
+    file_name: str = Field(..., alias="fileName")
+    rows: List[TestcaseFinalizeRowModel]
+    xlsx_base64: str = Field(..., alias="xlsxBase64")
+
+
+class TestcaseExportRequest(BaseModel):
+    rows: List[TestcaseFinalizeRowModel]
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -561,6 +630,242 @@ async def download_feature_list(
     }
     return StreamingResponse(
         io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+async def _read_upload_bytes(upload: UploadFile) -> bytes:
+    try:
+        return await upload.read()
+    finally:
+        await upload.close()
+
+
+def _normalize_feature_list_records(rows: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    for entry in rows:
+        normalized.append(
+            {
+                "majorCategory": str(entry.get("majorCategory", "") or "").strip(),
+                "middleCategory": str(entry.get("middleCategory", "") or "").strip(),
+                "minorCategory": str(entry.get("minorCategory", "") or "").strip(),
+                "featureDescription": str(entry.get("featureDescription", "") or "").strip(),
+            }
+        )
+    return normalized
+
+
+def _csv_from_testcase_rows(rows: Sequence[TestcaseFinalizeRowModel]) -> str:
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(TESTCASE_EXPECTED_HEADERS), lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(
+            {
+                "대분류": row.major_category,
+                "중분류": row.middle_category,
+                "소분류": row.minor_category,
+                "테스트 케이스 ID": row.testcase_id,
+                "테스트 시나리오": row.scenario,
+                "입력(사전조건 포함)": row.input,
+                "기대 출력(사후조건 포함)": row.expected,
+                "테스트 결과": row.result,
+                "상세 테스트 결과": row.detail,
+                "비고": row.note,
+            }
+        )
+    return buffer.getvalue()
+
+
+def _decode_feature_list_csv(content: bytes) -> List[Dict[str, str]]:
+    text = _decode_text(content)
+    records = feature_list_templates.normalize_feature_list_records(text)
+    normalized: List[Dict[str, str]] = []
+    for record in records:
+        normalized.append(
+            {
+                "majorCategory": record.get("대분류", ""),
+                "middleCategory": record.get("중분류", ""),
+                "minorCategory": record.get("소분류", ""),
+                "featureDescription": record.get("기능 설명", ""),
+            }
+        )
+    return normalized
+
+
+@router.post("/drive/projects/{project_id}/testcases/workflow/feature-list")
+async def prepare_testcase_feature_list(
+    project_id: str,
+    feature_list_file: UploadFile = File(
+        ..., description="테스트케이스 생성을 위한 기능리스트 파일"
+    ),
+) -> TestcaseFeatureListResponse:
+    filename = feature_list_file.filename or "feature-list"
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    content = await _read_upload_bytes(feature_list_file)
+
+    rows: List[Dict[str, str]] = []
+    project_overview = ""
+
+    if extension in {"xlsx", "xlsm"}:
+        try:
+            _, _, _, parsed_rows = drive_feature_lists.parse_feature_list_workbook(content)
+            rows = _normalize_feature_list_records(parsed_rows)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(
+                status_code=422,
+                detail="기능리스트 엑셀 파일을 해석하는 중 오류가 발생했습니다.",
+            ) from exc
+
+        try:
+            _, project_overview = feature_list_templates.extract_feature_list_overview(content)
+        except Exception:  # pragma: no cover - 개요 추출 실패는 무시
+            project_overview = ""
+    else:
+        rows = _normalize_feature_list_records(_decode_feature_list_csv(content))
+
+    if not rows:
+        raise HTTPException(status_code=422, detail="기능리스트에서 항목을 찾을 수 없습니다.")
+
+    response = TestcaseFeatureListResponse(
+        fileName=filename,
+        projectOverview=project_overview or "",
+        rows=[FeatureListRowModel(**row) for row in rows],
+    )
+    return response
+
+
+@router.post("/drive/projects/{project_id}/testcases/workflow/scenarios")
+async def generate_testcase_scenarios(
+    project_id: str,
+    major_category: str = Form(..., description="테스트케이스 대분류"),
+    middle_category: str = Form(..., description="테스트케이스 중분류"),
+    minor_category: str = Form(..., description="테스트케이스 소분류"),
+    feature_description: str = Form("", description="기능 설명"),
+    project_overview: str = Form("", description="프로젝트 개요"),
+    scenario_count: int = Form(3, description="생성할 시나리오 수(3~5)"),
+    attachments: Optional[List[UploadFile]] = File(
+        None, description="소분류 관련 참고 이미지"
+    ),
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> TestcaseScenarioResponse:
+    normalized_count = max(3, min(5, scenario_count))
+    uploads = attachments or []
+
+    suggestions = await ai_generation_service.suggest_testcase_scenarios(
+        project_id=project_id,
+        major_category=major_category,
+        middle_category=middle_category,
+        minor_category=minor_category,
+        feature_description=feature_description,
+        project_overview=project_overview,
+        scenario_count=normalized_count,
+        attachments=uploads,
+    )
+
+    return TestcaseScenarioResponse(
+        scenarios=[TestcaseScenarioModel(**entry) for entry in suggestions]
+    )
+
+
+@router.post("/drive/projects/{project_id}/testcases/workflow/finalize")
+async def finalize_testcases(
+    project_id: str,
+    payload: TestcaseFinalizeRequest,
+    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+) -> TestcaseFinalizeResponse:
+    if not payload.groups:
+        raise HTTPException(status_code=422, detail="시나리오 정보가 없습니다.")
+
+    normalized_groups = [group.model_dump(by_alias=True) for group in payload.groups]
+
+    result = await ai_generation_service.generate_testcases_from_scenarios(
+        project_id=project_id,
+        project_overview=payload.project_overview or "",
+        groups=normalized_groups,
+    )
+
+    csv_text = result.csv_text
+    if not csv_text:
+        raise HTTPException(status_code=502, detail="생성된 테스트케이스 CSV가 비어 있습니다.")
+
+    try:
+        template_bytes = _TESTCASE_TEMPLATE.read_bytes()
+    except FileNotFoundError as exc:  # pragma: no cover - 방어
+        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 찾을 수 없습니다.") from exc
+    except OSError as exc:  # pragma: no cover - 방어
+        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 읽는 중 오류가 발생했습니다.") from exc
+
+    try:
+        workbook_bytes = testcases.populate_testcase_list(template_bytes, csv_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    reader = csv.DictReader(io.StringIO(csv_text))
+    rows: List[TestcaseFinalizeRowModel] = []
+    for entry in reader:
+        rows.append(
+            TestcaseFinalizeRowModel(
+                majorCategory=entry.get("대분류", "") or "",
+                middleCategory=entry.get("중분류", "") or "",
+                minorCategory=entry.get("소분류", "") or "",
+                testcaseId=entry.get("테스트 케이스 ID", "") or "",
+                scenario=entry.get("테스트 시나리오", "") or "",
+                input=entry.get("입력(사전조건 포함)", "") or "",
+                expected=entry.get("기대 출력(사후조건 포함)", "") or "",
+                result=entry.get("테스트 결과", "") or "",
+                detail=entry.get("상세 테스트 결과", "") or "",
+                note=entry.get("비고", "") or "",
+            )
+        )
+
+    if not rows:
+        raise HTTPException(status_code=502, detail="생성된 테스트케이스 행을 찾을 수 없습니다.")
+
+    workbook_base64 = base64.b64encode(workbook_bytes).decode("ascii")
+    xlsx_name = Path(result.filename).stem + ".xlsx"
+
+    return TestcaseFinalizeResponse(
+        csvText=csv_text,
+        fileName=xlsx_name,
+        rows=rows,
+        xlsxBase64=workbook_base64,
+    )
+
+
+@router.post("/drive/projects/{project_id}/testcases/workflow/export")
+async def export_testcases(
+    project_id: str,
+    payload: TestcaseExportRequest,
+) -> StreamingResponse:
+    if not payload.rows:
+        raise HTTPException(status_code=422, detail="내보낼 테스트케이스 행이 없습니다.")
+
+    csv_text = _csv_from_testcase_rows(payload.rows)
+
+    try:
+        template_bytes = _TESTCASE_TEMPLATE.read_bytes()
+    except FileNotFoundError as exc:  # pragma: no cover - 방어
+        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 찾을 수 없습니다.") from exc
+    except OSError as exc:  # pragma: no cover - 방어
+        raise HTTPException(status_code=500, detail="테스트케이스 템플릿을 읽는 중 오류가 발생했습니다.") from exc
+
+    try:
+        workbook_bytes = testcases.populate_testcase_list(template_bytes, csv_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    filename = f"{project_id}_testcases.xlsx"
+    headers = {
+        "Content-Disposition": _build_attachment_header(filename, default_filename="testcases.xlsx"),
+        "Cache-Control": "no-store",
+    }
+
+    return StreamingResponse(
+        io.BytesIO(workbook_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers,
     )
