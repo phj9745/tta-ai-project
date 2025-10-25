@@ -8,8 +8,9 @@ import csv
 import io
 import json
 import re
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, TypedDict
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, TypedDict
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response
@@ -678,6 +679,15 @@ def _csv_from_testcase_rows(rows: Sequence[TestcaseFinalizeRowModel]) -> str:
     return buffer.getvalue()
 
 
+def _strip_label_prefix(value: str, label: str) -> str:
+    if not value:
+        return ""
+
+    pattern = rf"^\s*{re.escape(label)}\s*[:：-]?\s*"
+    stripped = re.sub(pattern, "", value, count=1)
+    return stripped.strip()
+
+
 def _decode_feature_list_csv(content: bytes) -> List[Dict[str, str]]:
     text = _decode_text(content)
     records = feature_list_templates.normalize_feature_list_records(text)
@@ -775,22 +785,77 @@ async def generate_testcase_scenarios(
 async def finalize_testcases(
     project_id: str,
     payload: TestcaseFinalizeRequest,
-    ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
 ) -> TestcaseFinalizeResponse:
     if not payload.groups:
         raise HTTPException(status_code=422, detail="시나리오 정보가 없습니다.")
 
     normalized_groups = [group.model_dump(by_alias=True) for group in payload.groups]
 
-    result = await ai_generation_service.generate_testcases_from_scenarios(
-        project_id=project_id,
-        project_overview=payload.project_overview or "",
-        groups=normalized_groups,
-    )
+    rows: List[TestcaseFinalizeRowModel] = []
+    group_index = 0
 
-    csv_text = result.csv_text
-    if not csv_text:
-        raise HTTPException(status_code=502, detail="생성된 테스트케이스 CSV가 비어 있습니다.")
+    for group in normalized_groups:
+        major = str(group.get("majorCategory") or "").strip()
+        middle = str(group.get("middleCategory") or "").strip()
+        minor = str(group.get("minorCategory") or "").strip()
+        scenarios = group.get("scenarios")
+        if not isinstance(scenarios, Sequence):
+            continue
+
+        normalized_entries: List[tuple[str, str, str]] = []
+        for entry in scenarios:
+            if not isinstance(entry, Mapping):
+                continue
+            scenario_text = str(
+                entry.get("테스트 시나리오")
+                or entry.get("scenario")
+                or ""
+            ).strip()
+            input_text = str(
+                entry.get("입력(사전조건 포함)")
+                or entry.get("input")
+                or ""
+            ).strip()
+            expected_text = str(
+                entry.get("기대 출력(사후조건 포함)")
+                or entry.get("expected")
+                or ""
+            ).strip()
+
+            if not (scenario_text or input_text or expected_text):
+                continue
+
+            normalized_entries.append((scenario_text, input_text, expected_text))
+
+        if not normalized_entries:
+            continue
+
+        group_index += 1
+
+        for scenario_index, (scenario_text, input_text, expected_text) in enumerate(
+            normalized_entries, start=1
+        ):
+            testcase_id = f"TC-{group_index:03d}-{scenario_index:03d}"
+
+            rows.append(
+                TestcaseFinalizeRowModel(
+                    major_category=major,
+                    middle_category=middle,
+                    minor_category=minor,
+                    testcase_id=testcase_id,
+                    scenario=_strip_label_prefix(scenario_text, "테스트 시나리오"),
+                    input=_strip_label_prefix(input_text, "입력(사전조건 포함)"),
+                    expected=_strip_label_prefix(expected_text, "기대 출력(사후조건 포함)"),
+                    result="P",
+                    detail="",
+                    note="",
+                )
+            )
+
+    if not rows:
+        raise HTTPException(status_code=422, detail="생성된 테스트케이스 행을 찾을 수 없습니다.")
+
+    csv_text = _csv_from_testcase_rows(rows)
 
     try:
         template_bytes = _TESTCASE_TEMPLATE.read_bytes()
@@ -804,29 +869,12 @@ async def finalize_testcases(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    reader = csv.DictReader(io.StringIO(csv_text))
-    rows: List[TestcaseFinalizeRowModel] = []
-    for entry in reader:
-        rows.append(
-            TestcaseFinalizeRowModel(
-                majorCategory=entry.get("대분류", "") or "",
-                middleCategory=entry.get("중분류", "") or "",
-                minorCategory=entry.get("소분류", "") or "",
-                testcaseId=entry.get("테스트 케이스 ID", "") or "",
-                scenario=entry.get("테스트 시나리오", "") or "",
-                input=entry.get("입력(사전조건 포함)", "") or "",
-                expected=entry.get("기대 출력(사후조건 포함)", "") or "",
-                result=entry.get("테스트 결과", "") or "",
-                detail=entry.get("상세 테스트 결과", "") or "",
-                note=entry.get("비고", "") or "",
-            )
-        )
-
-    if not rows:
-        raise HTTPException(status_code=502, detail="생성된 테스트케이스 행을 찾을 수 없습니다.")
-
     workbook_base64 = base64.b64encode(workbook_bytes).decode("ascii")
-    xlsx_name = Path(result.filename).stem + ".xlsx"
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
+    file_stem = f"{safe_project}_testcase_workflow_{timestamp}"
+    xlsx_name = f"{file_stem}.xlsx"
 
     return TestcaseFinalizeResponse(
         csvText=csv_text,

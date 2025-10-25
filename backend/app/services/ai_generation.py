@@ -734,9 +734,12 @@ class AIGenerationService:
 
             instructions = [
                 f"다음 기능에 대해 {normalized_count}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.",
-                "각 시나리오는 'scenario', 'input', 'expected' 키를 포함한 객체여야 합니다.",
-                "전체 응답은 {\"scenarios\": [...]} 형태의 JSON 한 개만 반환하세요.",
-                "시나리오는 구체적인 단계와 기대 결과를 포함해야 하며 중복을 피하세요.",
+                "각 시나리오는 '테스트 시나리오', '입력(사전조건 포함)', '기대 출력(사후조건 포함)' 키를 포함한 객체여야 합니다.",
+                "전체 응답은 {\"scenarios\": [...]} 형태의 JSON 한 개만 반환하고 JSON 외 텍스트는 추가하지 마세요.",
+                "'테스트 시나리오' 값은 테스트 목적을 한 문장으로 명확하게 설명해야 합니다.",
+                "'입력(사전조건 포함)' 값은 실제 예시 데이터를 포함한 단계 번호 목록을 '1. ...' 형식으로 작성하고 줄바꿈으로 구분하세요.",
+                "'기대 출력(사후조건 포함)' 값은 기대되는 시스템 반응을 한 문장으로 요약하세요.",
+                "중복되거나 의미가 겹치는 시나리오는 피하세요.",
             ]
 
             user_prompt_parts = [
@@ -827,9 +830,21 @@ class AIGenerationService:
             for entry in scenarios_raw:
                 if not isinstance(entry, Mapping):
                     continue
-                scenario_text = str(entry.get("scenario") or "").strip()
-                input_text = str(entry.get("input") or "").strip()
-                expected_text = str(entry.get("expected") or "").strip()
+                scenario_text = str(
+                    entry.get("테스트 시나리오")
+                    or entry.get("scenario")
+                    or ""
+                ).strip()
+                input_text = str(
+                    entry.get("입력(사전조건 포함)")
+                    or entry.get("input")
+                    or ""
+                ).strip()
+                expected_text = str(
+                    entry.get("기대 출력(사후조건 포함)")
+                    or entry.get("expected")
+                    or ""
+                ).strip()
                 if not scenario_text:
                     continue
                 normalized.append(
