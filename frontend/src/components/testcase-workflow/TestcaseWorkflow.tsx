@@ -418,7 +418,7 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
       )}
 
       {step === 'scenarios' && (
-        <section className="testcase-workflow__section" aria-labelledby="testcase-scenario-step">
+        <section className="t프로젝트 개요: estcase-workflow__section" aria-labelledby="testcase-scenario-step">
           <h2 id="testcase-scenario-step" className="testcase-workflow__title">
             소분류별 테스트 시나리오 설계
           </h2>
@@ -430,11 +430,9 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
               <article key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`} className="testcase-workflow__card">
                 <div className="testcase-workflow__card-header">
                   <span className="testcase-workflow__card-title">
-                    {group.feature.majorCategory} / {group.feature.middleCategory} / {group.feature.minorCategory}
+                    {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory} {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
                   </span>
-                  <span className="testcase-workflow__card-subtitle">프로젝트 개요: {projectOverview || '미제공'}</span>
                 </div>
-                <p className="testcase-workflow__card-description">{group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}</p>
 
                 <div className="testcase-workflow__controls">
                   <label>
