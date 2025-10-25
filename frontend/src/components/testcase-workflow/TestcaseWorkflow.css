@@ -1,0 +1,231 @@
+.testcase-workflow {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.testcase-workflow__section {
+  background: #ffffff;
+  border: 1px solid #e3e8ef;
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.testcase-workflow__section + .testcase-workflow__section {
+  margin-top: 0.5rem;
+}
+
+.testcase-workflow__title {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.testcase-workflow__helper {
+  margin: 0 0 1rem;
+  color: #4d5f78;
+  line-height: 1.5;
+}
+
+.testcase-workflow__uploader {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.testcase-workflow__status {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.testcase-workflow__status--error {
+  background: #ffe8e5;
+  color: #b42318;
+}
+
+.testcase-workflow__status--success {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.testcase-workflow__status--loading {
+  background: #f4f8ff;
+  color: #194185;
+}
+
+.testcase-workflow__feature-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.testcase-workflow__card {
+  border: 1px solid #d7dce5;
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+  background: #f9fbff;
+}
+
+.testcase-workflow__card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.testcase-workflow__card-title {
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: #0f172a;
+}
+
+.testcase-workflow__card-subtitle {
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.testcase-workflow__card-description {
+  color: #475569;
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.testcase-workflow__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  align-items: center;
+}
+
+.testcase-workflow__input,
+.testcase-workflow__select,
+.testcase-workflow__textarea {
+  width: 100%;
+  font-size: 0.95rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #cbd5f5;
+  background: #ffffff;
+}
+
+.testcase-workflow__select {
+  width: auto;
+}
+
+.testcase-workflow__textarea {
+  min-height: 3.5rem;
+  resize: vertical;
+}
+
+.testcase-workflow__button {
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+  padding: 0.6rem 1.2rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.testcase-workflow__button:hover:not(:disabled),
+.testcase-workflow__button:focus-visible:not(:disabled) {
+  background: #1e40af;
+}
+
+.testcase-workflow__button:disabled {
+  background: #93c5fd;
+  cursor: not-allowed;
+}
+
+.testcase-workflow__secondary {
+  background: transparent;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
+}
+
+.testcase-workflow__secondary:hover:not(:disabled),
+.testcase-workflow__secondary:focus-visible:not(:disabled) {
+  background: #e0f2fe;
+}
+
+.testcase-workflow__scenario-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.testcase-workflow__scenario {
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  padding: 0.75rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.testcase-workflow__scenario-fields {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.testcase-workflow__scenario-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.testcase-workflow__step-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.testcase-workflow__summary {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.testcase-workflow__table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 960px;
+}
+
+.testcase-workflow__table th,
+.testcase-workflow__table td {
+  border: 1px solid #d8dee9;
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.testcase-workflow__table th {
+  background: #f1f5f9;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.testcase-workflow__empty {
+  padding: 1rem;
+  border: 1px dashed #cbd5f5;
+  border-radius: 10px;
+  text-align: center;
+  color: #64748b;
+}
+
+@media (max-width: 768px) {
+  .testcase-workflow__table {
+    min-width: 720px;
+  }
+}
