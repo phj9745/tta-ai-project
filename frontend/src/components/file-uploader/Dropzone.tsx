@@ -12,13 +12,46 @@ export function Dropzone({
   onDragOver,
   onDragLeave,
   onDrop,
+  onPaste,
+  enableDragAndDrop,
+  allowPaste,
 }: DropzoneProps) {
   if (!shouldRender) {
     return null
   }
 
+  const helperText = enableDragAndDrop
+    ? '이미지를 클릭해서 추가하거나 드래그 앤 드롭하세요.'
+    : allowPaste
+      ? '이미지를 클릭해서 추가하거나 붙여넣기(Ctrl+V)를 사용하세요.'
+      : '이미지를 클릭해서 추가하세요.'
+
+  const prompt = enableDragAndDrop ? (
+    <>
+      <div className="file-uploader__prompt">
+        <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
+      </div>
+      <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+    </>
+  ) : (
+    <>
+      <div className="file-uploader__prompt">
+        {allowPaste
+          ? '파일을 클릭해서 선택하거나 붙여넣기(Ctrl+V)로 추가하세요.'
+          : '파일을 클릭해서 선택하세요.'}
+      </div>
+      <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
+    </>
+  )
+
   return (
-    <label className={className} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <label
+      className={className}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onPaste={onPaste}
+    >
       <input type="file" className="file-uploader__input" {...inputProps} />
       {shouldRenderCompactPreview && files.length > 0 ? (
         <>
@@ -46,17 +79,10 @@ export function Dropzone({
               </div>
             ))}
           </div>
-          <div className="file-uploader__preview-helper" aria-hidden="true">
-            이미지를 클릭해서 추가하거나 드래그 앤 드롭하세요.
-          </div>
+          <div className="file-uploader__preview-helper" aria-hidden="true">{helperText}</div>
         </>
       ) : (
-        <>
-          <div className="file-uploader__prompt">
-            <strong>파일을 드래그 앤 드롭</strong>하거나 클릭해서 선택하세요.
-          </div>
-          <div className="file-uploader__help">허용된 형식: {allowedLabels}</div>
-        </>
+        prompt
       )}
     </label>
   )
