@@ -3,6 +3,8 @@ import './TestcaseWorkflow.css'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { navigate } from '../../navigation'
+import { FileUploader } from '../FileUploader'
+import type { FileType } from '../fileUploaderTypes'
 
 interface FeatureRow {
   majorCategory: string
@@ -35,6 +37,10 @@ interface TestcaseWorkflowProps {
 
 type Step = 'feature' | 'scenarios'
 
+const FEATURE_FILE_TYPES: FileType[] = ['xlsx', 'xls', 'csv']
+const ATTACHMENT_FILE_TYPES: FileType[] = ['jpg', 'png']
+const SCENARIO_COUNT_OPTIONS = [3, 4, 5] as const
+
 interface FinalizeResponseRow {
   majorCategory: string
   middleCategory: string
@@ -60,6 +66,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
   const [projectOverview, setProjectOverview] = useState<string>('')
   const [featureStatus, setFeatureStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [featureError, setFeatureError] = useState<string | null>(null)
+  const [featureFiles, setFeatureFiles] = useState<File[]>([])
   const [groups, setGroups] = useState<ScenarioGroupState[]>([])
   const [finalStatus, setFinalStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [finalError, setFinalError] = useState<string | null>(null)
@@ -125,16 +132,24 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     [backendUrl, projectId],
   )
 
-  const handleUpdateGroupFiles = useCallback((index: number, files: FileList | null) => {
+  const handleSelectFeatureFiles = useCallback(
+    (files: File[]) => {
+      const [nextFile] = files
+      setFeatureFiles(nextFile ? [nextFile] : [])
+      void handleUploadFeatureList(nextFile ?? null)
+    },
+    [handleUploadFeatureList],
+  )
+
+  const handleSetGroupFiles = useCallback((index: number, files: File[]) => {
     setGroups((prev) => {
       if (index < 0 || index >= prev.length) {
         return prev
       }
-      const nextFiles = files ? Array.from(files) : []
       const nextGroups = [...prev]
       nextGroups[index] = {
         ...prev[index],
-        files: nextFiles,
+        files,
       }
       return nextGroups
     })
@@ -391,12 +406,19 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           <p className="testcase-workflow__helper">
             테스트케이스를 작성할 기능리스트 파일을 업로드하세요. AI가 대분류/중분류/소분류 정보를 추출해 다음 단계에서 활용합니다.
           </p>
-          <div className="testcase-workflow__uploader">
-            <input
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={(event) => handleUploadFeatureList(event.target.files?.[0] ?? null)}
+          <div className="testcase-workflow__upload" aria-live="polite">
+            <FileUploader
+              allowedTypes={FEATURE_FILE_TYPES}
+              files={featureFiles}
+              onChange={handleSelectFeatureFiles}
+              disabled={featureStatus === 'loading'}
+              multiple={false}
+              hideDropzoneWhenFilled
+              maxFiles={1}
             />
+            <p className="testcase-workflow__upload-helper">
+              XLSX, XLS, CSV 형식의 기능리스트를 드래그 앤 드롭하거나 클릭해서 선택하세요. 업로드된 내용은 자동으로 소분류별로 분류됩니다.
+            </p>
             {featureStatus === 'loading' && (
               <div className="testcase-workflow__status testcase-workflow__status--loading">
                 기능리스트를 분석하고 있습니다…
@@ -409,6 +431,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
         </section>
       )}
 
+
       {step === 'scenarios' && (
         <section className="testcase-workflow__section" aria-labelledby="testcase-scenario-step">
           <h2 id="testcase-scenario-step" className="testcase-workflow__title">
@@ -417,116 +440,148 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           <p className="testcase-workflow__helper">
             각 소분류에 대한 참고 이미지를 첨부하고 테스트 시나리오를 생성하세요. AI는 기능 설명과 프로젝트 개요를 함께 참고합니다.
           </p>
+          {projectOverview && (
+            <aside className="testcase-workflow__overview" aria-label="프로젝트 개요">
+              <h3 className="testcase-workflow__overview-title">프로젝트 개요</h3>
+              <p className="testcase-workflow__overview-description">{projectOverview}</p>
+            </aside>
+          )}
           <div className="testcase-workflow__feature-list">
             {groups.map((group, index) => (
-              <article key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`} className="testcase-workflow__card">
-                <div className="testcase-workflow__card-header">
-                  <span className="testcase-workflow__card-title">
-                    {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory} | {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
-                  </span>          
-                </div>
-
-
-                <div className="testcase-workflow__controls">
-                  <label>
-                    <span>참고 이미지 첨부</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      onChange={(event) => handleUpdateGroupFiles(index, event.target.files)}
-                    />
-                  </label>
-                  <label>
-                    <span>시나리오 수</span>
-                    <select
-                      className="testcase-workflow__select"
-                      value={group.scenarioCount}
-                      onChange={(event) => handleChangeScenarioCount(index, Number(event.target.value))}
-                    >
-                      {[3, 4, 5].map((count) => (
-                        <option key={count} value={count}>
-                          {count}개
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    type="button"
-                    className="testcase-workflow__button"
-                    onClick={() => handleGenerateScenarios(index)}
-                    disabled={group.status === 'loading'}
-                  >
-                    {group.status === 'loading' ? '생성 중…' : '시나리오 생성'}
-                  </button>
-                  <button
-                    type="button"
-                    className="testcase-workflow__secondary testcase-workflow__button"
-                    onClick={() => handleAddScenario(index)}
-                  >
-                    시나리오 직접 추가
-                  </button>
-                </div>
-
-                {group.files.length > 0 && (
-                  <div className="testcase-workflow__helper">
-                    첨부된 파일: {group.files.map((file) => file.name).join(', ')}
+              <article
+                key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`}
+                className="testcase-workflow__card"
+              >
+                <header className="testcase-workflow__card-header">
+                  <div className="testcase-workflow__card-header-main">
+                    <span className="testcase-workflow__card-badge">소분류 {index + 1}</span>
+                    <h3 className="testcase-workflow__card-title">
+                      {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory}
+                    </h3>
+                    <p className="testcase-workflow__card-subtitle">
+                      {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
+                    </p>
                   </div>
-                )}
+                  <div className="testcase-workflow__card-meta" aria-live="polite">
+                    <span className="testcase-workflow__card-meta-count">
+                      생성된 시나리오 {group.scenarios.length}개
+                    </span>
+                  </div>
+                </header>
 
-                {group.status === 'error' && group.error && (
-                  <div className="testcase-workflow__status testcase-workflow__status--error">{group.error}</div>
-                )}
-
-                {group.scenarios.length > 0 && (
-                  <div className="testcase-workflow__scenario-list">
-                    {group.scenarios.map((scenario) => (
-                      <div key={scenario.id} className="testcase-workflow__scenario">
-                        <div className="testcase-workflow__scenario-fields">
-                          <label>
-                            <span>테스트 시나리오</span>
-                            <textarea
-                              className="testcase-workflow__textarea"
-                              value={scenario.scenario}
-                              onChange={(event) =>
-                                handleUpdateScenarioField(index, scenario.id, 'scenario', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span>입력(사전조건 포함)</span>
-                            <textarea
-                              className="testcase-workflow__textarea"
-                              value={scenario.input}
-                              onChange={(event) =>
-                                handleUpdateScenarioField(index, scenario.id, 'input', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span>기대 출력(사후조건 포함)</span>
-                            <textarea
-                              className="testcase-workflow__textarea"
-                              value={scenario.expected}
-                              onChange={(event) =>
-                                handleUpdateScenarioField(index, scenario.id, 'expected', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-                        <div className="testcase-workflow__scenario-actions">
-                          <button
-                            type="button"
-                            className="testcase-workflow__secondary testcase-workflow__button"
-                            onClick={() => handleRemoveScenario(index, scenario.id)}
-                          >
-                            시나리오 제거
-                          </button>
-                        </div>
+                <div className="testcase-workflow__card-body">
+                  <div className="testcase-workflow__card-grid">
+                    <div className="testcase-workflow__attachments">
+                      <h4 className="testcase-workflow__attachments-title">참고 이미지</h4>
+                      <p className="testcase-workflow__attachments-helper">
+                        테스트 화면, 설계서 캡처 등 시나리오 작성에 도움이 되는 이미지를 추가하세요.
+                      </p>
+                      <FileUploader
+                        allowedTypes={ATTACHMENT_FILE_TYPES}
+                        files={group.files}
+                        onChange={(nextFiles) => handleSetGroupFiles(index, nextFiles)}
+                        disabled={group.status === 'loading'}
+                        variant="grid"
+                      />
+                    </div>
+                    <div className="testcase-workflow__card-actions" aria-live="polite">
+                      <label className="testcase-workflow__field">
+                        <span>시나리오 수</span>
+                        <select
+                          className="testcase-workflow__select"
+                          value={group.scenarioCount}
+                          onChange={(event) => handleChangeScenarioCount(index, Number(event.target.value))}
+                        >
+                          {SCENARIO_COUNT_OPTIONS.map((count) => (
+                            <option key={count} value={count}>
+                              {count}개
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="testcase-workflow__action-buttons">
+                        <button
+                          type="button"
+                          className="testcase-workflow__button"
+                          onClick={() => handleGenerateScenarios(index)}
+                          disabled={group.status === 'loading'}
+                        >
+                          {group.status === 'loading' ? '생성 중…' : '시나리오 생성'}
+                        </button>
+                        <button
+                          type="button"
+                          className="testcase-workflow__secondary testcase-workflow__button"
+                          onClick={() => handleAddScenario(index)}
+                        >
+                          시나리오 직접 추가
+                        </button>
                       </div>
-                    ))}
+                      {group.status === 'loading' && (
+                        <p className="testcase-workflow__status testcase-workflow__status--loading">
+                          시나리오를 생성하고 있습니다…
+                        </p>
+                      )}
+                      {group.status === 'success' && group.scenarios.length > 0 && (
+                        <p className="testcase-workflow__status testcase-workflow__status--success">
+                          시나리오 {group.scenarios.length}개가 생성되었습니다.
+                        </p>
+                      )}
+                      {group.status === 'error' && group.error && (
+                        <p className="testcase-workflow__status testcase-workflow__status--error">{group.error}</p>
+                      )}
+                    </div>
                   </div>
-                )}
+
+                  {group.scenarios.length > 0 && (
+                    <div className="testcase-workflow__scenario-list">
+                      {group.scenarios.map((scenario) => (
+                        <div key={scenario.id} className="testcase-workflow__scenario">
+                          <div className="testcase-workflow__scenario-fields">
+                            <label>
+                              <span>테스트 시나리오</span>
+                              <textarea
+                                className="testcase-workflow__textarea"
+                                value={scenario.scenario}
+                                onChange={(event) =>
+                                  handleUpdateScenarioField(index, scenario.id, 'scenario', event.target.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>입력(사전조건 포함)</span>
+                              <textarea
+                                className="testcase-workflow__textarea"
+                                value={scenario.input}
+                                onChange={(event) =>
+                                  handleUpdateScenarioField(index, scenario.id, 'input', event.target.value)
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span>기대 출력(사후조건 포함)</span>
+                              <textarea
+                                className="testcase-workflow__textarea"
+                                value={scenario.expected}
+                                onChange={(event) =>
+                                  handleUpdateScenarioField(index, scenario.id, 'expected', event.target.value)
+                                }
+                              />
+                            </label>
+                          </div>
+                          <div className="testcase-workflow__scenario-actions">
+                            <button
+                              type="button"
+                              className="testcase-workflow__secondary testcase-workflow__button"
+                              onClick={() => handleRemoveScenario(index, scenario.id)}
+                            >
+                              시나리오 삭제
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </article>
             ))}
           </div>
@@ -550,6 +605,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           )}
         </section>
       )}
+
 
     </div>
   )
