@@ -2,6 +2,8 @@ import './TestcaseWorkflow.css'
 
 import { useCallback, useMemo, useRef, useState } from 'react'
 
+import { navigate } from '../../navigation'
+
 interface FeatureRow {
   majorCategory: string
   middleCategory: string
@@ -25,22 +27,12 @@ interface ScenarioGroupState {
   error: string | null
 }
 
-interface FinalRow extends ScenarioEntry {
-  majorCategory: string
-  middleCategory: string
-  minorCategory: string
-  testcaseId: string
-  result: string
-  detail: string
-  note: string
-}
-
 interface TestcaseWorkflowProps {
   projectId: string
   backendUrl: string
 }
 
-type Step = 'feature' | 'scenarios' | 'review'
+type Step = 'feature' | 'scenarios'
 
 interface FinalizeResponseRow {
   majorCategory: string
@@ -55,17 +47,20 @@ interface FinalizeResponseRow {
   note: string
 }
 
+interface FinalizeResponsePayload {
+  rows?: FinalizeResponseRow[]
+  fileName?: string
+  xlsxBase64?: string
+}
+
 export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProps) {
   const [step, setStep] = useState<Step>('feature')
   const [projectOverview, setProjectOverview] = useState<string>('')
   const [featureStatus, setFeatureStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [featureError, setFeatureError] = useState<string | null>(null)
   const [groups, setGroups] = useState<ScenarioGroupState[]>([])
-  const [finalRows, setFinalRows] = useState<FinalRow[]>([])
-  const [finalStatus, setFinalStatus] = useState<'idle' | 'loading' | 'error' | 'success'>('idle')
+  const [finalStatus, setFinalStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [finalError, setFinalError] = useState<string | null>(null)
-  const [finalFileName, setFinalFileName] = useState<string>('testcases.xlsx')
-  const [finalCsv, setFinalCsv] = useState<string>('')
   const idRef = useRef(0)
 
   const handleUploadFeatureList = useCallback(
@@ -345,120 +340,54 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
         throw new Error(detail)
       }
 
-      const body = (await response.json()) as {
-        rows?: FinalizeResponseRow[]
-        fileName?: string
-        csvText?: string
-      }
+      const body = (await response.json()) as FinalizeResponsePayload
 
       const rows = Array.isArray(body.rows) ? body.rows : []
       if (rows.length === 0) {
         throw new Error('생성된 테스트케이스가 없습니다.')
       }
 
-      const mappedRows: FinalRow[] = rows.map((row) => {
-        idRef.current += 1
-        return {
-          id: `final-${idRef.current}`,
-          majorCategory: row.majorCategory ?? '',
-          middleCategory: row.middleCategory ?? '',
-          minorCategory: row.minorCategory ?? '',
-          testcaseId: row.testcaseId ?? '',
-          scenario: row.scenario ?? '',
-          input: row.input ?? '',
-          expected: row.expected ?? '',
-          result: row.result ?? '미실행',
-          detail: row.detail ?? '',
-          note: row.note ?? '',
-        }
-      })
+      const sessionData = {
+        projectId,
+        fileName:
+          typeof body.fileName === 'string' && body.fileName.trim().length > 0
+            ? body.fileName
+            : 'testcases.xlsx',
+        xlsxBase64: typeof body.xlsxBase64 === 'string' ? body.xlsxBase64 : '',
+        rows,
+        createdAt: Date.now(),
+      }
 
-      setFinalRows(mappedRows)
-      setFinalCsv(body.csvText ?? '')
-      setFinalFileName(body.fileName ?? 'testcases.xlsx')
-      setFinalStatus('success')
-      setStep('review')
+      let sessionKey = ''
+      try {
+        sessionKey = `testcase-workflow-${projectId}-${Date.now()}`
+        if (typeof window !== 'undefined' && window.sessionStorage) {
+          window.sessionStorage.setItem(sessionKey, JSON.stringify(sessionData))
+        }
+      } catch (storageError) {
+        console.warn('테스트케이스 세션 정보를 저장하지 못했습니다.', storageError)
+        sessionKey = ''
+      }
+
+      if (!sessionKey) {
+        throw new Error('브라우저 저장소에 접근하지 못했습니다. 새 창이나 다른 브라우저에서 다시 시도해 주세요.')
+      }
+
+      const params = new URLSearchParams()
+      if (sessionKey) {
+        params.set('sessionKey', sessionKey)
+      }
+      navigate(
+        `/projects/${encodeURIComponent(projectId)}/testcases/edit${
+          params.toString() ? `?${params.toString()}` : ''
+        }`,
+      )
     } catch (error) {
       const message = error instanceof Error ? error.message : '테스트케이스를 완성하지 못했습니다.'
       setFinalStatus('error')
       setFinalError(message)
     }
   }, [backendUrl, groups, projectId, projectOverview])
-
-  const handleUpdateFinalRow = useCallback(
-    (rowId: string, key: keyof FinalRow, value: string) => {
-      setFinalRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, [key]: value } : row)))
-    },
-    [],
-  )
-
-  const handleDownloadXlsx = useCallback(async () => {
-    if (finalRows.length === 0) {
-      return
-    }
-    const payload = {
-      rows: finalRows.map((row) => ({
-        majorCategory: row.majorCategory,
-        middleCategory: row.middleCategory,
-        minorCategory: row.minorCategory,
-        testcaseId: row.testcaseId,
-        scenario: row.scenario,
-        input: row.input,
-        expected: row.expected,
-        result: row.result,
-        detail: row.detail,
-        note: row.note,
-      })),
-    }
-
-    try {
-      const response = await fetch(
-        `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/testcases/workflow/export`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        },
-      )
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => null)
-        const detail = typeof body?.detail === 'string' ? body.detail : '엑셀 파일을 다운로드하지 못했습니다.'
-        throw new Error(detail)
-      }
-
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = finalFileName
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '엑셀 파일을 다운로드하지 못했습니다.'
-      setFinalStatus('error')
-      setFinalError(message)
-    }
-  }, [backendUrl, finalFileName, finalRows, projectId])
-
-  const handleDownloadCsv = useCallback(() => {
-    if (!finalCsv) {
-      return
-    }
-    const blob = new Blob([finalCsv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = finalFileName.replace(/\.xlsx$/i, '.csv')
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-  }, [finalCsv, finalFileName])
 
   return (
     <div className="testcase-workflow">
@@ -613,7 +542,7 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
 
           <div className="testcase-workflow__step-actions">
             <button type="button" className="testcase-workflow__secondary testcase-workflow__button" onClick={() => setStep('feature')}>
-              이전 단계
+              기능리스트 단계로 돌아가기
             </button>
             <button
               type="button"
@@ -631,146 +560,6 @@ export function TestcaseWorkflow({ projectId, backendUrl }: TestcaseWorkflowProp
         </section>
       )}
 
-      {step === 'review' && (
-        <section className="testcase-workflow__section" aria-labelledby="testcase-review-step">
-          <h2 id="testcase-review-step" className="testcase-workflow__title">
-            테스트케이스 검토 및 다운로드
-          </h2>
-          <p className="testcase-workflow__helper">
-            생성된 테스트케이스를 검토하고 필요한 내용을 수정하세요. 수정된 내용은 즉시 다운로드할 수 있습니다.
-          </p>
-
-          {finalRows.length === 0 ? (
-            <div className="testcase-workflow__empty">표시할 테스트케이스가 없습니다.</div>
-          ) : (
-            <div className="testcase-workflow__summary">
-              <table className="testcase-workflow__table">
-                <thead>
-                  <tr>
-                    <th>대분류</th>
-                    <th>중분류</th>
-                    <th>소분류</th>
-                    <th>테스트 케이스 ID</th>
-                    <th>테스트 시나리오</th>
-                    <th>입력(사전조건 포함)</th>
-                    <th>기대 출력(사후조건 포함)</th>
-                    <th>테스트 결과</th>
-                    <th>상세 테스트 결과</th>
-                    <th>비고</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {finalRows.map((row) => (
-                    <tr key={row.id}>
-                      <td>
-                        <input
-                          className="testcase-workflow__input"
-                          value={row.majorCategory}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'majorCategory', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="testcase-workflow__input"
-                          value={row.middleCategory}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'middleCategory', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="testcase-workflow__input"
-                          value={row.minorCategory}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'minorCategory', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="testcase-workflow__input"
-                          value={row.testcaseId}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'testcaseId', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={row.scenario}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'scenario', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={row.input}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'input', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={row.expected}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'expected', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="testcase-workflow__input"
-                          value={row.result}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'result', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={row.detail}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'detail', event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={row.note}
-                          onChange={(event) => handleUpdateFinalRow(row.id, 'note', event.target.value)}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="testcase-workflow__step-actions">
-            <button
-              type="button"
-              className="testcase-workflow__secondary testcase-workflow__button"
-              onClick={() => {
-                setFinalStatus('idle')
-                setFinalError(null)
-                setStep('scenarios')
-              }}
-            >
-              소분류 시나리오 단계로 돌아가기
-            </button>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <button type="button" className="testcase-workflow__secondary testcase-workflow__button" onClick={handleDownloadCsv}>
-                CSV 다운로드
-              </button>
-              <button type="button" className="testcase-workflow__button" onClick={handleDownloadXlsx}>
-                엑셀 다운로드
-              </button>
-            </div>
-          </div>
-
-          {finalStatus === 'error' && finalError && (
-            <div className="testcase-workflow__status testcase-workflow__status--error">{finalError}</div>
-          )}
-          {finalStatus === 'success' && (
-            <div className="testcase-workflow__status testcase-workflow__status--success">
-              테스트케이스가 생성되었습니다. 필요한 수정을 마치고 다운로드할 수 있습니다.
-            </div>
-          )}
-        </section>
-      )}
     </div>
   )
 }
