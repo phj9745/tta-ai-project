@@ -36,6 +36,7 @@ interface ScenarioGroupState {
   rewriteInput: string
   rewriteStatus: 'idle' | 'loading' | 'success' | 'error'
   rewriteError: string | null
+  isCollapsed: boolean
 }
 
 interface TestcaseWorkflowProps {
@@ -133,6 +134,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             rewriteInput: '',
             rewriteStatus: 'idle',
             rewriteError: null,
+            isCollapsed: false,
           })),
         )
         setStep('scenarios')
@@ -164,6 +166,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       nextGroups[index] = {
         ...prev[index],
         files,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -178,6 +181,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       nextGroups[index] = {
         ...prev[index],
         scenarioCount: count,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -194,6 +198,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           ...prev[index],
           status: 'loading',
           error: null,
+          isCollapsed: false,
         }
         return nextGroups
       })
@@ -258,6 +263,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             rewriteInput: '',
             rewriteStatus: 'idle',
             rewriteError: null,
+            isCollapsed: false,
           }
           return nextGroups
         })
@@ -272,6 +278,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             ...prev[index],
             status: 'error',
             error: message,
+            isCollapsed: false,
           }
           return nextGroups
         })
@@ -297,6 +304,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             ? 'loading'
             : 'idle',
         rewriteError: null,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -316,6 +324,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             ? 'loading'
             : 'idle',
         rewriteError: null,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -344,6 +353,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             ? 'loading'
             : 'idle',
         rewriteError: null,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -362,6 +372,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
         rewriteStatus:
           nextStatus === 'success' || nextStatus === 'error' ? 'idle' : nextStatus,
         rewriteError: null,
+        isCollapsed: false,
       }
       return nextGroups
     })
@@ -385,6 +396,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             ...prev[groupIndex],
             rewriteError: 'GPT에게 전달할 내용을 입력해 주세요.',
             rewriteStatus: 'error',
+            isCollapsed: false,
           }
           return nextGroups
         })
@@ -407,6 +419,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           rewriteInput: '',
           rewriteStatus: 'loading',
           rewriteError: null,
+          isCollapsed: false,
         }
         return nextGroups
       })
@@ -481,6 +494,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             rewriteMessages: [...nextMessages, { role: 'assistant', text: assistantMessage }],
             rewriteStatus: 'success',
             rewriteError: null,
+            isCollapsed: false,
           }
 
           return nextGroups
@@ -497,6 +511,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             rewriteMessages: nextMessages,
             rewriteStatus: 'error',
             rewriteError: detail,
+            isCollapsed: false,
           }
           return nextGroups
         })
@@ -504,6 +519,34 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     },
     [backendUrl, groups, projectId, projectOverview],
   )
+
+  const handleCompleteGroup = useCallback((groupIndex: number) => {
+    setGroups((prev) => {
+      if (groupIndex < 0 || groupIndex >= prev.length) {
+        return prev
+      }
+      const nextGroups = [...prev]
+      nextGroups[groupIndex] = {
+        ...prev[groupIndex],
+        isCollapsed: true,
+      }
+      return nextGroups
+    })
+  }, [])
+
+  const handleResumeGroup = useCallback((groupIndex: number) => {
+    setGroups((prev) => {
+      if (groupIndex < 0 || groupIndex >= prev.length) {
+        return prev
+      }
+      const nextGroups = [...prev]
+      nextGroups[groupIndex] = {
+        ...prev[groupIndex],
+        isCollapsed: false,
+      }
+      return nextGroups
+    })
+  }, [])
 
   const canProceedToReview = useMemo(
     () => groups.length > 0 && groups.every((group) => group.scenarios.length >= 3),
@@ -640,194 +683,229 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             {groups.map((group, index) => (
               <article
                 key={`${group.feature.majorCategory}-${group.feature.minorCategory}-${index}`}
-                className="testcase-workflow__card"
+                className={`testcase-workflow__card${group.isCollapsed ? ' testcase-workflow__card--collapsed' : ''}`}
+                aria-expanded={!group.isCollapsed}
               >
                 <header className="testcase-workflow__card-header">
                   <div className="testcase-workflow__card-header-main">
                     <span className="testcase-workflow__card-badge">소분류 {index + 1}</span>
-                    <h3 className="testcase-workflow__card-title">
-                      {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory}
-                    </h3>
-                    <p className="testcase-workflow__card-subtitle">
-                      {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
-                    </p>
+                    {group.isCollapsed ? (
+                      <p className="testcase-workflow__card-name">
+                        기능명
+                        <span className="testcase-workflow__card-name-value">
+                          {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
+                        </span>
+                      </p>
+                    ) : (
+                      <>
+                        <h3 className="testcase-workflow__card-title">
+                          {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory}
+                        </h3>
+                        <p className="testcase-workflow__card-subtitle">
+                          {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}
+                        </p>
+                      </>
+                    )}
                   </div>
                   <div className="testcase-workflow__card-meta" aria-live="polite">
                     <span className="testcase-workflow__card-meta-count">
                       생성된 시나리오 {group.scenarios.length}개
                     </span>
+                    {group.isCollapsed && (
+                      <button
+                        type="button"
+                        className="testcase-workflow__secondary testcase-workflow__button"
+                        onClick={() => handleResumeGroup(index)}
+                      >
+                        수정
+                      </button>
+                    )}
                   </div>
                 </header>
 
-                <div className="testcase-workflow__card-body">
-                  <div className="testcase-workflow__card-grid">
-                    <div className="testcase-workflow__attachments">
-                      <h4 className="testcase-workflow__attachments-title">참고 이미지</h4>
-                      <p className="testcase-workflow__attachments-helper">
-                        테스트 화면, 설계서 캡처 등 시나리오 작성에 도움이 되는 이미지를 추가하세요.
-                      </p>
-                      <FileUploader
-                        allowedTypes={ATTACHMENT_FILE_TYPES}
-                        files={group.files}
-                        onChange={(nextFiles) => handleSetGroupFiles(index, nextFiles)}
-                        disabled={group.status === 'loading'}
-                        variant="grid"
-                      />
-                    </div>
-                    <div className="testcase-workflow__card-actions" aria-live="polite">
-                      <label className="testcase-workflow__field">
-                        <span>시나리오 수</span>
-                        <select
-                          className="testcase-workflow__select"
-                          value={group.scenarioCount}
-                          onChange={(event) => handleChangeScenarioCount(index, Number(event.target.value))}
-                        >
-                          {SCENARIO_COUNT_OPTIONS.map((count) => (
-                            <option key={count} value={count}>
-                              {count}개
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <div className="testcase-workflow__action-buttons">
-                        <button
-                          type="button"
-                          className="testcase-workflow__button"
-                          onClick={() => handleGenerateScenarios(index)}
-                          disabled={group.status === 'loading'}
-                        >
-                          {group.status === 'loading' ? '생성 중…' : '시나리오 생성'}
-                        </button>
-                        <button
-                          type="button"
-                          className="testcase-workflow__secondary testcase-workflow__button"
-                          onClick={() => handleAddScenario(index)}
-                        >
-                          시나리오 직접 추가
-                        </button>
-                      </div>
-                      {group.status === 'loading' && (
-                        <p className="testcase-workflow__status testcase-workflow__status--loading">
-                          시나리오를 생성하고 있습니다…
-                        </p>
-                      )}
-                      {group.status === 'success' && group.scenarios.length > 0 && (
-                        <p className="testcase-workflow__status testcase-workflow__status--success">
-                          시나리오 {group.scenarios.length}개가 생성되었습니다.
-                        </p>
-                      )}
-                      {group.status === 'error' && group.error && (
-                        <p className="testcase-workflow__status testcase-workflow__status--error">{group.error}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {group.scenarios.length > 0 && (
-                    <div className="testcase-workflow__scenario-list">
-                      {group.scenarios.map((scenario) => (
-                        <div key={scenario.id} className="testcase-workflow__scenario">
-                          <div className="testcase-workflow__scenario-fields">
-                            <label className="testcase-workflow__scenario-field">
-                              <span>테스트 시나리오</span>
-                              <textarea
-                                className="testcase-workflow__textarea"
-                                value={scenario.scenario}
-                                onChange={(event) =>
-                                  handleUpdateScenarioField(index, scenario.id, 'scenario', event.target.value)
-                                }
-                              />
-                            </label>
-                            <label className="testcase-workflow__scenario-field">
-                              <span>입력(사전조건 포함)</span>
-                              <textarea
-                                className="testcase-workflow__textarea"
-                                value={scenario.input}
-                                onChange={(event) =>
-                                  handleUpdateScenarioField(index, scenario.id, 'input', event.target.value)
-                                }
-                              />
-                            </label>
-                            <label className="testcase-workflow__scenario-field">
-                              <span>기대 출력(사후조건 포함)</span>
-                              <textarea
-                                className="testcase-workflow__textarea"
-                                value={scenario.expected}
-                                onChange={(event) =>
-                                  handleUpdateScenarioField(index, scenario.id, 'expected', event.target.value)
-                                }
-                              />
-                            </label>
-                          </div>
-                          <div className="testcase-workflow__scenario-actions">
+                {!group.isCollapsed && (
+                  <>
+                    <div className="testcase-workflow__card-body">
+                      <div className="testcase-workflow__card-grid">
+                        <div className="testcase-workflow__attachments">
+                          <h4 className="testcase-workflow__attachments-title">참고 이미지</h4>
+                          <p className="testcase-workflow__attachments-helper">
+                            클릭해서 파일을 선택하거나 Ctrl+V로 붙여넣어 이미지를 추가하세요.
+                          </p>
+                          <FileUploader
+                            allowedTypes={ATTACHMENT_FILE_TYPES}
+                            files={group.files}
+                            onChange={(nextFiles) => handleSetGroupFiles(index, nextFiles)}
+                            disabled={group.status === 'loading'}
+                            variant="grid"
+                            enableDragAndDrop={false}
+                            allowPaste
+                            appearance="compact"
+                          />
+                        </div>
+                        <div className="testcase-workflow__card-actions" aria-live="polite">
+                          <label className="testcase-workflow__field">
+                            <span>시나리오 수</span>
+                            <select
+                              className="testcase-workflow__select"
+                              value={group.scenarioCount}
+                              onChange={(event) => handleChangeScenarioCount(index, Number(event.target.value))}
+                            >
+                              {SCENARIO_COUNT_OPTIONS.map((count) => (
+                                <option key={count} value={count}>
+                                  {count}개
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="testcase-workflow__action-buttons">
+                            <button
+                              type="button"
+                              className="testcase-workflow__button"
+                              onClick={() => handleGenerateScenarios(index)}
+                              disabled={group.status === 'loading'}
+                            >
+                              {group.status === 'loading' ? '생성 중…' : '시나리오 생성'}
+                            </button>
                             <button
                               type="button"
                               className="testcase-workflow__secondary testcase-workflow__button"
-                              onClick={() => handleRemoveScenario(index, scenario.id)}
+                              onClick={() => handleAddScenario(index)}
                             >
-                              시나리오 삭제
+                              시나리오 직접 추가
                             </button>
                           </div>
+                          {group.status === 'loading' && (
+                            <p className="testcase-workflow__status testcase-workflow__status--loading">
+                              시나리오를 생성하고 있습니다…
+                            </p>
+                          )}
+                          {group.status === 'success' && group.scenarios.length > 0 && (
+                            <p className="testcase-workflow__status testcase-workflow__status--success">
+                              시나리오 {group.scenarios.length}개가 생성되었습니다.
+                            </p>
+                          )}
+                          {group.status === 'error' && group.error && (
+                            <p className="testcase-workflow__status testcase-workflow__status--error">{group.error}</p>
+                          )}
                         </div>
-                      ))}
+                      </div>
                     </div>
-                  )}
-                  {group.scenarios.length > 0 && (
-                    <div className="testcase-workflow__chat">
-                      <h4 className="testcase-workflow__chat-title">GPT와 테스트케이스 다듬기</h4>
-                      <p className="testcase-workflow__chat-helper">
-                        수정이 필요한 방향을 설명하면 현재 테스트케이스를 참고해 GPT가 새로운 안을 제안합니다.
-                      </p>
-                      <div className="testcase-workflow__chat-log" role="log" aria-live="polite">
-                        {group.rewriteMessages.length === 0 && (
-                          <p className="testcase-workflow__chat-helper">아직 대화가 없습니다.</p>
-                        )}
-                        {group.rewriteMessages.map((message, messageIndex) => (
-                          <div
-                            key={`${message.role}-${messageIndex}`}
-                            className={`testcase-workflow__chat-message testcase-workflow__chat-message--${message.role}`}
-                          >
-                            <span>{message.role === 'user' ? '요청' : 'GPT 응답'}</span>
-                            <p>{message.text}</p>
+
+                    {group.scenarios.length > 0 && (
+                      <div className="testcase-workflow__scenario-list">
+                        {group.scenarios.map((scenario) => (
+                          <div key={scenario.id} className="testcase-workflow__scenario">
+                            <div className="testcase-workflow__scenario-fields">
+                              <label className="testcase-workflow__scenario-field">
+                                <span>테스트 시나리오</span>
+                                <textarea
+                                  className="testcase-workflow__textarea"
+                                  value={scenario.scenario}
+                                  onChange={(event) =>
+                                    handleUpdateScenarioField(index, scenario.id, 'scenario', event.target.value)
+                                  }
+                                />
+                              </label>
+                              <label className="testcase-workflow__scenario-field">
+                                <span>입력(사전조건 포함)</span>
+                                <textarea
+                                  className="testcase-workflow__textarea"
+                                  value={scenario.input}
+                                  onChange={(event) =>
+                                    handleUpdateScenarioField(index, scenario.id, 'input', event.target.value)
+                                  }
+                                />
+                              </label>
+                              <label className="testcase-workflow__scenario-field">
+                                <span>기대 출력(사후조건 포함)</span>
+                                <textarea
+                                  className="testcase-workflow__textarea"
+                                  value={scenario.expected}
+                                  onChange={(event) =>
+                                    handleUpdateScenarioField(index, scenario.id, 'expected', event.target.value)
+                                  }
+                                />
+                              </label>
+                            </div>
+                            <div className="testcase-workflow__scenario-actions">
+                              <button
+                                type="button"
+                                className="testcase-workflow__secondary testcase-workflow__button"
+                                onClick={() => handleRemoveScenario(index, scenario.id)}
+                              >
+                                시나리오 삭제
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
-                      {group.rewriteError && (
-                        <p className="testcase-workflow__status testcase-workflow__status--error" role="alert">
-                          {group.rewriteError}
+                    )}
+                    {group.scenarios.length > 0 && (
+                      <div className="testcase-workflow__chat">
+                        <h4 className="testcase-workflow__chat-title">GPT와 테스트케이스 다듬기</h4>
+                        <p className="testcase-workflow__chat-helper">
+                          수정이 필요한 방향을 설명하면 현재 테스트케이스를 참고해 GPT가 새로운 안을 제안합니다.
                         </p>
-                      )}
-                      {group.rewriteStatus === 'success' && !group.rewriteError && (
-                        <p className="testcase-workflow__status testcase-workflow__status--success">
-                          GPT 응답을 테스트케이스에 반영했습니다.
-                        </p>
-                      )}
-                      <form
-                        className="testcase-workflow__chat-form"
-                        onSubmit={(event) => {
-                          event.preventDefault()
-                          void handleSubmitRewrite(index)
-                        }}
-                      >
-                        <textarea
-                          className="testcase-workflow__textarea"
-                          value={group.rewriteInput}
-                          onChange={(event) => handleChangeRewriteInput(index, event.target.value)}
-                          placeholder="예: 2번 테스트를 로그인 실패 케이스로 바꿔줘"
-                          disabled={group.rewriteStatus === 'loading'}
-                        />
-                        <div className="testcase-workflow__chat-actions">
-                          <button
-                            type="submit"
-                            className="testcase-workflow__button"
-                            disabled={group.rewriteStatus === 'loading' || group.scenarios.length === 0}
-                          >
-                            {group.rewriteStatus === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
-                          </button>
+                        <div className="testcase-workflow__chat-log" role="log" aria-live="polite">
+                          {group.rewriteMessages.length === 0 && (
+                            <p className="testcase-workflow__chat-helper">아직 대화가 없습니다.</p>
+                          )}
+                          {group.rewriteMessages.map((message, messageIndex) => (
+                            <div
+                              key={`${message.role}-${messageIndex}`}
+                              className={`testcase-workflow__chat-message testcase-workflow__chat-message--${message.role}`}
+                            >
+                              <span>{message.role === 'user' ? '요청' : 'GPT 응답'}</span>
+                              <p>{message.text}</p>
+                            </div>
+                          ))}
                         </div>
-                      </form>
-                    </div>
-                  )}
-                </div>
+                        {group.rewriteError && (
+                          <p className="testcase-workflow__status testcase-workflow__status--error" role="alert">
+                            {group.rewriteError}
+                          </p>
+                        )}
+                        {group.rewriteStatus === 'success' && !group.rewriteError && (
+                          <p className="testcase-workflow__status testcase-workflow__status--success">
+                            GPT 응답을 테스트케이스에 반영했습니다.
+                          </p>
+                        )}
+                        <form
+                          className="testcase-workflow__chat-form"
+                          onSubmit={(event) => {
+                            event.preventDefault()
+                            void handleSubmitRewrite(index)
+                          }}
+                        >
+                          <textarea
+                            className="testcase-workflow__textarea"
+                            value={group.rewriteInput}
+                            onChange={(event) => handleChangeRewriteInput(index, event.target.value)}
+                            placeholder="예: 2번 테스트를 로그인 실패 케이스로 바꿔줘"
+                            disabled={group.rewriteStatus === 'loading'}
+                          />
+                          <div className="testcase-workflow__chat-actions">
+                            <button
+                              type="submit"
+                              className="testcase-workflow__button"
+                              disabled={group.rewriteStatus === 'loading' || group.scenarios.length === 0}
+                            >
+                              {group.rewriteStatus === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
+                            </button>
+                            <button
+                              type="button"
+                              className="testcase-workflow__secondary testcase-workflow__button"
+                              onClick={() => handleCompleteGroup(index)}
+                            >
+                              완료
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
+                  </>
+                )}
               </article>
             ))}
           </div>

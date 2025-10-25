@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ChangeEvent, DragEvent } from 'react'
+import type { ChangeEvent, ClipboardEvent, DragEvent } from 'react'
 
 import {
   ALL_FILE_TYPES,
@@ -14,6 +14,7 @@ import {
 } from './utils'
 
 type FileUploaderVariant = 'default' | 'grid'
+type DropzoneAppearance = 'default' | 'compact'
 
 export interface FileItem {
   key: string
@@ -37,9 +38,12 @@ export interface DropzoneProps {
   onRemove: (index: number) => void
   disabled: boolean
   shouldRenderCompactPreview: boolean
-  onDragOver: (event: DragEvent<HTMLLabelElement>) => void
-  onDragLeave: (event: DragEvent<HTMLLabelElement>) => void
-  onDrop: (event: DragEvent<HTMLLabelElement>) => void
+  onDragOver?: (event: DragEvent<HTMLLabelElement>) => void
+  onDragLeave?: (event: DragEvent<HTMLLabelElement>) => void
+  onDrop?: (event: DragEvent<HTMLLabelElement>) => void
+  onPaste?: (event: ClipboardEvent<HTMLLabelElement>) => void
+  enableDragAndDrop: boolean
+  allowPaste: boolean
 }
 
 export interface FileListProps {
@@ -66,6 +70,9 @@ export interface UseFileUploaderOptions {
   hideDropzoneWhenFilled?: boolean
   maxFiles?: number
   variant?: FileUploaderVariant
+  enableDragAndDrop?: boolean
+  allowPaste?: boolean
+  appearance?: DropzoneAppearance
 }
 
 export function useFileUploader({
@@ -77,6 +84,9 @@ export function useFileUploader({
   hideDropzoneWhenFilled = false,
   maxFiles,
   variant = 'default',
+  enableDragAndDrop = true,
+  allowPaste = false,
+  appearance = 'default',
 }: UseFileUploaderOptions): UseFileUploaderResult {
   const [isDragging, setIsDragging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -243,7 +253,7 @@ export function useFileUploader({
 
   const handleDragOver = useCallback(
     (event: DragEvent<HTMLLabelElement>) => {
-      if (dropzoneDisabled) {
+      if (dropzoneDisabled || !enableDragAndDrop) {
         return
       }
 
@@ -252,12 +262,12 @@ export function useFileUploader({
         setIsDragging(true)
       }
     },
-    [dropzoneDisabled, isDragging],
+    [dropzoneDisabled, enableDragAndDrop, isDragging],
   )
 
   const handleDragLeave = useCallback(
     (event: DragEvent<HTMLLabelElement>) => {
-      if (dropzoneDisabled) {
+      if (dropzoneDisabled || !enableDragAndDrop) {
         return
       }
 
@@ -266,12 +276,12 @@ export function useFileUploader({
         setIsDragging(false)
       }
     },
-    [dropzoneDisabled, isDragging],
+    [dropzoneDisabled, enableDragAndDrop, isDragging],
   )
 
   const handleDrop = useCallback(
     (event: DragEvent<HTMLLabelElement>) => {
-      if (dropzoneDisabled) {
+      if (dropzoneDisabled || !enableDragAndDrop) {
         return
       }
 
@@ -280,7 +290,24 @@ export function useFileUploader({
       const droppedFiles = Array.from(event.dataTransfer?.files ?? [])
       addFiles(droppedFiles)
     },
-    [addFiles, dropzoneDisabled],
+    [addFiles, dropzoneDisabled, enableDragAndDrop],
+  )
+
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLLabelElement>) => {
+      if (!allowPaste || dropzoneDisabled) {
+        return
+      }
+
+      const pastedFiles = Array.from(event.clipboardData?.files ?? [])
+      if (pastedFiles.length === 0) {
+        return
+      }
+
+      event.preventDefault()
+      addFiles(pastedFiles)
+    },
+    [addFiles, allowPaste, dropzoneDisabled],
   )
 
   const handleInputChange = useCallback(
@@ -300,6 +327,7 @@ export function useFileUploader({
   const dropzoneClassName = useMemo(() => {
     return [
       'file-uploader__dropzone',
+      appearance === 'compact' ? 'file-uploader__dropzone--compact' : '',
       isDragging ? 'file-uploader__dropzone--active' : '',
       disabled ? 'file-uploader__dropzone--disabled' : '',
       shouldRenderCompactPreview && files.length > 0 ? 'file-uploader__dropzone--preview' : '',
@@ -307,7 +335,7 @@ export function useFileUploader({
     ]
       .filter(Boolean)
       .join(' ')
-  }, [disabled, files.length, isDragging, isGridVariant, shouldRenderCompactPreview])
+  }, [appearance, disabled, files.length, isDragging, isGridVariant, shouldRenderCompactPreview])
 
   return {
     containerClassName: `file-uploader${isGridVariant ? ' file-uploader--grid' : ''}`,
@@ -325,9 +353,12 @@ export function useFileUploader({
       onRemove: removeFile,
       disabled,
       shouldRenderCompactPreview,
-      onDragOver: handleDragOver,
-      onDragLeave: handleDragLeave,
-      onDrop: handleDrop,
+      onDragOver: enableDragAndDrop ? handleDragOver : undefined,
+      onDragLeave: enableDragAndDrop ? handleDragLeave : undefined,
+      onDrop: enableDragAndDrop ? handleDrop : undefined,
+      onPaste: allowPaste ? handlePaste : undefined,
+      enableDragAndDrop,
+      allowPaste,
     },
     error,
     grid: {
