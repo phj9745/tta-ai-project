@@ -12,8 +12,8 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover
     load_workbook = None  # type: ignore[assignment]
 
-from ..excel_templates.models import TESTCASE_EXPECTED_HEADERS
-from .naming import drive_name_matches, looks_like_header_row
+from ..excel_templates.models import TESTCASE_EXPECTED_HEADERS, TESTCASE_START_ROW
+from .naming import drive_name_matches, looks_like_header_row, normalize_drive_text, squash_drive_text
 
 __all__ = [
     "parse_testcase_workbook",
@@ -58,6 +58,49 @@ _DEFAULT_ROW: Dict[str, str] = {
 }
 
 
+def _count_header_matches(values: Sequence[Any], expected: Sequence[str]) -> int:
+    if not values:
+        return 0
+
+    normalized_values = [
+        normalize_drive_text(str(value)) if value is not None else ""
+        for value in values
+    ]
+    squashed_values = [squash_drive_text(value) for value in normalized_values]
+    normalized_expected = [normalize_drive_text(name) for name in expected]
+    squashed_expected = [squash_drive_text(name) for name in normalized_expected]
+
+    matches = 0
+    for expected_value, expected_squashed in zip(normalized_expected, squashed_expected):
+        if not expected_value and not expected_squashed:
+            continue
+
+        for actual_value, actual_squashed in zip(normalized_values, squashed_values):
+            if not actual_value and not actual_squashed:
+                continue
+
+            normalized_match = (
+                bool(expected_value)
+                and bool(actual_value)
+                and (
+                    actual_value == expected_value
+                    or expected_value in actual_value
+                    or actual_value in expected_value
+                )
+            )
+            squashed_match = (
+                bool(expected_squashed)
+                and bool(actual_squashed)
+                and expected_squashed in actual_squashed
+            )
+
+            if normalized_match or squashed_match:
+                matches += 1
+                break
+
+    return matches
+
+
 def _normalize_value(value: Any) -> str:
     if value is None:
         return ""
@@ -98,7 +141,6 @@ def parse_testcase_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[str],
     extracted_rows: List[Dict[str, str]] = []
     sheet_title = ""
     start_row = 1
-    header_row_values: Optional[Sequence[Any]] = None
     column_map: Dict[str, int] = {}
 
     try:
@@ -120,39 +162,64 @@ def parse_testcase_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[str],
 
         sheet_title = selected_title or ""
         max_col = max(len(headers), sheet.max_column or len(headers))
-        header_row_index: Optional[int] = None
-        first_data_row_index: Optional[int] = None
+        rows_snapshot: List[Tuple[int, Sequence[Any]]] = [
+            (idx, row if isinstance(row, Sequence) else tuple())
+            for idx, row in enumerate(
+                sheet.iter_rows(min_row=1, max_col=max_col, values_only=True),
+                start=1,
+            )
+        ]
 
-        for idx, row in enumerate(
-            sheet.iter_rows(min_row=1, max_col=max_col, values_only=True),
-            start=1,
-        ):
-            row_values: Sequence[Any] = row if isinstance(row, Sequence) else tuple()
+        strong_threshold = max(1, len(headers) - 1)
+        fallback_threshold = max(1, len(headers) // 2)
+        header_row_values: Optional[Sequence[Any]] = None
+        header_row_index: Optional[int] = None
+        best_candidate: Optional[Tuple[int, Sequence[Any], int]] = None
+
+        for idx, row_values in rows_snapshot:
             if not any(value is not None for value in row_values):
                 continue
 
-            if header_row_values is None:
-                normalized = [_normalize_value(value) for value in row_values]
-                if looks_like_header_row(normalized, headers):
-                    header_row_values = normalized
-                    header_row_index = idx
-                    continue
+            normalized = [_normalize_value(value) for value in row_values]
+            match_count = _count_header_matches(normalized, headers)
 
-            if header_row_values is None:
+            if match_count >= strong_threshold:
+                header_row_values = normalized
+                header_row_index = idx
+                break
+
+            if match_count > 0:
+                if best_candidate is None or match_count > best_candidate[2]:
+                    best_candidate = (idx, normalized, match_count)
+
+        if header_row_values is None and best_candidate and best_candidate[2] >= fallback_threshold:
+            header_row_index, header_row_values, _ = best_candidate
+
+        if header_row_values is None:
+            header_row_values = list(headers)
+            header_row_index = TESTCASE_START_ROW - 1
+
+        first_data_row_index: Optional[int] = None
+
+        for header_name in headers:
+            column_index = _resolve_column_index(header_row_values, header_name)
+            if column_index is None:
+                column_index = headers.index(header_name)
+            column_map[header_name] = column_index
+
+        for idx, row_values in rows_snapshot:
+            if idx <= (header_row_index or 0):
+                continue
+
+            if not any(value is not None for value in row_values):
+                continue
+
+            normalized = [_normalize_value(value) for value in row_values]
+            if looks_like_header_row(normalized, headers):
                 continue
 
             if first_data_row_index is None:
                 first_data_row_index = idx
-
-            if not column_map:
-                for header_name in headers:
-                    column_index = _resolve_column_index(header_row_values, header_name)
-                    if column_index is None:
-                        column_index = headers.index(header_name)
-                    column_map[header_name] = column_index
-
-            if looks_like_header_row(row_values, headers):
-                continue
 
             row_data = dict(_DEFAULT_ROW)
             has_values = False
