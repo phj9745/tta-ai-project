@@ -2094,6 +2094,7 @@
 .defect-workflow__chat-actions {
   display: flex;
   justify-content: flex-end;
+  gap : 10px;
 }
 
 .defect-workflow__button {

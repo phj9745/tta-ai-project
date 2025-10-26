@@ -141,14 +141,6 @@ export function DefectTable({
                       >
                         {item.status === 'loading' ? '결함 생성 중…' : '결함 생성'}
                       </button>
-                      <button
-                        type="button"
-                        className="defect-workflow__secondary defect-workflow__button"
-                        onClick={() => onComplete(defectIndex)}
-                        disabled={!canComplete}
-                      >
-                        완료
-                      </button>
                     </>
                   )}
                 </div>
@@ -277,6 +269,14 @@ export function DefectTable({
                             {item.status === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
                           </button>
                         </div>
+                        <button
+                        type="button"
+                        className="defect-workflow__secondary defect-workflow__button"
+                        onClick={() => onComplete(defectIndex)}
+                        disabled={!canComplete}
+                      >
+                        완료
+                      </button>
                       </form>
                     </div>
                   )}

@@ -20,7 +20,6 @@ const QUALITY_LABEL_MAP: Record<string, string> = {
   이식성: '이식성',
   일반적요구사항: '일반적 요구사항',
   일반적요구: '일반적 요구사항',
-  일반적 요구사항: '일반적 요구사항',
 }
 
 const QUALITY_KEYS = new Set(Object.keys(QUALITY_LABEL_MAP))
