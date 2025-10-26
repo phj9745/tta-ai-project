@@ -382,6 +382,7 @@ class AIGenerationService:
         *,
         project_id: str,
         entries: List[Dict[str, str]],
+        feature_context: str = "",
     ) -> List[NormalizedDefect]:
         if not entries:
             raise HTTPException(status_code=422, detail="정제할 결함 항목이 없습니다.")
@@ -403,13 +404,25 @@ class AIGenerationService:
         if not bullet_lines:
             raise HTTPException(status_code=422, detail="결함 항목에서 내용을 찾을 수 없습니다.")
 
-        user_prompt = (
+        context_prompt = ""
+        stripped_context = feature_context.strip()
+        if stripped_context:
+            context_prompt = (
+                "프로그램의 기능리스트 요약입니다. 결함을 다듬을 때 해당 기능의 목적과 범위를 고려하세요.\n"
+                f"{stripped_context}\n\n"
+            )
+
+        base_prompt = (
             "다음 결함 설명을 공문서에 맞는 문장으로 다듬어 주세요.\n"
             "- 결과는 입력 순서를 유지한 번호 매기기 형식으로 작성하세요.\n"
             "- 각 줄은 '번호. 정제된 문장' 형태여야 합니다.\n"
             "- 존댓말 어미를 사용하고 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
             "- 번호 목록 이외의 설명이나 부가 문장은 작성하지 마세요.\n\n"
-            "입력 결함 목록:\n"
+        )
+        user_prompt = (
+            base_prompt
+            + (context_prompt or "")
+            + "입력 결함 목록:\n"
             + "\n".join(bullet_lines)
         )
 

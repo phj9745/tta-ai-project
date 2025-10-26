@@ -300,16 +300,19 @@ async def create_drive_project(
 @router.post("/drive/projects/{project_id}/defect-report/formalize")
 async def formalize_defect_report(
     project_id: str,
-    file: UploadFile = File(..., description="결함 메모 TXT 파일"),
+    feature_list: UploadFile = File(..., alias="featureList", description="기능리스트 파일"),
+    defect_notes: UploadFile = File(..., alias="defectNotes", description="결함 메모 TXT 파일"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
 ) -> Dict[str, Any]:
+    feature_context = await _extract_feature_list_context(feature_list)
+
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await defect_notes.read()
     finally:
-        await file.close()
+        await defect_notes.close()
 
     if not raw_bytes:
-        raise HTTPException(status_code=422, detail="업로드된 파일이 비어 있습니다.")
+        raise HTTPException(status_code=422, detail="업로드된 TXT 파일이 비어 있습니다.")
 
     decoded = _decode_text(raw_bytes)
     entries = _extract_defect_entries(decoded)
@@ -322,6 +325,7 @@ async def formalize_defect_report(
     normalized = await ai_generation_service.formalize_defect_notes(
         project_id=project_id,
         entries=entries,
+        feature_context=feature_context,
     )
 
     normalized.sort(key=lambda item: item.index)
@@ -732,6 +736,64 @@ def _decode_feature_list_csv(content: bytes) -> List[Dict[str, str]]:
             }
         )
     return normalized
+
+
+def _build_feature_list_context(rows: Sequence[Dict[str, str]], *, limit: int = 40) -> str:
+    lines: List[str] = []
+    total = len(rows)
+    for idx, row in enumerate(rows[:limit], start=1):
+        major = str(row.get("majorCategory", "") or "").strip()
+        middle = str(row.get("middleCategory", "") or "").strip()
+        minor = str(row.get("minorCategory", "") or "").strip()
+        description = str(row.get("featureDescription", "") or "").strip()
+
+        categories = [part for part in [major, middle, minor] if part]
+        if categories and description:
+            lines.append(f"{idx}. {' | '.join(categories)}: {description}")
+        elif description:
+            lines.append(f"{idx}. {description}")
+        elif categories:
+            lines.append(f"{idx}. {' | '.join(categories)}")
+
+    if total > limit:
+        lines.append(f"… (총 {total}개 기능 중 상위 {limit}개 항목만 요약했습니다.)")
+
+    return "\n".join(lines)
+
+
+async def _extract_feature_list_context(upload: UploadFile) -> str:
+    filename = upload.filename or "feature-list"
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    content = await _read_upload_bytes(upload)
+
+    if not content:
+        raise HTTPException(status_code=422, detail="업로드된 기능리스트 파일이 비어 있습니다.")
+
+    rows: List[Dict[str, str]] = []
+
+    if extension in {"xlsx", "xlsm"}:
+        try:
+            _, _, _, parsed_rows = drive_feature_lists.parse_feature_list_workbook(content)
+            rows = _normalize_feature_list_records(parsed_rows)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(
+                status_code=422,
+                detail="기능리스트 엑셀 파일을 해석하는 중 오류가 발생했습니다.",
+            ) from exc
+    elif extension == "csv":
+        rows = _normalize_feature_list_records(_decode_feature_list_csv(content))
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="지원하지 않는 기능리스트 파일 형식입니다. XLSX 또는 CSV 파일을 업로드해 주세요.",
+        )
+
+    if not rows:
+        raise HTTPException(status_code=422, detail="기능리스트에서 항목을 찾을 수 없습니다.")
+
+    return _build_feature_list_context(rows)
 
 
 @router.post("/drive/projects/{project_id}/testcases/workflow/feature-list")

@@ -1753,6 +1753,30 @@
   margin: 0 0 16px;
 }
 
+.defect-workflow__upload-group {
+  display: grid;
+  gap: 24px;
+}
+
+@media (min-width: 900px) {
+  .defect-workflow__upload-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 32px;
+  }
+}
+
+.defect-workflow__upload-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.defect-workflow__subtitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #1f2937;
+}
+
 .defect-workflow__helper--small {
   font-size: 13px;
   color: #5a6475;
