@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 import zipfile
 from copy import copy as clone_style
 
+from .utils import parse_csv_records as _parse_csv_records
+
 
 def summarize_feature_description(description: object, max_length: int = 120) -> str:
     """Create a compact single-line summary for a feature description.
