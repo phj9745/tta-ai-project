@@ -9,12 +9,12 @@ import io
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, TypedDict
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence, Tuple, TypedDict
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..dependencies import (
     get_ai_generation_service,
@@ -289,6 +289,214 @@ def _build_attachment_header(filename: str, *, default_filename: str = "security
     return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
 
 
+def _coerce_positive_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+
+    try:
+        text = str(value).strip()
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+    if not text:
+        return None
+
+    try:
+        number = int(text)
+    except ValueError:
+        return None
+
+    return number if number > 0 else None
+
+
+def _build_defect_row_lookup(
+    normalized_rows: Sequence[Mapping[str, str]],
+    index_order_map: Mapping[int, int],
+) -> Dict[int, Mapping[str, str]]:
+    lookup: Dict[int, Mapping[str, str]] = {}
+
+    for order, row in enumerate(normalized_rows, start=1):
+        lookup[order] = row
+
+    total = len(normalized_rows)
+    for source_index, order in index_order_map.items():
+        if order < 1 or order > total:
+            continue
+        lookup[source_index] = normalized_rows[order - 1]
+
+    return lookup
+
+
+def _extract_row_order(row: Mapping[str, Any]) -> Optional[int]:
+    return _coerce_positive_int(row.get("order"))
+
+
+def _normalize_attachment_name_values(value: Any) -> List[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+
+    normalized: List[str] = []
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            text = item.strip()
+            if text and text not in normalized:
+                normalized.append(text)
+
+    return normalized
+
+
+def _parse_attachment_names_payload(
+    raw_names: Optional[str],
+    row_lookup: Mapping[int, Mapping[str, Any]],
+) -> Dict[int, List[str]]:
+    if raw_names is None:
+        return {}
+
+    text = raw_names.strip()
+    if not text:
+        return {}
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="첨부 파일 이름 형식이 올바르지 않습니다.") from exc
+
+    notes_by_order: Dict[int, List[str]] = {}
+
+    def _assign(index_value: Any, names_value: Any) -> None:
+        defect_index = _coerce_positive_int(index_value)
+        if defect_index is None:
+            raise HTTPException(status_code=422, detail="첨부 파일 이름 형식이 올바르지 않습니다.")
+
+        row = row_lookup.get(defect_index)
+        if row is None:
+            raise HTTPException(status_code=422, detail="첨부 파일 이름에 알 수 없는 결함 순번이 포함되어 있습니다.")
+
+        order = _extract_row_order(row)
+        if order is None:
+            raise HTTPException(status_code=422, detail="첨부 파일 이름에 알 수 없는 결함 순번이 포함되어 있습니다.")
+
+        names = _normalize_attachment_name_values(names_value)
+        if not names:
+            return
+
+        bucket = notes_by_order.setdefault(order, [])
+        for name in names:
+            if name not in bucket:
+                bucket.append(name)
+
+    if isinstance(parsed, dict):
+        for key, value in parsed.items():
+            _assign(key, value)
+    elif isinstance(parsed, list):
+        for entry in parsed:
+            if not isinstance(entry, Mapping):
+                raise HTTPException(status_code=422, detail="첨부 파일 이름 형식이 올바르지 않습니다.")
+            index_value = (
+                entry.get("defectIndex")
+                or entry.get("defect_index")
+                or entry.get("index")
+                or entry.get("order")
+            )
+            names_value = (
+                entry.get("names")
+                or entry.get("attachments")
+                or entry.get("files")
+                or entry.get("values")
+            )
+            _assign(index_value, names_value)
+    else:
+        raise HTTPException(status_code=422, detail="첨부 파일 이름 형식이 올바르지 않습니다.")
+
+    return notes_by_order
+
+
+async def _close_uploads(uploads: Sequence[UploadFile]) -> None:
+    for upload in uploads:
+        try:
+            await upload.close()
+        except Exception:  # pragma: no cover - defensive
+            continue
+
+
+async def _collect_defect_report_attachments(
+    uploads: Sequence[UploadFile],
+    metadata_entries: Sequence[Mapping[str, Any]],
+    row_lookup: Mapping[int, Mapping[str, Any]],
+) -> Tuple[Dict[int, List[DefectReportImage]], Dict[int, List[str]]]:
+    image_map: Dict[int, List[DefectReportImage]] = {}
+    notes_map: Dict[int, List[str]] = {}
+
+    consumed = 0
+    for upload, metadata in zip(uploads, metadata_entries):
+        consumed += 1
+        try:
+            if not isinstance(metadata, Mapping):
+                continue
+
+            raw_index_value = metadata.get("defect_index")
+            if raw_index_value is None:
+                raw_index_value = metadata.get("defectIndex")
+            if raw_index_value is None:
+                continue
+
+            defect_index = _coerce_positive_int(raw_index_value)
+            if defect_index is None:
+                raise HTTPException(status_code=422, detail="첨부 파일의 결함 순번이 올바르지 않습니다.")
+
+            row = row_lookup.get(defect_index)
+            if row is None:
+                raise HTTPException(status_code=422, detail="첨부 파일의 결함 순번이 올바르지 않습니다.")
+
+            order = _extract_row_order(row)
+            if order is None:
+                raise HTTPException(status_code=422, detail="첨부 파일의 결함 순번이 올바르지 않습니다.")
+
+            content = await upload.read()
+            if not content:
+                continue
+
+            file_name = (
+                (upload.filename or "").strip()
+                or str(metadata.get("originalFileName") or "").strip()
+                or str(metadata.get("fileName") or "").strip()
+            )
+            if not file_name:
+                file_name = f"attachment-{order}"
+
+            image = DefectReportImage(
+                file_name=file_name,
+                content=content,
+                content_type=upload.content_type,
+            )
+            image_map.setdefault(order, []).append(image)
+
+            notes = notes_map.setdefault(order, [])
+            if file_name not in notes:
+                notes.append(file_name)
+        finally:
+            try:
+                await upload.close()
+            except Exception:  # pragma: no cover - defensive
+                continue
+
+    for upload in uploads[consumed:]:
+        try:
+            await upload.close()
+        except Exception:  # pragma: no cover - defensive
+            continue
+
+    return image_map, notes_map
+
+
 @router.post("/drive/gs/setup")
 async def ensure_gs_folder(
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
@@ -377,6 +585,12 @@ async def generate_project_asset(
     files: Optional[List[UploadFile]] = File(None),
     file_metadata: Optional[str] = Form(
         None, description="업로드된 파일에 대한 메타데이터(JSON 배열)"
+    ),
+    defect_rows: Optional[str] = Form(
+        None, description="결함 리포트 행 데이터(JSON 배열)"
+    ),
+    attachment_names: Optional[str] = Form(
+        None, description="결함 첨부 파일 이름 정보(JSON)"
     ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
@@ -499,6 +713,75 @@ async def generate_project_asset(
             elif role not in {"required", "additional"}:
                 raise HTTPException(status_code=422, detail="파일 메타데이터 형식이 올바르지 않습니다.")
 
+    if menu_id == "defect-report" and defect_rows is not None:
+        try:
+            parsed_rows = json.loads(defect_rows)
+        except json.JSONDecodeError as exc:
+            await _close_uploads(uploads)
+            raise HTTPException(status_code=422, detail="결함 리포트 행 데이터 형식이 올바르지 않습니다.") from exc
+
+        if not isinstance(parsed_rows, list):
+            await _close_uploads(uploads)
+            raise HTTPException(status_code=422, detail="결함 리포트 행 데이터 형식이 올바르지 않습니다.")
+
+        validated_rows: List[Dict[str, str]] = []
+        for index, entry in enumerate(parsed_rows, start=1):
+            try:
+                model = DefectReportRowModel.model_validate(entry)
+            except ValidationError as exc:
+                await _close_uploads(uploads)
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{index}번째 결함 행 데이터 형식이 올바르지 않습니다.",
+                ) from exc
+
+            validated_rows.append(model.model_dump(by_alias=True))
+
+        if not validated_rows:
+            await _close_uploads(uploads)
+            raise HTTPException(status_code=422, detail="최소 한 개의 결함 행이 필요합니다.")
+
+        normalized_rows, index_order_map = drive_defect_reports.normalize_defect_report_rows(validated_rows)
+        row_lookup = _build_defect_row_lookup(normalized_rows, index_order_map)
+
+        attachment_notes = _parse_attachment_names_payload(attachment_names, row_lookup)
+
+        image_map, upload_notes = await _collect_defect_report_attachments(
+            uploads,
+            metadata_entries,
+            row_lookup,
+        )
+
+        for order, names in upload_notes.items():
+            bucket = attachment_notes.setdefault(order, [])
+            for name in names:
+                if name not in bucket:
+                    bucket.append(name)
+
+        update_info = await drive_service.update_defect_report_rows(
+            project_id=project_id,
+            rows=normalized_rows,
+            google_id=google_id,
+            images=image_map or None,
+            attachment_notes=attachment_notes or None,
+        )
+
+        file_id = update_info.get("fileId")
+        if not file_id:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        payload: Dict[str, Any] = {
+            "status": "updated",
+            "projectId": project_id,
+            "fileId": file_id,
+            "fileName": update_info.get("fileName"),
+            "modifiedTime": update_info.get("modifiedTime"),
+            "rows": normalized_rows,
+            "headers": list(drive_defect_reports.DEFECT_REPORT_EXPECTED_HEADERS),
+        }
+
+        return JSONResponse(payload)
+
     result = await ai_generation_service.generate_csv(
         project_id=project_id,
         menu_id=menu_id,
@@ -572,11 +855,22 @@ async def generate_project_asset(
                 continue
             raw_rows.append({key: str(value) if value is not None else "" for key, value in row.items()})
 
-        normalized_rows = drive_defect_reports.normalize_defect_report_rows(raw_rows)
+        normalized_rows, index_order_map = drive_defect_reports.normalize_defect_report_rows(raw_rows)
+        row_lookup = _build_defect_row_lookup(normalized_rows, index_order_map)
 
         image_map: Dict[int, List[DefectReportImage]] = {}
         if result.defect_images:
             for defect_index, uploads in result.defect_images.items():
+                resolved_index = _coerce_positive_int(defect_index)
+                if resolved_index is None:
+                    continue
+                row = row_lookup.get(resolved_index)
+                if row is None:
+                    continue
+                order = _extract_row_order(row)
+                if order is None:
+                    continue
+
                 images: List[DefectReportImage] = []
                 for upload in uploads:
                     images.append(
@@ -588,18 +882,26 @@ async def generate_project_asset(
                     )
                 if not images:
                     continue
-                try:
-                    normalized_index = int(defect_index)
-                except (TypeError, ValueError):
-                    continue
-                image_map[normalized_index] = images
+
+                image_bucket = image_map.setdefault(order, [])
+                image_bucket.extend(images)
 
         attachment_notes: Dict[int, List[str]] = {}
         if result.defect_summary:
             for entry in result.defect_summary:
+                resolved_index = _coerce_positive_int(getattr(entry, "index", None))
+                if resolved_index is None:
+                    continue
+                row = row_lookup.get(resolved_index)
+                if row is None:
+                    continue
+                order = _extract_row_order(row)
+                if order is None:
+                    continue
+
                 names = [att.file_name for att in entry.attachments if att.file_name]
                 if names:
-                    attachment_notes[entry.index] = names
+                    attachment_notes[order] = names
 
         update_info = await drive_service.update_defect_report_rows(
             project_id=project_id,
