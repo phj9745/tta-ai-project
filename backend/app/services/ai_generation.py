@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
@@ -16,7 +16,7 @@ import re
 import zipfile
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
@@ -34,9 +34,15 @@ from openai import (
 
 from ..config import Settings
 from .excel_templates import TESTCASE_EXPECTED_HEADERS
+from .excel_templates.utils import AI_CSV_DELIMITER
 from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
-from .prompt_config import PromptBuiltinContext, PromptConfigService
+from .prompt_config import (
+    PromptBuiltinContext,
+    PromptConfig,
+    PromptConfigService,
+    PromptResourcesConfig,
+)
 from .prompt_request_log import PromptRequestLogService
 
 
@@ -101,6 +107,19 @@ class DefectSummaryEntry:
     original_text: str
     polished_text: str
     attachments: List[DefectSummaryAttachment]
+
+
+@dataclass(frozen=True)
+class DefectConversationTurn:
+    role: Literal["user", "assistant"]
+    text: str
+
+
+@dataclass(frozen=True)
+class DefectPromptResources:
+    judgement_criteria: str | None = None
+    output_example: str | None = None
+    conversation: List[DefectConversationTurn] = field(default_factory=list)
 
 logger = logging.getLogger(__name__)
 
@@ -382,6 +401,7 @@ class AIGenerationService:
         *,
         project_id: str,
         entries: List[Dict[str, str]],
+        feature_context: str = "",
     ) -> List[NormalizedDefect]:
         if not entries:
             raise HTTPException(status_code=422, detail="정제할 결함 항목이 없습니다.")
@@ -403,13 +423,25 @@ class AIGenerationService:
         if not bullet_lines:
             raise HTTPException(status_code=422, detail="결함 항목에서 내용을 찾을 수 없습니다.")
 
-        user_prompt = (
+        context_prompt = ""
+        stripped_context = feature_context.strip()
+        if stripped_context:
+            context_prompt = (
+                "프로그램의 기능리스트 요약입니다. 결함을 다듬을 때 해당 기능의 목적과 범위를 고려하세요.\n"
+                f"{stripped_context}\n\n"
+            )
+
+        base_prompt = (
             "다음 결함 설명을 공문서에 맞는 문장으로 다듬어 주세요.\n"
             "- 결과는 입력 순서를 유지한 번호 매기기 형식으로 작성하세요.\n"
             "- 각 줄은 '번호. 정제된 문장' 형태여야 합니다.\n"
             "- 존댓말 어미를 사용하고 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
             "- 번호 목록 이외의 설명이나 부가 문장은 작성하지 마세요.\n\n"
-            "입력 결함 목록:\n"
+        )
+        user_prompt = (
+            base_prompt
+            + (context_prompt or "")
+            + "입력 결함 목록:\n"
             + "\n".join(bullet_lines)
         )
 
@@ -1173,6 +1205,7 @@ class AIGenerationService:
             "작성 지침:",
             "- 위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
             f"- CSV 열은 {headers_text} 순서를 따릅니다.",
+            "- 각 열은 파이프(|) 기호로 구분합니다.",
             "- 각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고",
             "  XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
             "- '테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼",
@@ -1183,8 +1216,8 @@ class AIGenerationService:
             "  추가하지 마세요.",
             "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
             "- 여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
-            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 CSV 쉼표로 구분됩니다):",
-            "  TC-001-001, 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인, \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\", 기업이 정상적으로 생성됨, 미실행, ,",
+            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 파이프(|)로 구분됩니다):",
+            "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | ",
             "- CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
         ]
 
@@ -1258,7 +1291,7 @@ class AIGenerationService:
         awaiting_overview_value = False
 
         stream = io.StringIO(csv_text)
-        reader = csv.reader(stream)
+        reader = csv.reader(stream, delimiter=AI_CSV_DELIMITER)
 
         for raw_row in reader:
             row = [cell.strip() for cell in raw_row]
@@ -1313,7 +1346,7 @@ class AIGenerationService:
             return "", project_overview
 
         output = io.StringIO()
-        writer = csv.writer(output, lineterminator="\n")
+        writer = csv.writer(output, lineterminator="\n", delimiter=AI_CSV_DELIMITER)
         for row in rows_to_keep:
             writer.writerow(row)
         return output.getvalue().strip(), project_overview
@@ -1699,7 +1732,7 @@ class AIGenerationService:
                 defect_prompt_section,
                 defect_summary_entries,
                 defect_image_map,
-            ) = self._prepare_defect_report_contexts(contexts)
+            ) = self._prepare_defect_report_contexts(contexts, prompt_config)
 
         client = self._get_client()
         uploaded_file_records: List[tuple[str, bool]] = []
@@ -2073,7 +2106,7 @@ class AIGenerationService:
         return f"data:{media_type};base64,{encoded}"
 
     def _prepare_defect_report_contexts(
-        self, contexts: List[UploadContext]
+        self, contexts: List[UploadContext], prompt_config: PromptConfig
     ) -> tuple[
         List[UploadContext],
         str | None,
@@ -2081,7 +2114,7 @@ class AIGenerationService:
         Dict[int, List[BufferedUpload]],
     ]:
         summary_entries: List[DefectSummaryEntry] | None = None
-        prompt_section: str | None = None
+        prompt_resources: DefectPromptResources | None = None
         image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
         filtered_contexts: List[UploadContext] = []
 
@@ -2103,19 +2136,73 @@ class AIGenerationService:
             )
 
             if is_json_upload:
-                if summary_entries is None:
-                    parsed = self._parse_defect_summary_upload(upload)
-                    if parsed:
-                        summary_entries = parsed
-                        prompt_section = self._format_defect_prompt_section(parsed)
+                parsed_entries, parsed_resources = self._parse_defect_summary_upload(upload)
+                if summary_entries is None and parsed_entries:
+                    summary_entries = parsed_entries
+                if prompt_resources is None and parsed_resources:
+                    prompt_resources = parsed_resources
                 continue
 
             filtered_contexts.append(context)
 
+        prompt_resources = self._merge_defect_prompt_resources(
+            prompt_resources, prompt_config.prompt_resources
+        )
+
+        prompt_section: str | None = None
+        if (summary_entries and len(summary_entries) > 0) or prompt_resources:
+            prompt_section = self._format_defect_prompt_section(
+                summary_entries or [], prompt_resources
+            )
+
         return filtered_contexts, prompt_section, summary_entries, image_map
 
     @staticmethod
-    def _parse_defect_summary_upload(upload: BufferedUpload) -> List[DefectSummaryEntry]:
+    def _merge_defect_prompt_resources(
+        parsed: DefectPromptResources | None,
+        config_resources: PromptResourcesConfig | None,
+    ) -> DefectPromptResources | None:
+        if parsed is None and config_resources is None:
+            return None
+
+        config_judgement = (
+            config_resources.judgement_criteria.strip()
+            if config_resources and config_resources.judgement_criteria
+            else ""
+        )
+        config_example = (
+            config_resources.output_example.strip()
+            if config_resources and config_resources.output_example
+            else ""
+        )
+
+        parsed_judgement = (
+            parsed.judgement_criteria.strip()
+            if parsed and parsed.judgement_criteria
+            else ""
+        )
+        parsed_example = (
+            parsed.output_example.strip() if parsed and parsed.output_example else ""
+        )
+
+        conversation = list(parsed.conversation) if parsed else []
+
+        judgement = parsed_judgement or config_judgement
+        example = parsed_example or config_example
+
+        if not judgement and not example and not conversation:
+            return None
+
+        return DefectPromptResources(
+            judgement_criteria=judgement or None,
+            output_example=example or None,
+            conversation=conversation,
+        )
+
+    @staticmethod
+    def _parse_defect_summary_upload(
+        upload: BufferedUpload,
+    ) -> tuple[List[DefectSummaryEntry], DefectPromptResources | None]:
         try:
             decoded = upload.content.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -2124,11 +2211,11 @@ class AIGenerationService:
         try:
             payload = json.loads(decoded)
         except json.JSONDecodeError:
-            return []
+            return [], None
 
         defects = payload.get("defects") if isinstance(payload, dict) else None
         if not isinstance(defects, list):
-            return []
+            defects = []
 
         entries: List[DefectSummaryEntry] = []
         for item in defects:
@@ -2169,25 +2256,94 @@ class AIGenerationService:
                 )
             )
 
-        return entries
+        resources_payload = (
+            payload.get("promptResources") if isinstance(payload, dict) else None
+        )
+        prompt_resources: DefectPromptResources | None = None
+        if isinstance(resources_payload, dict):
+            judgement_raw = resources_payload.get("judgementCriteria")
+            judgement = judgement_raw.strip() if isinstance(judgement_raw, str) else None
+            example_raw = resources_payload.get("outputExample")
+            output_example = example_raw.strip() if isinstance(example_raw, str) else None
+
+            conversation_raw = resources_payload.get("conversation")
+            conversation: List[DefectConversationTurn] = []
+            if isinstance(conversation_raw, list):
+                for entry in conversation_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    role = entry.get("role")
+                    text_raw = entry.get("text")
+                    if role not in ("user", "assistant") or not isinstance(text_raw, str):
+                        continue
+                    text = text_raw.strip()
+                    if not text:
+                        continue
+                    conversation.append(DefectConversationTurn(role=role, text=text))
+
+            if judgement or output_example or conversation:
+                prompt_resources = DefectPromptResources(
+                    judgement_criteria=judgement,
+                    output_example=output_example,
+                    conversation=conversation,
+                )
+
+        return entries, prompt_resources
 
     @staticmethod
-    def _format_defect_prompt_section(entries: List[DefectSummaryEntry]) -> str | None:
-        if not entries:
+    def _format_defect_prompt_section(
+        entries: List[DefectSummaryEntry],
+        resources: DefectPromptResources | None = None,
+    ) -> str | None:
+        lines: List[str] = []
+
+        if entries:
+            lines.append("정제된 결함 목록")
+            lines.append("")
+            for entry in sorted(entries, key=lambda item: item.index):
+                polished = entry.polished_text or "-"
+                lines.append(f"{entry.index}. {polished}")
+                if entry.original_text:
+                    lines.append(f"   - 원문: {entry.original_text}")
+                if entry.attachments:
+                    names = ", ".join(att.file_name for att in entry.attachments)
+                    lines.append(f"   - 첨부 이미지: {names}")
+
+        if resources:
+            def add_section(title: str, body: str | List[str]) -> None:
+                if isinstance(body, list):
+                    content_lines = [line for line in body if line.strip()]
+                else:
+                    text = body.strip()
+                    if not text:
+                        return
+                    content_lines = [text]
+                if not content_lines:
+                    return
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(title)
+                lines.append("")
+                lines.extend(content_lines)
+
+            if resources.judgement_criteria:
+                add_section("결함 판단 기준", resources.judgement_criteria)
+            if resources.output_example:
+                add_section("출력 예시", resources.output_example)
+            if resources.conversation:
+                conversation_lines: List[str] = []
+                for index, turn in enumerate(resources.conversation, start=1):
+                    text = turn.text.strip()
+                    if not text:
+                        continue
+                    speaker = "사용자" if turn.role == "user" else "GPT"
+                    conversation_lines.append(f"{index}. {speaker}: {text}")
+                add_section("이전 대화", conversation_lines)
+
+        if not lines:
             return None
 
-        lines: List[str] = ["정제된 결함 목록", ""]
-        for entry in sorted(entries, key=lambda item: item.index):
-            polished = entry.polished_text or "-"
-            lines.append(f"{entry.index}. {polished}")
-            if entry.original_text:
-                lines.append(f"   - 원문: {entry.original_text}")
-            if entry.attachments:
-                names = ", ".join(att.file_name for att in entry.attachments)
-                lines.append(f"   - 첨부 이미지: {names}")
-            lines.append("")
-
-        return "\n".join(line for line in lines if line is not None).strip()
+        return "\n".join(lines).strip()
 
     def _builtin_attachment_contexts(
         self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]

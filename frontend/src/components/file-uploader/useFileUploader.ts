@@ -102,9 +102,6 @@ export function useFileUploader({
   }, [maxFiles])
 
   const atCapacity = maxFileCount !== undefined && files.length >= maxFileCount
-  const shouldHideForFilled =
-    hideDropzoneWhenFilled && (maxFileCount !== undefined ? files.length >= maxFileCount : files.length > 0)
-  const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
   const isGridVariant = variant === 'grid'
 
   const acceptValue = useMemo(() => {
@@ -120,6 +117,11 @@ export function useFileUploader({
   }, [files, multiple])
 
   const shouldRenderCompactPreview = shouldUseCompactLayout && hideDropzoneWhenFilled
+  const shouldHideForFilled =
+    hideDropzoneWhenFilled &&
+    !shouldRenderCompactPreview &&
+    (maxFileCount !== undefined ? files.length >= maxFileCount : files.length > 0)
+  const dropzoneDisabled = disabled || atCapacity || shouldHideForFilled
   const shouldShowDropzone =
     !hideDropzoneWhenFilled || files.length === 0 || shouldRenderCompactPreview
 

@@ -25,10 +25,28 @@ export interface DefectReportTableRow {
   cells: Record<string, string>
 }
 
+export interface FinalizedDefectRow {
+  index: number
+  cells: Record<string, string>
+  attachmentNames: string[]
+}
+
+export interface DefectWorkItem {
+  entry: DefectEntry
+  attachments: File[]
+  status: AsyncStatus
+  error: string | null
+  result: Record<string, string>
+  messages: ConversationMessage[]
+  input: string
+  inputError: string | null
+  isCollapsed: boolean
+}
+
 export interface DefectReportWorkflowProps {
   backendUrl: string
   projectId: string
-  onPreviewModeChange?: (isPreviewVisible: boolean) => void
+  projectName: string
 }
 
 export interface SelectedCell {
@@ -37,6 +55,7 @@ export interface SelectedCell {
 }
 
 export const TXT_ONLY = ['txt'] as const
+export const FEATURE_LIST_TYPES = ['xlsx', 'xls', 'csv'] as const
 
 export const ATTACHMENT_ACCEPT = new Set(['image/jpeg', 'image/png'])
 

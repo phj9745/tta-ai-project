@@ -1,191 +1,577 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { navigate } from '../navigation'
 import { DefectTable } from './defect-report-workflow/DefectTable'
-import { PreviewSection } from './defect-report-workflow/PreviewSection'
 import { SourceUploadPanel } from './defect-report-workflow/SourceUploadPanel'
 import {
-  DEFECT_REPORT_COLUMNS,
+  ATTACHMENT_ACCEPT,
+  type AttachmentMap,
+  type ConversationMessage,
   type DefectReportWorkflowProps,
+  type DefectWorkItem,
+  type FinalizedDefectRow,
 } from './defect-report-workflow/types'
 import {
-  useDefectAttachments,
-  useDefectDownload,
+  useDefectFinalize,
   useFormalizeDefects,
+  type DefectFinalizeRow,
 } from './defect-report-workflow/hooks'
+import {
+  buildAttachmentFileName,
+  buildRowsFromJsonTable,
+  createFileKey,
+} from './defect-report-workflow/utils'
+import {
+  buildPromptResourcesPayload,
+  type PromptResourcesConfig,
+} from './defect-report-workflow/promptResources'
+import { normalizeDefectResultCells } from './defect-report-workflow/normalizers'
+
+function buildFinalizedRows(items: DefectWorkItem[]): FinalizedDefectRow[] {
+  return items.map((item) => {
+    const normalized = normalizeDefectResultCells(item.result)
+    const getValue = (key: string) => {
+      const value = normalized[key]
+      return typeof value === 'string' ? value.trim() : ''
+    }
+    const attachmentNames = item.attachments.map((file) =>
+      buildAttachmentFileName(item.entry.index, file.name),
+    )
+
+    const environment = attachmentNames.length > 0 ? '시험환경 모든 OS' : '-'
+    const description = getValue('결함 설명') || item.entry.polishedText || ''
+    const note = attachmentNames.join('\n')
+
+    const cells: Record<string, string> = {
+      순번: String(item.entry.index),
+      '시험환경(OS)': environment,
+      결함요약: getValue('결함요약'),
+      결함정도: getValue('결함정도'),
+      발생빈도: getValue('발생빈도'),
+      품질특성: getValue('품질특성'),
+      '결함 설명': description,
+      '업체 응답': getValue('업체 응답'),
+      수정여부: getValue('수정여부'),
+      비고: note,
+    }
+
+    return {
+      index: item.entry.index,
+      cells,
+      attachmentNames,
+    }
+  })
+}
+
+const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품질특성', '결함 설명'] as const
 
 export function DefectReportWorkflow({
   backendUrl,
   projectId,
-  onPreviewModeChange,
+  projectName,
 }: DefectReportWorkflowProps) {
-  const previewSectionRef = useRef<HTMLElement | null>(null)
-  const previousRowCountRef = useRef(0)
-
+  
   const {
+    featureFiles,
     sourceFiles,
     defects,
     formalizeStatus,
     formalizeError,
+    changeFeature,
     changeSource,
     formalize,
     updatePolished,
     reset: resetFormalize,
   } = useFormalizeDefects({ backendUrl, projectId })
 
-  const {
-    attachments,
-    addAttachments,
-    removeAttachment,
-    reset: resetAttachments,
-    hasAttachments,
-  } = useDefectAttachments()
-
-  const {
-    tableRows,
-    isTableDirty,
-    generateStatus,
-    generateError,
-    isGenerating,
-    downloadStatus,
-    downloadError,
-    hasDownload,
-    hasPreviewRows,
-    selectedCell,
-    selectedRow,
-    selectedColumn,
-    selectedValue,
-    rewriteMessages,
-    rewriteStatus,
-    rewriteError,
-    rewriteInput,
-    generateReport,
-    downloadReport,
-    selectCell,
-    applyCellUpdate,
-    updateRewriteInput,
-    submitRewrite,
-    reset: resetDownload,
-  } = useDefectDownload({ backendUrl, projectId })
-
-  const handleFormalize = useCallback(async () => {
-    previousRowCountRef.current = 0
-    resetDownload()
-    const success = await formalize()
-    if (success) {
-      resetAttachments()
-    }
-  }, [formalize, resetAttachments, resetDownload])
-
-  const handleGenerate = useCallback(() => {
-    void generateReport(defects, attachments, defects.length > 0 && formalizeStatus === 'success')
-  }, [attachments, defects, formalizeStatus, generateReport])
-
-  const handleDownload = useCallback(() => {
-    void downloadReport(attachments)
-  }, [attachments, downloadReport])
-
-  const handleReset = useCallback(() => {
-    previousRowCountRef.current = 0
-    resetFormalize()
-    resetAttachments()
-    resetDownload()
-  }, [resetAttachments, resetDownload, resetFormalize])
-
-  const handleSelectCell = useCallback(
-    (rowIndex: number, columnKey: string) => {
-      selectCell(rowIndex, columnKey)
-    },
-    [selectCell],
-  )
-
-  const handleUpdateSelectedValue = useCallback(
-    (value: string) => {
-      if (!selectedCell) {
-        return
-      }
-      applyCellUpdate(selectedCell.rowIndex, selectedCell.columnKey, value)
-    },
-    [applyCellUpdate, selectedCell],
-  )
-
-  const handleRewriteSubmit = useCallback(() => {
-    void submitRewrite()
-  }, [submitRewrite])
-
-  const canGenerate = defects.length > 0 && formalizeStatus === 'success'
-  const isGenerated = generateStatus === 'success'
-  const shouldHideReviewStep = isGenerating || isGenerated || hasPreviewRows
-  const shouldShowPreviewSection = hasPreviewRows || isGenerating || isGenerated
-  const hasSource = sourceFiles.length > 0
-
-  const hasProgress = useMemo(
-    () =>
-      hasSource ||
-      defects.length > 0 ||
-      hasAttachments ||
-      hasPreviewRows ||
-      isGenerating ||
-      isGenerated ||
-      isTableDirty ||
-      rewriteMessages.length > 0 ||
-      hasDownload,
-    [
-      defects.length,
-      hasAttachments,
-      hasDownload,
-      hasPreviewRows,
-      hasSource,
-      isGenerating,
-      isGenerated,
-      isTableDirty,
-      rewriteMessages.length,
-    ],
-  )
-
-  const isResetDisabled =
-    formalizeStatus === 'loading' || isGenerating || downloadStatus === 'loading'
-
-  const showResetInUpload = hasProgress && formalizeStatus !== 'success'
-  const showResetInReview = hasProgress && formalizeStatus === 'success' && !shouldHideReviewStep
-  const showResetInPreview = hasProgress && shouldShowPreviewSection
+  const [defectItems, setDefectItems] = useState<DefectWorkItem[]>([])
+  const defectItemsRef = useRef<DefectWorkItem[]>([])
 
   useEffect(() => {
-    const previousCount = previousRowCountRef.current
-    if (tableRows.length > 0 && previousCount === 0 && previewSectionRef.current) {
-      previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    previousRowCountRef.current = tableRows.length
-  }, [tableRows.length])
+    defectItemsRef.current = defectItems
+  }, [defectItems])
 
   useEffect(() => {
-    if (generateStatus === 'loading' || generateStatus === 'success') {
-      if (previewSectionRef.current) {
-        previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-    }
-  }, [generateStatus])
-
-  useEffect(() => {
-    if (!onPreviewModeChange) {
+    if (formalizeStatus !== 'success') {
+      setDefectItems([])
       return
     }
 
-    onPreviewModeChange(shouldShowPreviewSection)
+    setDefectItems((prev) => {
+      const map = new Map(prev.map((item) => [item.entry.index, item]))
+      return defects.map((defect) => {
+        const existing = map.get(defect.index)
+        if (existing) {
+          return {
+            ...existing,
+            entry: defect,
+          }
+        }
+        return {
+          entry: defect,
+          attachments: [],
+          status: 'idle',
+          error: null,
+          result: {},
+          messages: [],
+          input: '',
+          inputError: null,
+          isCollapsed: false,
+        }
+      })
+    })
+  }, [defects, formalizeStatus])
 
-    return () => {
-      onPreviewModeChange(false)
+  const attachmentMap = useMemo<AttachmentMap>(() => {
+    const map: AttachmentMap = {}
+    defectItems.forEach((item) => {
+      if (item.attachments.length > 0) {
+        map[item.entry.index] = item.attachments
+      }
+    })
+    return map
+  }, [defectItems])
+
+  const finalizedRows = useMemo(() => buildFinalizedRows(defectItems), [defectItems])
+
+  const hasAttachments = useMemo(
+    () => defectItems.some((item) => item.attachments.length > 0),
+    [defectItems],
+  )
+
+  const [promptResources, setPromptResources] = useState<PromptResourcesConfig | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadPromptResources() {
+      try {
+        const response = await fetch(`${backendUrl}/admin/prompts/defect-report`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          return
+        }
+        const payload = (await response.json()) as {
+          config?: { promptResources?: PromptResourcesConfig | null }
+        }
+        const raw = payload?.config?.promptResources
+        if (raw && typeof raw.judgementCriteria === 'string' && typeof raw.outputExample === 'string') {
+          setPromptResources({
+            judgementCriteria: raw.judgementCriteria,
+            outputExample: raw.outputExample,
+          })
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error(error)
+        }
+      }
     }
-  }, [onPreviewModeChange, shouldShowPreviewSection])
 
-  const rootClassName = `defect-workflow${shouldShowPreviewSection ? ' defect-workflow--preview-visible' : ''}`
+    loadPromptResources()
+    return () => controller.abort()
+  }, [backendUrl])
+
+  const {
+    status: finalizeStatus,
+    error: finalizeError,
+    finalize: finalizeReport,
+    reset: resetFinalize,
+  } = useDefectFinalize({ backendUrl, projectId })
+
+  const handleFormalize = useCallback(async () => {
+    resetFinalize()
+    setDefectItems([])
+    const success = await formalize()
+    if (!success) {
+      setDefectItems([])
+    }
+  }, [formalize, resetFinalize])
+
+  const handleAddAttachments = useCallback((defectIndex: number, files: FileList | File[]) => {
+    const list = Array.from(files)
+    if (list.length === 0) {
+      return
+    }
+
+    const filtered = list.filter((file) => {
+      if (file.type && ATTACHMENT_ACCEPT.has(file.type.toLowerCase())) {
+        return true
+      }
+      const ext = file.name.split('.').pop()?.toLowerCase()
+      return ext === 'png' || ext === 'jpg' || ext === 'jpeg'
+    })
+
+    if (filtered.length === 0) {
+      return
+    }
+
+    setDefectItems((prev) =>
+      prev.map((item) => {
+        if (item.entry.index !== defectIndex) {
+          return item
+        }
+        const existingKeys = new Set(item.attachments.map(createFileKey))
+        const nextAttachments = [...item.attachments]
+        filtered.forEach((file) => {
+          const key = createFileKey(file)
+          if (!existingKeys.has(key)) {
+            nextAttachments.push(file)
+            existingKeys.add(key)
+          }
+        })
+        return { ...item, attachments: nextAttachments, isCollapsed: false }
+      }),
+    )
+  }, [])
+
+  const handleRemoveAttachment = useCallback((defectIndex: number, target: File) => {
+    setDefectItems((prev) =>
+      prev.map((item) => {
+        if (item.entry.index !== defectIndex) {
+          return item
+        }
+        const nextAttachments = item.attachments.filter((file) => file !== target)
+        return { ...item, attachments: nextAttachments, isCollapsed: false }
+      }),
+    )
+  }, [])
+
+  const handlePolishedChange = useCallback(
+    (defectIndex: number, value: string) => {
+      updatePolished(defectIndex, value)
+      setDefectItems((prev) =>
+        prev.map((item) =>
+          item.entry.index === defectIndex ? { ...item, isCollapsed: false } : item,
+        ),
+      )
+    },
+    [updatePolished],
+  )
+
+  const handleResultChange = useCallback(
+    (defectIndex: number, columnKey: string, value: string) => {
+      setDefectItems((prev) =>
+        prev.map((item) => {
+          if (item.entry.index !== defectIndex) {
+            return item
+          }
+          return {
+            ...item,
+            result: {
+              ...item.result,
+              [columnKey]: value,
+            },
+            isCollapsed: false,
+          }
+        }),
+      )
+    },
+    [],
+  )
+
+  const handleComplete = useCallback((defectIndex: number) => {
+    setDefectItems((prev) =>
+      prev.map((item) => {
+        if (item.entry.index !== defectIndex) {
+          return item
+        }
+        const hasValue = RESULT_COLUMN_KEYS.some(
+          (key) => (item.result[key] ?? '').trim().length > 0,
+        )
+        if (!hasValue) {
+          return item
+        }
+        return { ...item, isCollapsed: true }
+      }),
+    )
+  }, [])
+
+  const handleResume = useCallback((defectIndex: number) => {
+    setDefectItems((prev) =>
+      prev.map((item) =>
+        item.entry.index === defectIndex ? { ...item, isCollapsed: false } : item,
+      ),
+    )
+  }, [])
+
+  const handleChatInputChange = useCallback((defectIndex: number, value: string) => {
+    setDefectItems((prev) =>
+      prev.map((item) =>
+        item.entry.index === defectIndex
+          ? { ...item, input: value, inputError: null, isCollapsed: false }
+          : item,
+      ),
+    )
+  }, [])
+
+  const handleGenerateDefectRow = useCallback(
+    async (defectIndex: number, overrideMessages?: ConversationMessage[]) => {
+      const card = defectItemsRef.current.find((item) => item.entry.index === defectIndex)
+      if (!card) {
+        return
+      }
+
+      const messages = overrideMessages ?? card.messages
+
+      setDefectItems((prev) =>
+        prev.map((item) =>
+          item.entry.index === defectIndex
+            ? { ...item, status: 'loading', error: null, inputError: null, isCollapsed: false }
+            : item,
+        ),
+      )
+
+      const summary = {
+        defects: [
+          {
+            index: card.entry.index,
+            originalText: card.entry.originalText,
+            polishedText: card.entry.polishedText,
+            attachments: card.attachments.map((file) => ({
+              fileName: buildAttachmentFileName(card.entry.index, file.name),
+              originalFileName: file.name,
+            })),
+          },
+        ],
+        promptResources: buildPromptResourcesPayload(messages, promptResources ?? undefined),
+      }
+
+      const formData = new FormData()
+      formData.append('menu_id', 'defect-report')
+
+      const summaryFile = new File(
+        [JSON.stringify(summary, null, 2)],
+        `정제된-결함-${card.entry.index}.json`,
+        { type: 'application/json' },
+      )
+
+      const metadataEntries: Array<Record<string, unknown>> = [
+        {
+          role: 'additional',
+          description: '정제된 결함 목록',
+          label: '정제된 결함 목록',
+          notes: '결함 문장 정제 결과(JSON)',
+        },
+      ]
+
+      formData.append('files', summaryFile)
+
+      card.attachments.forEach((file) => {
+        const normalizedName = buildAttachmentFileName(card.entry.index, file.name)
+        const renamed =
+          file.name === normalizedName ? file : new File([file], normalizedName, { type: file.type })
+        formData.append('files', renamed)
+        metadataEntries.push({
+          role: 'additional',
+          description: `결함 ${card.entry.index} 이미지`,
+          label: `결함 ${card.entry.index} 이미지`,
+          notes: `원본 파일명: ${file.name}`,
+          defect_index: card.entry.index,
+        })
+      })
+
+      formData.append('file_metadata', JSON.stringify(metadataEntries))
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/generate`,
+          {
+            method: 'POST',
+            body: formData,
+          },
+        )
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          const detail =
+            payload && typeof payload.detail === 'string'
+              ? payload.detail
+              : '결함 요약을 생성하지 못했습니다.'
+          throw new Error(detail)
+        }
+
+        const payload = (await response.json().catch(() => ({}))) as {
+          rows?: unknown
+          headers?: unknown
+        }
+
+        const rows = buildRowsFromJsonTable(payload.headers, payload.rows)
+        const row = rows[0]
+        if (!row) {
+          throw new Error('생성된 결함 요약을 찾을 수 없습니다.')
+        }
+
+        const result = normalizeDefectResultCells({ ...row.cells })
+        const assistantText = RESULT_COLUMN_KEYS.map((key) => {
+          const value = result[key]?.trim()
+          return `${key}: ${value || '-'}`
+        }).join('\n')
+
+        setDefectItems((prev) =>
+          prev.map((item) =>
+            item.entry.index === defectIndex
+              ? {
+                  ...item,
+                  status: 'success',
+                  error: null,
+                  result,
+                  messages: [...messages, { role: 'assistant', text: assistantText }],
+                }
+              : item,
+          ),
+        )
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : '결함 요약을 생성하는 중 예기치 않은 오류가 발생했습니다.'
+        setDefectItems((prev) =>
+          prev.map((item) =>
+            item.entry.index === defectIndex
+              ? { ...item, status: 'error', error: message }
+              : item,
+          ),
+        )
+      }
+    },
+    [backendUrl, projectId],
+  )
+
+  const handleGenerateDefect = useCallback(
+    (defectIndex: number) => {
+      void handleGenerateDefectRow(defectIndex)
+    },
+    [handleGenerateDefectRow],
+  )
+
+  const handleChatSubmit = useCallback(
+    (defectIndex: number) => {
+      const card = defectItemsRef.current.find((item) => item.entry.index === defectIndex)
+      if (!card) {
+        return
+      }
+
+      const message = card.input.trim()
+      if (!message) {
+        setDefectItems((prev) =>
+          prev.map((item) =>
+            item.entry.index === defectIndex
+              ? { ...item, inputError: 'GPT에게 전달할 내용을 입력해 주세요.' }
+              : item,
+          ),
+        )
+        return
+      }
+
+      const nextMessages: ConversationMessage[] = [
+        ...card.messages,
+        { role: 'user', text: message },
+      ]
+
+      setDefectItems((prev) =>
+        prev.map((item) =>
+          item.entry.index === defectIndex
+            ? { ...item, messages: nextMessages, input: '', inputError: null, isCollapsed: false }
+            : item,
+        ),
+      )
+
+      void handleGenerateDefectRow(defectIndex, nextMessages)
+    },
+    [handleGenerateDefectRow],
+  )
+
+  const handleGenerate = useCallback(async () => {
+    if (finalizeStatus === 'loading') {
+      return
+    }
+
+    const payload = await finalizeReport(finalizedRows, attachmentMap)
+    if (!payload || typeof payload !== 'object') {
+      return
+    }
+
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const nextParams = new URLSearchParams(window.location.search)
+    if (projectName && projectName !== projectId && !nextParams.get('name')) {
+      nextParams.set('name', projectName)
+    }
+
+    const fileId = typeof payload.fileId === 'string' ? payload.fileId.trim() : ''
+    if (fileId) {
+      nextParams.set('fileId', fileId)
+    } else {
+      nextParams.delete('fileId')
+    }
+
+    const fileName = typeof payload.fileName === 'string' ? payload.fileName.trim() : ''
+    if (fileName) {
+      nextParams.set('fileName', fileName)
+    } else {
+      nextParams.delete('fileName')
+    }
+
+    const modified = typeof payload.modifiedTime === 'string' ? payload.modifiedTime.trim() : ''
+    if (modified) {
+      nextParams.set('modifiedTime', modified)
+    } else {
+      nextParams.delete('modifiedTime')
+    }
+
+    const query = nextParams.toString()
+    navigate(
+      `/projects/${encodeURIComponent(projectId)}/defect-report/edit${query ? `?${query}` : ''}`,
+    )
+  }, [attachmentMap, finalizedRows, finalizeReport, finalizeStatus, projectId, projectName])
+
+  const handleReset = useCallback(() => {
+    resetFormalize()
+    resetFinalize()
+    setDefectItems([])
+  }, [resetFinalize, resetFormalize])
+
+  const canGenerate = defectItems.length > 0 && formalizeStatus === 'success'
+  const hasSource = featureFiles.length > 0 || sourceFiles.length > 0
+
+  const hasDefectWork = useMemo(
+    () =>
+      defectItems.some(
+        (item) =>
+          item.attachments.length > 0 ||
+          item.messages.length > 0 ||
+          RESULT_COLUMN_KEYS.some((key) => (item.result[key] ?? '').trim().length > 0) ||
+          item.status === 'loading' ||
+          item.status === 'success',
+      ),
+    [defectItems],
+  )
+
+  const hasProgress = useMemo(
+    () => hasSource || defectItems.length > 0 || hasAttachments || hasDefectWork,
+    [defectItems.length, hasAttachments, hasDefectWork, hasSource],
+  )
+
+  const isResetDisabled = formalizeStatus === 'loading' || finalizeStatus === 'loading'
+
+  const showResetInUpload = hasProgress && formalizeStatus !== 'success'
+
+  const rootClassName = 'defect-workflow'
 
   return (
     <div className={rootClassName}>
       {formalizeStatus !== 'success' && (
         <SourceUploadPanel
+          featureFiles={featureFiles}
           sourceFiles={sourceFiles}
           status={formalizeStatus}
           error={formalizeError}
+          onChangeFeature={changeFeature}
           onChangeSource={changeSource}
           onFormalize={handleFormalize}
           showReset={showResetInUpload}
@@ -194,87 +580,42 @@ export function DefectReportWorkflow({
         />
       )}
 
-      {defects.length > 0 && !shouldHideReviewStep && (
+      {defectItems.length > 0 && (
         <DefectTable
-          defects={defects}
-          attachments={attachments}
-          onUpdatePolished={updatePolished}
-          onAddAttachments={addAttachments}
-          onRemoveAttachment={removeAttachment}
-          showReset={showResetInReview}
-          onReset={handleReset}
-          isResetDisabled={isResetDisabled}
-        />
-      )}
-
-      {shouldShowPreviewSection && (
-        <PreviewSection
-          columns={DEFECT_REPORT_COLUMNS}
-          tableRows={tableRows}
-          selectedCell={selectedCell}
-          onSelectCell={handleSelectCell}
-          selectedRow={selectedRow}
-          selectedColumn={selectedColumn}
-          selectedValue={selectedValue}
-          onUpdateSelectedValue={handleUpdateSelectedValue}
-          rewriteMessages={rewriteMessages}
-          rewriteStatus={rewriteStatus}
-          rewriteError={rewriteError}
-          rewriteInput={rewriteInput}
-          onRewriteInputChange={updateRewriteInput}
-          onRewriteSubmit={handleRewriteSubmit}
-          isGenerating={isGenerating}
-          showReset={showResetInPreview}
-          onReset={handleReset}
-          isResetDisabled={isResetDisabled}
-          sectionRef={previewSectionRef}
+          items={defectItems}
+          onPolishedChange={handlePolishedChange}
+          onAddAttachments={handleAddAttachments}
+          onRemoveAttachment={handleRemoveAttachment}
+          onGenerate={handleGenerateDefect}
+          onChatInputChange={handleChatInputChange}
+          onChatSubmit={handleChatSubmit}
+          onResultChange={handleResultChange}
+          onComplete={handleComplete}
+          onResume={handleResume}
         />
       )}
 
       <div className="defect-workflow__footer">
         <div className="defect-workflow__buttons">
-          {!shouldHideReviewStep && (
-            <button
-              type="button"
-              className="defect-workflow__primary"
-              onClick={handleGenerate}
-              disabled={!canGenerate || isGenerating}
-            >
-              {isGenerating ? '리포트 생성 중…' : '결함 리포트 생성'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="defect-workflow__primary"
+            onClick={handleGenerate}
+            disabled={!canGenerate || finalizeStatus === 'loading'}
+          >
+            {finalizeStatus === 'loading' ? '리포트 생성 중…' : '결함 리포트 생성'}
+          </button>
         </div>
 
-        {generateStatus === 'error' && generateError && (
+        {finalizeStatus === 'error' && finalizeError && (
           <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-            {generateError}
+            {finalizeError}
           </p>
         )}
-
-        {tableRows.length > 0 && (
-          <div className="defect-workflow__result">
-            <button
-              type="button"
-              className="defect-workflow__primary"
-              onClick={handleDownload}
-              disabled={downloadStatus === 'loading'}
-            >
-              {downloadStatus === 'loading' ? '다운로드 준비 중…' : '엑셀 다운로드'}
-            </button>
-            {isTableDirty && (
-              <p className="defect-workflow__status defect-workflow__status--success">
-                화면에서 수정한 내용이 반영된 새 파일을 생성합니다.
-              </p>
-            )}
-            {downloadError && (
-              <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-                {downloadError}
-              </p>
-            )}
-            <p className="defect-workflow__helper defect-workflow__helper--small">
-              생성된 리포트는 프로젝트 드라이브의 결함 리포트 템플릿에도 반영되었습니다.
-            </p>
-          </div>
+        {finalizeStatus === 'success' && (
+          <p className="defect-workflow__status defect-workflow__status--success">
+            결함 리포트 파일로 이동합니다. 잠시만 기다려 주세요.
+          </p>
         )}
       </div>
     </div>

@@ -1753,6 +1753,30 @@
   margin: 0 0 16px;
 }
 
+.defect-workflow__upload-group {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+@media (min-width: 900px) {
+  .defect-workflow__upload-group {
+    gap: 32px;
+  }
+}
+
+.defect-workflow__upload-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.defect-workflow__subtitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  color: #1f2937;
+}
+
 .defect-workflow__helper--small {
   font-size: 13px;
   color: #5a6475;
@@ -1917,6 +1941,179 @@
 
 .defect-workflow__remove:hover {
   text-decoration: underline;
+}
+
+.defect-workflow__card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.defect-workflow__card {
+  border: 1px solid #e4e7ef;
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.defect-workflow__card--collapsed {
+  gap: 16px;
+}
+
+.defect-workflow__card--collapsed .defect-workflow__card-body {
+  display: none;
+}
+
+.defect-workflow__card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.defect-workflow__card-header-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.defect-workflow__card-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3b82f6;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.defect-workflow__card-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.defect-workflow__card-subtitle {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #4b5563;
+  line-height: 1.5;
+}
+
+.defect-workflow__card-name {
+  margin: 0;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.defect-workflow__card-name-value {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #4b5563;
+}
+
+.defect-workflow__card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.defect-workflow__card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.defect-workflow__card-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.defect-workflow__card-grid--defect {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.defect-workflow__scenario-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.defect-workflow__scenario-field span {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.defect-workflow__scenario-field--attachments {
+  gap: 12px;
+}
+
+.defect-workflow__textarea {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #d5dae5;
+  resize: vertical;
+  min-height: 120px;
+  font: inherit;
+  line-height: 1.5;
+  color: #111827;
+  overflow: hidden;
+}
+
+.defect-workflow__textarea:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.defect-workflow__result-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.defect-workflow__result-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.defect-workflow__chat-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap : 10px;
+}
+
+.defect-workflow__button {
+  border: 1px solid #d5dae5;
+  background: #ffffff;
+  color: #1f2937;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.defect-workflow__button:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+
+.defect-workflow__button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .defect-workflow__footer {

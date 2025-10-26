@@ -8,14 +8,20 @@ import {
   type ConversationMessage,
   type DefectEntry,
   type DefectReportTableRow,
+  type FinalizedDefectRow,
   type SelectedCell,
 } from './types'
 import {
   buildAttachmentFileName,
-  buildRowsFromCsv,
+  buildFinalizeRowPayload,
+  buildRowsFromJsonTable,
   createFileKey,
-  decodeBase64,
 } from './utils'
+import {
+  buildPromptResourcesPayload,
+  type PromptResourcesConfig,
+} from './promptResources'
+import { normalizeDefectRows } from './normalizers'
 
 type FormalizeOptions = {
   backendUrl: string
@@ -23,10 +29,17 @@ type FormalizeOptions = {
 }
 
 export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions) {
+  const [featureFiles, setFeatureFiles] = useState<File[]>([])
   const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [status, setStatus] = useState<AsyncStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [defects, setDefects] = useState<DefectEntry[]>([])
+
+  const changeFeature = useCallback((files: File[]) => {
+    setFeatureFiles(files.slice(0, 1))
+    setStatus('idle')
+    setError(null)
+  }, [])
 
   const changeSource = useCallback((files: File[]) => {
     setSourceFiles(files.slice(0, 1))
@@ -39,6 +52,18 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
   }, [])
 
   const formalize = useCallback(async () => {
+    if (featureFiles.length === 0 && sourceFiles.length === 0) {
+      setStatus('error')
+      setError('기능리스트 파일과 TXT 파일을 모두 업로드해 주세요.')
+      return false
+    }
+
+    if (featureFiles.length === 0) {
+      setStatus('error')
+      setError('기능리스트 파일을 업로드해 주세요.')
+      return false
+    }
+
     if (sourceFiles.length === 0) {
       setStatus('error')
       setError('TXT 파일을 업로드해 주세요.')
@@ -46,7 +71,8 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
     }
 
     const formData = new FormData()
-    formData.append('file', sourceFiles[0])
+    formData.append('featureList', featureFiles[0])
+    formData.append('defectNotes', sourceFiles[0])
 
     setStatus('loading')
     setError(null)
@@ -100,9 +126,10 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
       setError('결함 문장을 정제하는 중 예기치 않은 오류가 발생했습니다.')
       return false
     }
-  }, [backendUrl, projectId, sourceFiles])
+  }, [backendUrl, projectId, featureFiles, sourceFiles])
 
   const reset = useCallback(() => {
+    setFeatureFiles([])
     setSourceFiles([])
     setStatus('idle')
     setError(null)
@@ -110,10 +137,12 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
   }, [])
 
   return {
+    featureFiles,
     sourceFiles,
     defects,
     formalizeStatus: status,
     formalizeError: error,
+    changeFeature,
     changeSource,
     formalize,
     updatePolished,
@@ -190,9 +219,10 @@ export function useDefectAttachments() {
 type DownloadOptions = {
   backendUrl: string
   projectId: string
+  promptResources?: PromptResourcesConfig | null
 }
 
-export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
+export function useDefectDownload({ backendUrl, projectId, promptResources }: DownloadOptions) {
   const [tableRows, setTableRows] = useState<DefectReportTableRow[]>([])
   const [isTableDirty, setIsTableDirty] = useState(false)
   const [generateStatus, setGenerateStatus] = useState<AsyncStatus>('idle')
@@ -310,6 +340,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
             originalFileName: file.name,
           })),
         })),
+        promptResources: buildPromptResourcesPayload([], promptResources ?? undefined),
       }
 
       const formData = new FormData()
@@ -329,6 +360,11 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
       ]
 
       formData.append('files', summaryFile)
+
+      createPromptAttachmentFiles([]).forEach((attachment) => {
+        formData.append('files', attachment.file)
+        metadataEntries.push(attachment.metadata)
+      })
 
       defects.forEach((item) => {
         const files = attachments[item.index] ?? []
@@ -369,39 +405,30 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
           return false
         }
 
-        const blob = await response.blob()
-        const disposition = response.headers.get('content-disposition')
-        let filename = 'defect-report.xlsx'
-        if (disposition) {
-          const match = disposition.match(/filename\*?=([^;]+)/i)
-          if (match) {
-            const value = match[1].replace(/^UTF-8''/i, '')
-            try {
-              filename = decodeURIComponent(value.replace(/"/g, ''))
-            } catch {
-              filename = value.replace(/"/g, '')
-            }
-          }
+        const payload = (await response.json().catch(() => ({}))) as {
+          headers?: unknown
+          rows?: unknown
+          fileName?: unknown
         }
 
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (encodedTable) {
-          const rows = buildRowsFromCsv(encodedTable)
-          setTableRows(rows)
-          if (rows.length > 0) {
-            setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
-          }
+        const rows = normalizeDefectRows(buildRowsFromJsonTable(payload.headers, payload.rows))
+        setTableRows(rows)
+        if (rows.length > 0) {
+          setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
         }
+
+        const filename =
+          typeof payload?.fileName === 'string' && payload.fileName.trim()
+            ? payload.fileName.trim()
+            : null
 
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
+          setDownloadUrl(null)
         }
 
-        const objectUrl = URL.createObjectURL(blob)
-        setDownloadUrl(objectUrl)
         setDownloadName(filename)
         setIsTableDirty(false)
-        setDownloadStatus('success')
         setGenerateStatus('success')
         return true
       } catch (error) {
@@ -503,15 +530,6 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
           }
         }
 
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (encodedTable) {
-          const rows = buildRowsFromCsv(encodedTable)
-          setTableRows(rows)
-          if (!selectedCell && rows.length > 0) {
-            setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
-          }
-        }
-
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
         }
@@ -540,7 +558,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
         return false
       }
     },
-    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, selectedCell, tableRows.length],
+    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, tableRows.length],
   )
 
   const submitRewrite = useCallback(async () => {
@@ -682,4 +700,119 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
     submitRewrite,
     reset,
   }
+}
+
+type FinalizeOptions = {
+  backendUrl: string
+  projectId: string
+}
+
+export interface DefectFinalizeRow {
+  order?: string | number
+  environment?: string | null
+  summary?: string | null
+  severity?: string | null
+  frequency?: string | null
+  quality?: string | null
+  description?: string | null
+  vendorResponse?: string | null
+  fixStatus?: string | null
+  note?: string | null
+}
+
+interface DefectFinalizeResponse {
+  fileId?: string
+  fileName?: string
+  modifiedTime?: string
+  rows?: unknown
+  headers?: unknown
+}
+
+export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
+  const [status, setStatus] = useState<AsyncStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+
+  const finalize = useCallback(
+    async (rows: FinalizedDefectRow[], attachments: AttachmentMap) => {
+      if (!rows.length) {
+        setStatus('error')
+        setError('업데이트할 결함 리포트가 없습니다.')
+        return null
+      }
+
+      setStatus('loading')
+      setError(null)
+
+      const formData = new FormData()
+      formData.append('menu_id', 'defect-report')
+
+      const rowPayload = rows.map((row) => buildFinalizeRowPayload(row))
+      const attachmentNameMap: Record<number, string[]> = {}
+
+      const metadataEntries: Array<Record<string, unknown>> = []
+
+      rows.forEach((row) => {
+        if (row.attachmentNames.length > 0) {
+          attachmentNameMap[row.index] = row.attachmentNames
+        }
+
+        const files = attachments[row.index] ?? []
+        files.forEach((file) => {
+          const normalizedName = buildAttachmentFileName(row.index, file.name)
+          const renamed =
+            file.name === normalizedName ? file : new File([file], normalizedName, { type: file.type })
+          formData.append('files', renamed)
+          metadataEntries.push({
+            role: 'additional',
+            description: `결함 ${row.index} 이미지`,
+            label: `결함 ${row.index} 이미지`,
+            notes: `원본 파일명: ${file.name}`,
+            defect_index: row.index,
+          })
+        })
+      })
+
+      formData.append('rows_json', JSON.stringify(rowPayload))
+      formData.append('attachment_names_json', JSON.stringify(attachmentNameMap))
+      formData.append('file_metadata', JSON.stringify(metadataEntries))
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/generate`,
+          {
+            method: 'POST',
+            body: formData,
+          },
+        )
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          const detail =
+            payload && typeof payload.detail === 'string'
+              ? payload.detail
+              : '결함 리포트를 생성하는 중 오류가 발생했습니다.'
+          setStatus('error')
+          setError(detail)
+          return null
+        }
+
+        const payload = (await response.json().catch(() => ({}))) as DefectFinalizeResponse
+        setStatus('success')
+        return payload
+      } catch (caught) {
+        console.error('Failed to finalize defect report', caught)
+        setStatus('error')
+        setError('결함 리포트를 생성하는 중 예기치 않은 오류가 발생했습니다.')
+        return null
+      }
+    },
+    [backendUrl, projectId],
+  )
+
+  const reset = useCallback(() => {
+    setStatus('idle')
+    setError(null)
+  }, [])
+
+  return { status, error, finalize, reset }
 }

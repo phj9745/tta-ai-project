@@ -45,10 +45,28 @@ class SecurityReportAI:
         if not template:
             return template
         if not _has_placeholders(template):
+            if self._prompt_request_log_service is not None and project_id:
+                await self._call_openai_for_json(
+                    prompt_id="security-template-fill",
+                    finding=finding,
+                    placeholders=None,
+                    context_data=placeholder_values,
+                    project_id=project_id,
+                    log_only=True,
+                )
             return template
 
         filled, remaining = _replace_known_placeholders(template, placeholder_values)
         if not remaining:
+            if self._prompt_request_log_service is not None and project_id:
+                await self._call_openai_for_json(
+                    prompt_id="security-template-fill",
+                    finding=finding,
+                    placeholders=remaining,
+                    context_data=placeholder_values,
+                    project_id=project_id,
+                    log_only=True,
+                )
             return filled
 
         prompt_payload = await self._call_openai_for_json(
@@ -90,6 +108,7 @@ class SecurityReportAI:
         placeholders: Iterable[str] | None = None,
         context_data: Dict[str, str] | None = None,
         project_id: str | None,
+        log_only: bool = False,
     ) -> Dict[str, Any]:
         prompts = self._build_prompt(
             prompt_id=prompt_id,
@@ -125,6 +144,9 @@ class SecurityReportAI:
                     "Failed to record security prompt request",
                     extra={"project_id": project_id, "prompt_id": prompt_id},
                 )
+
+        if log_only:
+            return {}
 
         try:
             response = await asyncio.to_thread(

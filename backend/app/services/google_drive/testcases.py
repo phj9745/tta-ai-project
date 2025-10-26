@@ -13,6 +13,7 @@ except ImportError:  # pragma: no cover
     load_workbook = None  # type: ignore[assignment]
 
 from ..excel_templates.models import TESTCASE_EXPECTED_HEADERS, TESTCASE_START_ROW
+from ..excel_templates.utils import AI_CSV_DELIMITER
 from .naming import drive_name_matches, looks_like_header_row, normalize_drive_text, squash_drive_text
 
 __all__ = [
@@ -265,6 +266,7 @@ def build_testcase_rows_csv(rows: Sequence[Dict[str, str]]) -> str:
         output,
         fieldnames=list(TESTCASE_EXPECTED_HEADERS),
         lineterminator="\n",
+        delimiter=AI_CSV_DELIMITER,
     )
     writer.writeheader()
 
