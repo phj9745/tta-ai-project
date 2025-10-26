@@ -22,10 +22,12 @@ export function DefectReportWorkflow({
   const previousRowCountRef = useRef(0)
 
   const {
+    featureFiles,
     sourceFiles,
     defects,
     formalizeStatus,
     formalizeError,
+    changeFeature,
     changeSource,
     formalize,
     updatePolished,
@@ -116,7 +118,7 @@ export function DefectReportWorkflow({
   const isGenerated = generateStatus === 'success'
   const shouldHideReviewStep = isGenerating || isGenerated || hasPreviewRows
   const shouldShowPreviewSection = hasPreviewRows || isGenerating || isGenerated
-  const hasSource = sourceFiles.length > 0
+  const hasSource = featureFiles.length > 0 || sourceFiles.length > 0
 
   const hasProgress = useMemo(
     () =>
@@ -183,9 +185,11 @@ export function DefectReportWorkflow({
     <div className={rootClassName}>
       {formalizeStatus !== 'success' && (
         <SourceUploadPanel
+          featureFiles={featureFiles}
           sourceFiles={sourceFiles}
           status={formalizeStatus}
           error={formalizeError}
+          onChangeFeature={changeFeature}
           onChangeSource={changeSource}
           onFormalize={handleFormalize}
           showReset={showResetInUpload}

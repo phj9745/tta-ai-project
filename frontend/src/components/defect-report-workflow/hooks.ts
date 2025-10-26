@@ -23,10 +23,17 @@ type FormalizeOptions = {
 }
 
 export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions) {
+  const [featureFiles, setFeatureFiles] = useState<File[]>([])
   const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [status, setStatus] = useState<AsyncStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const [defects, setDefects] = useState<DefectEntry[]>([])
+
+  const changeFeature = useCallback((files: File[]) => {
+    setFeatureFiles(files.slice(0, 1))
+    setStatus('idle')
+    setError(null)
+  }, [])
 
   const changeSource = useCallback((files: File[]) => {
     setSourceFiles(files.slice(0, 1))
@@ -39,6 +46,18 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
   }, [])
 
   const formalize = useCallback(async () => {
+    if (featureFiles.length === 0 && sourceFiles.length === 0) {
+      setStatus('error')
+      setError('기능리스트 파일과 TXT 파일을 모두 업로드해 주세요.')
+      return false
+    }
+
+    if (featureFiles.length === 0) {
+      setStatus('error')
+      setError('기능리스트 파일을 업로드해 주세요.')
+      return false
+    }
+
     if (sourceFiles.length === 0) {
       setStatus('error')
       setError('TXT 파일을 업로드해 주세요.')
@@ -46,7 +65,8 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
     }
 
     const formData = new FormData()
-    formData.append('file', sourceFiles[0])
+    formData.append('featureList', featureFiles[0])
+    formData.append('defectNotes', sourceFiles[0])
 
     setStatus('loading')
     setError(null)
@@ -100,9 +120,10 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
       setError('결함 문장을 정제하는 중 예기치 않은 오류가 발생했습니다.')
       return false
     }
-  }, [backendUrl, projectId, sourceFiles])
+  }, [backendUrl, projectId, featureFiles, sourceFiles])
 
   const reset = useCallback(() => {
+    setFeatureFiles([])
     setSourceFiles([])
     setStatus('idle')
     setError(null)
@@ -110,10 +131,12 @@ export function useFormalizeDefects({ backendUrl, projectId }: FormalizeOptions)
   }, [])
 
   return {
+    featureFiles,
     sourceFiles,
     defects,
     formalizeStatus: status,
     formalizeError: error,
+    changeFeature,
     changeSource,
     formalize,
     updatePolished,

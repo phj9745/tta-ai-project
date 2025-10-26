@@ -16,9 +16,11 @@ describe('SourceUploadPanel', () => {
   it('renders error message when status is error', () => {
     render(
       <SourceUploadPanel
+        featureFiles={[]}
         sourceFiles={[]}
         status="error"
         error="Something went wrong"
+        onChangeFeature={() => {}}
         onChangeSource={() => {}}
         onFormalize={() => {}}
         showReset={false}
@@ -37,9 +39,11 @@ describe('SourceUploadPanel', () => {
 
     render(
       <SourceUploadPanel
+        featureFiles={[]}
         sourceFiles={[]}
         status="idle"
         error={null}
+        onChangeFeature={() => {}}
         onChangeSource={() => {}}
         onFormalize={handleFormalize}
         showReset
