@@ -203,34 +203,95 @@ def _normalize_quality(value: str) -> str:
     return normalized
 
 
+def _coerce_index(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+
+    text = _normalize_value(value)
+    if not text:
+        return None
+
+    try:
+        number = int(text)
+    except ValueError:
+        return None
+
+    return number if number > 0 else None
+
+
 def normalize_defect_record(entry: Mapping[str, Any]) -> Dict[str, str]:
     record = dict(_DEFAULT_ROW)
 
+    environment_provided = False
+    vendor_response_provided = False
+
     for key in _COLUMN_HEADERS:
-        if key in entry:
-            record[key] = _normalize_value(entry.get(key))
+        if key not in entry:
+            continue
+        value = _normalize_value(entry.get(key))
+        record[key] = value
+        if key == "environment" and value:
+            environment_provided = True
+        elif key == "vendorResponse" and value:
+            vendor_response_provided = True
 
     for header, key in _FIELD_KEY_MAP.items():
         if header not in entry:
             continue
         value = _normalize_value(entry.get(header))
         record[key] = value
+        if key == "environment" and value:
+            environment_provided = True
+        elif key == "vendorResponse" and value:
+            vendor_response_provided = True
 
-    record["environment"] = "시험환경 모든 OS"
-    record["vendorResponse"] = ""
+    if not environment_provided:
+        record["environment"] = _DEFAULT_ROW["environment"]
+    if not vendor_response_provided:
+        record["vendorResponse"] = _DEFAULT_ROW["vendorResponse"]
+
     record["severity"] = _detect_severity(record.get("severity", ""))
     record["frequency"] = _detect_frequency(record.get("frequency", ""))
     record["quality"] = _normalize_quality(record.get("quality", ""))
     return record
 
 
-def normalize_defect_report_rows(rows: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
-    normalized = [normalize_defect_record(row) for row in rows if row]
-    normalized.sort(key=cmp_to_key(_compare_rows))
+def normalize_defect_report_rows(
+    rows: Sequence[Mapping[str, Any]]
+) -> Tuple[List[Dict[str, str]], Dict[int, int]]:
+    normalized_with_index: List[Tuple[Dict[str, str], int]] = []
 
-    for index, row in enumerate(normalized, start=1):
-        row["order"] = str(index)
-    return normalized
+    for sequence_index, row in enumerate(rows, start=1):
+        if not row:
+            continue
+        record = normalize_defect_record(row)
+
+        original_index = _coerce_index(row.get("order"))
+        if original_index is None:
+            original_index = _coerce_index(row.get("순번"))
+        if original_index is None:
+            original_index = _coerce_index(row.get("index"))
+        if original_index is None:
+            original_index = _coerce_index(record.get("order"))
+        if original_index is None:
+            original_index = sequence_index
+
+        normalized_with_index.append((record, original_index))
+
+    normalized_with_index.sort(key=cmp_to_key(lambda left, right: _compare_rows(left[0], right[0])))
+
+    normalized_rows: List[Dict[str, str]] = []
+    index_to_order: Dict[int, int] = {}
+
+    for order, (record, source_index) in enumerate(normalized_with_index, start=1):
+        record["order"] = str(order)
+        normalized_rows.append(record)
+        if source_index > 0:
+            index_to_order[source_index] = order
+
+    return normalized_rows, index_to_order
 
 
 def parse_defect_report_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[str], List[Dict[str, str]]]:
@@ -337,12 +398,12 @@ def parse_defect_report_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[
     if not sheet_title:
         sheet_title = "결함리포트"
 
-    normalized_rows = normalize_defect_report_rows(extracted_rows)
+    normalized_rows, _ = normalize_defect_report_rows(extracted_rows)
     return sheet_title, start_row, list(headers), normalized_rows
 
 
 def build_defect_report_rows_csv(rows: Sequence[Mapping[str, Any]]) -> str:
-    normalized_rows = normalize_defect_report_rows(rows)
+    normalized_rows, _ = normalize_defect_report_rows(rows)
 
     output = io.StringIO()
     writer = csv.DictWriter(
