@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
@@ -16,7 +16,7 @@ import re
 import zipfile
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
@@ -101,6 +101,19 @@ class DefectSummaryEntry:
     original_text: str
     polished_text: str
     attachments: List[DefectSummaryAttachment]
+
+
+@dataclass(frozen=True)
+class DefectConversationTurn:
+    role: Literal["user", "assistant"]
+    text: str
+
+
+@dataclass(frozen=True)
+class DefectPromptResources:
+    judgement_criteria: str | None = None
+    output_example: str | None = None
+    conversation: List[DefectConversationTurn] = field(default_factory=list)
 
 logger = logging.getLogger(__name__)
 
@@ -2095,6 +2108,7 @@ class AIGenerationService:
     ]:
         summary_entries: List[DefectSummaryEntry] | None = None
         prompt_section: str | None = None
+        prompt_resources: DefectPromptResources | None = None
         image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
         filtered_contexts: List[UploadContext] = []
 
@@ -2116,11 +2130,15 @@ class AIGenerationService:
             )
 
             if is_json_upload:
-                if summary_entries is None:
-                    parsed = self._parse_defect_summary_upload(upload)
-                    if parsed:
-                        summary_entries = parsed
-                        prompt_section = self._format_defect_prompt_section(parsed)
+                parsed_entries, parsed_resources = self._parse_defect_summary_upload(upload)
+                if summary_entries is None and parsed_entries:
+                    summary_entries = parsed_entries
+                if prompt_resources is None and parsed_resources:
+                    prompt_resources = parsed_resources
+                if (summary_entries and len(summary_entries) > 0) or prompt_resources:
+                    prompt_section = self._format_defect_prompt_section(
+                        summary_entries or [], prompt_resources
+                    )
                 continue
 
             filtered_contexts.append(context)
@@ -2128,7 +2146,9 @@ class AIGenerationService:
         return filtered_contexts, prompt_section, summary_entries, image_map
 
     @staticmethod
-    def _parse_defect_summary_upload(upload: BufferedUpload) -> List[DefectSummaryEntry]:
+    def _parse_defect_summary_upload(
+        upload: BufferedUpload,
+    ) -> tuple[List[DefectSummaryEntry], DefectPromptResources | None]:
         try:
             decoded = upload.content.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -2137,11 +2157,11 @@ class AIGenerationService:
         try:
             payload = json.loads(decoded)
         except json.JSONDecodeError:
-            return []
+            return [], None
 
         defects = payload.get("defects") if isinstance(payload, dict) else None
         if not isinstance(defects, list):
-            return []
+            defects = []
 
         entries: List[DefectSummaryEntry] = []
         for item in defects:
@@ -2182,25 +2202,94 @@ class AIGenerationService:
                 )
             )
 
-        return entries
+        resources_payload = (
+            payload.get("promptResources") if isinstance(payload, dict) else None
+        )
+        prompt_resources: DefectPromptResources | None = None
+        if isinstance(resources_payload, dict):
+            judgement_raw = resources_payload.get("judgementCriteria")
+            judgement = judgement_raw.strip() if isinstance(judgement_raw, str) else None
+            example_raw = resources_payload.get("outputExample")
+            output_example = example_raw.strip() if isinstance(example_raw, str) else None
+
+            conversation_raw = resources_payload.get("conversation")
+            conversation: List[DefectConversationTurn] = []
+            if isinstance(conversation_raw, list):
+                for entry in conversation_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    role = entry.get("role")
+                    text_raw = entry.get("text")
+                    if role not in ("user", "assistant") or not isinstance(text_raw, str):
+                        continue
+                    text = text_raw.strip()
+                    if not text:
+                        continue
+                    conversation.append(DefectConversationTurn(role=role, text=text))
+
+            if judgement or output_example or conversation:
+                prompt_resources = DefectPromptResources(
+                    judgement_criteria=judgement,
+                    output_example=output_example,
+                    conversation=conversation,
+                )
+
+        return entries, prompt_resources
 
     @staticmethod
-    def _format_defect_prompt_section(entries: List[DefectSummaryEntry]) -> str | None:
-        if not entries:
+    def _format_defect_prompt_section(
+        entries: List[DefectSummaryEntry],
+        resources: DefectPromptResources | None = None,
+    ) -> str | None:
+        lines: List[str] = []
+
+        if entries:
+            lines.append("정제된 결함 목록")
+            lines.append("")
+            for entry in sorted(entries, key=lambda item: item.index):
+                polished = entry.polished_text or "-"
+                lines.append(f"{entry.index}. {polished}")
+                if entry.original_text:
+                    lines.append(f"   - 원문: {entry.original_text}")
+                if entry.attachments:
+                    names = ", ".join(att.file_name for att in entry.attachments)
+                    lines.append(f"   - 첨부 이미지: {names}")
+
+        if resources:
+            def add_section(title: str, body: str | List[str]) -> None:
+                if isinstance(body, list):
+                    content_lines = [line for line in body if line.strip()]
+                else:
+                    text = body.strip()
+                    if not text:
+                        return
+                    content_lines = [text]
+                if not content_lines:
+                    return
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(title)
+                lines.append("")
+                lines.extend(content_lines)
+
+            if resources.judgement_criteria:
+                add_section("결함 판단 기준", resources.judgement_criteria)
+            if resources.output_example:
+                add_section("출력 예시", resources.output_example)
+            if resources.conversation:
+                conversation_lines: List[str] = []
+                for index, turn in enumerate(resources.conversation, start=1):
+                    text = turn.text.strip()
+                    if not text:
+                        continue
+                    speaker = "사용자" if turn.role == "user" else "GPT"
+                    conversation_lines.append(f"{index}. {speaker}: {text}")
+                add_section("이전 대화", conversation_lines)
+
+        if not lines:
             return None
 
-        lines: List[str] = ["정제된 결함 목록", ""]
-        for entry in sorted(entries, key=lambda item: item.index):
-            polished = entry.polished_text or "-"
-            lines.append(f"{entry.index}. {polished}")
-            if entry.original_text:
-                lines.append(f"   - 원문: {entry.original_text}")
-            if entry.attachments:
-                names = ", ".join(att.file_name for att in entry.attachments)
-                lines.append(f"   - 첨부 이미지: {names}")
-            lines.append("")
-
-        return "\n".join(line for line in lines if line is not None).strip()
+        return "\n".join(lines).strip()
 
     def _builtin_attachment_contexts(
         self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]
