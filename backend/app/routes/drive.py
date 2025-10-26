@@ -23,6 +23,7 @@ from ..dependencies import (
 )
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
+from ..services.google_drive import defect_reports as drive_defect_reports
 from ..services.google_drive import feature_lists as drive_feature_lists
 from ..services.google_drive.naming import looks_like_header_row
 from ..services.security_report import SecurityReportService
@@ -172,6 +173,26 @@ class TestcaseExportRequest(BaseModel):
 
 class TestcaseUpdateRequest(BaseModel):
     rows: List[TestcaseFinalizeRowModel] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+class DefectReportRowModel(BaseModel):
+    order: str = Field('', alias='order')
+    environment: str = Field('', alias='environment')
+    summary: str = Field('', alias='summary')
+    severity: str = Field('', alias='severity')
+    frequency: str = Field('', alias='frequency')
+    quality: str = Field('', alias='quality')
+    description: str = Field('', alias='description')
+    vendor_response: str = Field('', alias='vendorResponse')
+    fix_status: str = Field('', alias='fixStatus')
+    note: str = Field('', alias='note')
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DefectReportUpdateRequest(BaseModel):
+    rows: List[DefectReportRowModel] = Field(default_factory=list)
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -540,13 +561,17 @@ async def generate_project_asset(
         )
 
     if menu_id == "defect-report":
-        if not _DEFECT_REPORT_TEMPLATE.exists():
-            raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 찾을 수 없습니다.")
+        stream = io.StringIO(result.csv_text)
+        reader = csv.DictReader(stream)
+        raw_rows: List[Dict[str, str]] = []
+        for row in reader:
+            if not isinstance(row, dict):
+                continue
+            if not any(value and str(value).strip() for value in row.values()):
+                continue
+            raw_rows.append({key: str(value) if value is not None else "" for key, value in row.items()})
 
-        try:
-            template_bytes = _DEFECT_REPORT_TEMPLATE.read_bytes()
-        except FileNotFoundError as exc:  # pragma: no cover - unexpected
-            raise HTTPException(status_code=500, detail="결함 리포트 템플릿을 읽을 수 없습니다.") from exc
+        normalized_rows = drive_defect_reports.normalize_defect_report_rows(raw_rows)
 
         image_map: Dict[int, List[DefectReportImage]] = {}
         if result.defect_images:
@@ -575,28 +600,30 @@ async def generate_project_asset(
                 if names:
                     attachment_notes[entry.index] = names
 
-        try:
-            workbook_bytes = defect_report.populate_defect_report(
-                template_bytes,
-                result.csv_text,
-                images=image_map,
-                attachment_notes=attachment_notes,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-        safe_stem = Path(result.filename).stem or "defect-report"
-        download_name = f"{safe_stem}.xlsx"
-        headers = {
-            "Content-Disposition": f'attachment; filename="{download_name}"',
-            "Cache-Control": "no-store",
-            "X-Defect-Table": base64.b64encode(result.csv_text.encode("utf-8")).decode("ascii"),
-        }
-        return StreamingResponse(
-            io.BytesIO(workbook_bytes),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers=headers,
+        update_info = await drive_service.update_defect_report_rows(
+            project_id=project_id,
+            rows=normalized_rows,
+            google_id=google_id,
+            images=image_map if image_map else None,
+            attachment_notes=attachment_notes if attachment_notes else None,
         )
+
+        file_id = update_info.get("fileId")
+        if not file_id:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        payload: Dict[str, Any] = {
+            "status": "updated",
+            "projectId": project_id,
+            "fileId": file_id,
+            "fileName": update_info.get("fileName"),
+            "modifiedTime": update_info.get("modifiedTime"),
+            "rows": normalized_rows,
+            "headers": list(drive_defect_reports.DEFECT_REPORT_EXPECTED_HEADERS),
+        }
+
+        return JSONResponse(payload)
+
 
     headers = {
         "Content-Disposition": f'attachment; filename="{result.filename}"',
@@ -1203,6 +1230,78 @@ async def download_testcases(
     safe_name = file_name or "testcases.xlsx"
     headers = {
         "Content-Disposition": _build_attachment_header(safe_name, default_filename="testcases.xlsx"),
+        "Cache-Control": "no-store",
+    }
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.get("/drive/projects/{project_id}/defect-report")
+async def get_defect_report(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="편집할 결함 리포트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    result = await drive_service.get_defect_report_rows(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.put("/drive/projects/{project_id}/defect-report")
+async def update_defect_report(
+    project_id: str,
+    payload: DefectReportUpdateRequest,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="업데이트할 결함 리포트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    normalized_rows = [row.model_dump(by_alias=True) for row in payload.rows]
+
+    result = await drive_service.update_defect_report_rows(
+        project_id=project_id,
+        rows=normalized_rows,
+        google_id=google_id,
+        file_id=file_id,
+    )
+    return result
+
+
+@router.get("/drive/projects/{project_id}/defect-report/download")
+async def download_defect_report(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    file_id: Optional[str] = Query(
+        None,
+        alias="fileId",
+        description="다운로드할 결함 리포트 파일 ID",
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> StreamingResponse:
+    file_name, content = await drive_service.download_defect_report_workbook(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+
+    safe_name = file_name or "defect-report.xlsx"
+    headers = {
+        "Content-Disposition": _build_attachment_header(safe_name, default_filename="defect-report.xlsx"),
         "Cache-Control": "no-store",
     }
 

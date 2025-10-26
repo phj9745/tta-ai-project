@@ -714,3 +714,122 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
     reset,
   }
 }
+
+type FinalizeOptions = {
+  backendUrl: string
+  projectId: string
+}
+
+interface DefectFinalizeResponse {
+  fileId?: string
+  fileName?: string
+  modifiedTime?: string
+  rows?: unknown
+  headers?: unknown
+}
+
+export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
+  const [status, setStatus] = useState<AsyncStatus>('idle')
+  const [error, setError] = useState<string | null>(null)
+
+  const finalize = useCallback(
+    async (defects: DefectEntry[], attachments: AttachmentMap) => {
+      if (!defects.length) {
+        setStatus('error')
+        setError('먼저 결함 문장을 정제해 주세요.')
+        return null
+      }
+
+      setStatus('loading')
+      setError(null)
+
+      const summary = {
+        defects: defects.map((item) => ({
+          index: item.index,
+          originalText: item.originalText,
+          polishedText: item.polishedText,
+          attachments: (attachments[item.index] ?? []).map((file) => ({
+            fileName: buildAttachmentFileName(item.index, file.name),
+            originalFileName: file.name,
+          })),
+        })),
+        promptResources: buildPromptResourcesPayload([]),
+      }
+
+      const formData = new FormData()
+      formData.append('menu_id', 'defect-report')
+
+      const summaryFile = new File([JSON.stringify(summary, null, 2)], '정제된-결함-목록.json', {
+        type: 'application/json',
+      })
+
+      const metadataEntries: Array<Record<string, unknown>> = [
+        {
+          role: 'additional',
+          description: '정제된 결함 목록',
+          label: '정제된 결함 목록',
+          notes: '결함 문장 정제 결과(JSON)',
+        },
+      ]
+
+      formData.append('files', summaryFile)
+
+      defects.forEach((item) => {
+        const files = attachments[item.index] ?? []
+        files.forEach((file) => {
+          const normalizedName = buildAttachmentFileName(item.index, file.name)
+          const renamed =
+            file.name === normalizedName ? file : new File([file], normalizedName, { type: file.type })
+          formData.append('files', renamed)
+          metadataEntries.push({
+            role: 'additional',
+            description: `결함 ${item.index} 이미지`,
+            label: `결함 ${item.index} 이미지`,
+            notes: `원본 파일명: ${file.name}`,
+            defect_index: item.index,
+          })
+        })
+      })
+
+      formData.append('file_metadata', JSON.stringify(metadataEntries))
+
+      try {
+        const response = await fetch(
+          `${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/generate`,
+          {
+            method: 'POST',
+            body: formData,
+          },
+        )
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null)
+          const detail =
+            payload && typeof payload.detail === 'string'
+              ? payload.detail
+              : '결함 리포트를 생성하는 중 오류가 발생했습니다.'
+          setStatus('error')
+          setError(detail)
+          return null
+        }
+
+        const payload = (await response.json().catch(() => ({}))) as DefectFinalizeResponse
+        setStatus('success')
+        return payload
+      } catch (caught) {
+        console.error('Failed to finalize defect report', caught)
+        setStatus('error')
+        setError('결함 리포트를 생성하는 중 예기치 않은 오류가 발생했습니다.')
+        return null
+      }
+    },
+    [backendUrl, projectId],
+  )
+
+  const reset = useCallback(() => {
+    setStatus('idle')
+    setError(null)
+  }, [])
+
+  return { status, error, finalize, reset }
+}

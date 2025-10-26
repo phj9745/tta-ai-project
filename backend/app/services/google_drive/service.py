@@ -19,7 +19,8 @@ from .templates import (
     SPREADSHEET_RULES,
     replace_placeholders,
 )
-from . import feature_lists, security_reports, templates, testcases
+from . import defect_reports, feature_lists, security_reports, templates, testcases
+from ..excel_templates.models import DefectReportImage
 from ..excel_templates.feature_list import extract_feature_list_overview
 
 logger = logging.getLogger(__name__)
@@ -246,6 +247,39 @@ class GoogleDriveService:
             project_overview=project_overview,
         )
 
+    async def get_defect_report_rows(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="defect-report",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        sheet_title, start_row, headers, rows = defect_reports.parse_defect_report_workbook(
+            workbook_bytes
+        )
+
+        return defect_reports.prepare_defect_report_response(
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            sheet_name=sheet_title,
+            start_row=start_row,
+            headers=headers,
+            rows=rows,
+            modified_time=resolved.modified_time,
+        )
+
     async def get_testcase_rows(
         self,
         *,
@@ -379,6 +413,60 @@ class GoogleDriveService:
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
         }
 
+    async def update_defect_report_rows(
+        self,
+        *,
+        project_id: str,
+        rows: Sequence[Dict[str, str]],
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+        images: Optional[Mapping[int, Sequence[DefectReportImage]]] = None,
+        attachment_notes: Optional[Mapping[int, Sequence[str]]] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="defect-report",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        csv_text = defect_reports.build_defect_report_rows_csv(rows)
+
+        try:
+            updated_bytes = resolved.rule["populate"](  # type: ignore[index]
+                workbook_bytes,
+                csv_text,
+                images=images,
+                attachment_notes=attachment_notes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - safety net
+            logger.exception(
+                "Failed to update defect report spreadsheet",
+                extra={"project_id": project_id},
+            )
+            raise HTTPException(status_code=500, detail="결함 리포트를 업데이트하지 못했습니다. 다시 시도해 주세요.") from exc
+
+        update_info, _ = await self._client.update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=updated_bytes,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
     async def download_feature_list_workbook(
         self,
         *,
@@ -418,6 +506,27 @@ class GoogleDriveService:
         workbook_bytes = resolved.content
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="테스트케이스 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
+
+        return resolved.file_name, workbook_bytes
+
+    async def download_defect_report_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: Optional[str] = None,
+    ) -> Tuple[str, bytes]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="defect-report",
+            google_id=google_id,
+            include_content=True,
+            file_id=file_id,
+        )
+
+        workbook_bytes = resolved.content
+        if workbook_bytes is None:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
         return resolved.file_name, workbook_bytes
 
