@@ -57,9 +57,9 @@ def test_populate_feature_list_inserts_rows() -> None:
 
     csv_text = "\n".join(
         [
-            ",".join(FEATURE_LIST_EXPECTED_HEADERS),
-            "대1,중1,소1,상세 설명1",
-            "대2,중2,소2,상세 설명2",
+            "|".join(FEATURE_LIST_EXPECTED_HEADERS),
+            "대1|중1|소1|상세 설명1",
+            "대2|중2|소2|상세 설명2",
         ]
     )
 
@@ -83,8 +83,8 @@ def test_populate_feature_list_sets_project_overview() -> None:
 
     csv_text = "\n".join(
         [
-            ",".join(FEATURE_LIST_EXPECTED_HEADERS),
-            "대1,중1,소1,기능 상세",
+            "|".join(FEATURE_LIST_EXPECTED_HEADERS),
+            "대1|중1|소1|기능 상세",
         ]
     )
 
@@ -102,8 +102,8 @@ def test_populate_testcase_list_maps_columns() -> None:
     template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
     template_bytes = template_path.read_bytes()
 
-    csv_header = ",".join(TESTCASE_EXPECTED_HEADERS)
-    csv_row = ",".join(
+    csv_header = "|".join(TESTCASE_EXPECTED_HEADERS)
+    csv_row = "|".join(
         [
             "대분류A",
             "중분류B",
@@ -138,7 +138,7 @@ def test_populate_testcase_list_validates_headers() -> None:
     template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
     template_bytes = template_path.read_bytes()
 
-    csv_text = "대분류,중분류\nA,B"
+    csv_text = "대분류|중분류\nA|B"
 
     with pytest.raises(ValueError):
         populate_testcase_list(template_bytes, csv_text)
@@ -148,11 +148,11 @@ def test_populate_security_report_fills_rows() -> None:
     template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
     template_bytes = template_path.read_bytes()
 
-    csv_header = ",".join(
+    csv_header = "|".join(
         SECURITY_REPORT_EXPECTED_HEADERS
         + ["Invicti 결과", "위험도", "발생경로", "조치 가이드", "원본 세부내용", "매핑 유형"]
     )
-    csv_row = ",".join(
+    csv_row = "|".join(
         [
             "1",
             "시험환경 모든 OS",
@@ -190,7 +190,7 @@ def test_populate_defect_report_accepts_spaced_headers() -> None:
     template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
     template_bytes = template_path.read_bytes()
 
-    csv_header = ",".join(
+    csv_header = "|".join(
         [
             "순번",
             "시험환경 OS",
@@ -204,7 +204,7 @@ def test_populate_defect_report_accepts_spaced_headers() -> None:
             "비고",
         ]
     )
-    csv_row = ",".join(
+    csv_row = "|".join(
         [
             "7",
             "시험환경 모든 OS",

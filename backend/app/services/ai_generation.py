@@ -34,6 +34,7 @@ from openai import (
 
 from ..config import Settings
 from .excel_templates import TESTCASE_EXPECTED_HEADERS
+from .excel_templates.utils import AI_CSV_DELIMITER
 from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
 from .prompt_config import (
@@ -1204,6 +1205,7 @@ class AIGenerationService:
             "작성 지침:",
             "- 위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
             f"- CSV 열은 {headers_text} 순서를 따릅니다.",
+            "- 각 열은 파이프(|) 기호로 구분합니다.",
             "- 각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고",
             "  XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
             "- '테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼",
@@ -1214,8 +1216,8 @@ class AIGenerationService:
             "  추가하지 마세요.",
             "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
             "- 여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
-            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 CSV 쉼표로 구분됩니다):",
-            "  TC-001-001, 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인, \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\", 기업이 정상적으로 생성됨, 미실행, ,",
+            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 파이프(|)로 구분됩니다):",
+            "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | ",
             "- CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
         ]
 
@@ -1289,7 +1291,7 @@ class AIGenerationService:
         awaiting_overview_value = False
 
         stream = io.StringIO(csv_text)
-        reader = csv.reader(stream)
+        reader = csv.reader(stream, delimiter=AI_CSV_DELIMITER)
 
         for raw_row in reader:
             row = [cell.strip() for cell in raw_row]
@@ -1344,7 +1346,7 @@ class AIGenerationService:
             return "", project_overview
 
         output = io.StringIO()
-        writer = csv.writer(output, lineterminator="\n")
+        writer = csv.writer(output, lineterminator="\n", delimiter=AI_CSV_DELIMITER)
         for row in rows_to_keep:
             writer.writerow(row)
         return output.getvalue().strip(), project_overview

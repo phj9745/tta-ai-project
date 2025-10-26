@@ -42,7 +42,7 @@ class _StubFiles:
 class _StubResponses:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
-        self.output_text = "col1,col2\nvalue1,value2"
+        self.output_text = "col1|col2\nvalue1|value2"
 
     def create(self, **kwargs: object) -> SimpleNamespace:
         self.calls.append(kwargs)
@@ -239,7 +239,7 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     # Temporary files should be cleaned up after the request completes.
     assert stub_client.files.deleted == ["file-1"]
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
     assert result.project_overview == (
         "이 프로그램은 value1 관련 프로그램이다.\n기능은\n- value2"
     )
@@ -252,9 +252,9 @@ async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
     service._client = stub_client  # type: ignore[attr-defined]
 
     stub_client.responses.output_text = (
-        "프로젝트 개요,이 프로젝트는 테스트입니다.\n"
-        "대분류,중분류,소분류,기능 설명\n"
-        "대1,중1,소1,기능 상세"
+        "프로젝트 개요|이 프로젝트는 테스트입니다.\n"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|기능 상세"
     )
 
     upload = UploadFile(
@@ -274,7 +274,7 @@ async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
         "이 프로그램은 테스트 프로그램이다.\n기능은\n- 기능 상세"
     )
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,기능 상세"
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|기능 상세"
     )
 
 
@@ -286,8 +286,8 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
 
     stub_client.responses.output_text = (
         "프로젝트 개요:이 프로젝트는 콜론 형식을 따릅니다.\n"
-        "대분류,중분류,소분류,기능 설명\n"
-        "대1,중1,소1,상세"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|상세"
     )
 
     upload = UploadFile(
@@ -307,7 +307,7 @@ async def test_generate_csv_extracts_project_overview_with_colon_notation() -> N
         "이 프로그램은 콜론 형식을 따르는 프로그램이다.\n기능은\n- 상세"
     )
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|상세"
     )
 
 
@@ -320,8 +320,8 @@ async def test_generate_csv_extracts_project_overview_from_followup_row() -> Non
     stub_client.responses.output_text = (
         "프로젝트 개요\n"
         "이 프로젝트는 행이 나뉘어 제공됩니다.\n"
-        "대분류,중분류,소분류,기능 설명\n"
-        "대1,중1,소1,상세"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|상세"
     )
 
     upload = UploadFile(
@@ -341,7 +341,7 @@ async def test_generate_csv_extracts_project_overview_from_followup_row() -> Non
         "이 프로그램은 행이 나뉘어 제공되는 프로그램이다.\n기능은\n- 상세"
     )
     assert result.csv_text == (
-        "대분류,중분류,소분류,기능 설명\n대1,중1,소1,상세"
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|상세"
     )
 
 
@@ -366,7 +366,7 @@ async def test_generate_csv_converts_required_csv_documents_to_pdf() -> None:
         metadata=metadata,
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
     assert [entry["name"] for entry in stub_client.files.created] == [
         "사용자_매뉴얼.pdf",
@@ -404,7 +404,7 @@ async def test_generate_csv_includes_testcase_template() -> None:
     assert isinstance(template_upload["content"], bytes)
     assert template_upload["content"].startswith(b"%PDF")
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
 
 @pytest.mark.anyio
@@ -421,7 +421,7 @@ async def test_generate_csv_supports_modern_response_payload() -> None:
                     content=[
                         SimpleNamespace(
                             type="output_text",
-                            text={"value": "col1,col2\nvalue1,value2", "annotations": []},
+                            text={"value": "col1|col2\nvalue1|value2", "annotations": []},
                         )
                     ]
                 )
@@ -443,7 +443,7 @@ async def test_generate_csv_supports_modern_response_payload() -> None:
         metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
 
 @pytest.mark.anyio
@@ -486,7 +486,7 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
         metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
     assert len(stub_client.responses.calls) == 1
     user_message = stub_client.responses.calls[0]["input"][1]

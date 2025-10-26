@@ -5,7 +5,10 @@ import io
 import re
 from typing import Dict, Iterable, List, Sequence
 
+AI_CSV_DELIMITER = "|"
+
 __all__ = [
+    "AI_CSV_DELIMITER",
     "summarize_feature_description",
     "safe_int",
     "append_attachment_note",
@@ -59,7 +62,7 @@ def _rebalance_csv_row(
 
         segment = [cell.strip() for cell in row[cell_index : cell_index + consume]]
         if consume > 1:
-            combined = ", ".join(segment)
+            combined = f" {AI_CSV_DELIMITER} ".join(segment)
         else:
             combined = segment[0] if segment else ""
         balanced.append(combined)
@@ -138,7 +141,7 @@ def parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Di
     if not stripped:
         return []
 
-    reader = csv.reader(io.StringIO(stripped))
+    reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader]
     if not rows:
         return []
