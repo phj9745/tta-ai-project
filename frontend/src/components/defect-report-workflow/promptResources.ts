@@ -229,16 +229,27 @@ export const DEFECT_OUTPUT_EXAMPLE = `기업 선택 기능 오류\tM\tA\t기능�
 
  - 계약명 : SafetyGuard Vision Pro V1.0"`;
 
+export interface PromptResourcesConfig {
+  judgementCriteria: string;
+  outputExample: string;
+}
+
 export interface PromptResourcesPayload {
   judgementCriteria: string;
   outputExample: string;
   conversation: ConversationMessage[];
 }
 
-export function buildPromptResourcesPayload(messages: ConversationMessage[]): PromptResourcesPayload {
+export function buildPromptResourcesPayload(
+  messages: ConversationMessage[],
+  overrides?: Partial<PromptResourcesConfig>,
+): PromptResourcesPayload {
+  const judgement = overrides?.judgementCriteria ?? DEFECT_JUDGEMENT_CRITERIA;
+  const example = overrides?.outputExample ?? DEFECT_OUTPUT_EXAMPLE;
+
   return {
-    judgementCriteria: DEFECT_JUDGEMENT_CRITERIA,
-    outputExample: DEFECT_OUTPUT_EXAMPLE,
+    judgementCriteria: judgement,
+    outputExample: example,
     conversation: messages.map((message) => ({
       role: message.role,
       text: message.text,
