@@ -40,7 +40,7 @@ export function SourceUploadPanel({
         <div className="defect-workflow__upload-block">
           <h3 className="defect-workflow__subtitle">기능리스트 업로드</h3>
           <p className="defect-workflow__helper">
-            XLSX 또는 CSV 형식의 기능리스트를 업로드하면 프로그램 맥락을 이해한 뒤 결함 문장을 다듬습니다.
+            XLSX, XLS 또는 CSV 형식의 기능리스트를 업로드하면 프로그램 맥락을 이해한 뒤 결함 문장을 다듬습니다.
           </p>
           <FileUploader
             allowedTypes={FEATURE_ALLOWED_TYPES}

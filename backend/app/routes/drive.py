@@ -24,6 +24,7 @@ from ..dependencies import (
 from ..services.ai_generation import AIGenerationService
 from ..services.google_drive import GoogleDriveService
 from ..services.google_drive import feature_lists as drive_feature_lists
+from ..services.google_drive.naming import looks_like_header_row
 from ..services.security_report import SecurityReportService
 from ..services.excel_templates import defect_report, testcases
 from ..services.excel_templates import feature_list as feature_list_templates
@@ -32,6 +33,11 @@ from ..services.excel_templates.models import (
     TESTCASE_EXPECTED_HEADERS,
     DefectReportImage,
 )
+
+try:  # pragma: no cover - optional dependency
+    import xlrd
+except ImportError:  # pragma: no cover
+    xlrd = None  # type: ignore[assignment]
 
 router = APIRouter()
 
@@ -691,6 +697,20 @@ def _normalize_feature_list_records(rows: Sequence[Dict[str, str]]) -> List[Dict
     return normalized
 
 
+def _normalize_template_feature_list(records: Sequence[Dict[str, str]]) -> List[Dict[str, str]]:
+    converted: List[Dict[str, str]] = []
+    for record in records:
+        converted.append(
+            {
+                "majorCategory": record.get("대분류", ""),
+                "middleCategory": record.get("중분류", ""),
+                "minorCategory": record.get("소분류", ""),
+                "featureDescription": record.get("기능 설명", ""),
+            }
+        )
+    return _normalize_feature_list_records(converted)
+
+
 def _csv_from_testcase_rows(rows: Sequence[TestcaseFinalizeRowModel]) -> str:
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=list(TESTCASE_EXPECTED_HEADERS), lineterminator="\n")
@@ -725,17 +745,127 @@ def _strip_label_prefix(value: str, label: str) -> str:
 def _decode_feature_list_csv(content: bytes) -> List[Dict[str, str]]:
     text = _decode_text(content)
     records = feature_list_templates.normalize_feature_list_records(text)
-    normalized: List[Dict[str, str]] = []
-    for record in records:
-        normalized.append(
-            {
-                "majorCategory": record.get("대분류", ""),
-                "middleCategory": record.get("중분류", ""),
-                "minorCategory": record.get("소분류", ""),
-                "featureDescription": record.get("기능 설명", ""),
-            }
+    return _normalize_template_feature_list(records)
+
+
+def _decode_feature_list_xls(content: bytes) -> List[Dict[str, str]]:
+    if xlrd is None:  # pragma: no cover - dependency guard
+        raise HTTPException(status_code=500, detail="XLS 파일을 처리하려면 xlrd 패키지가 필요합니다.")
+
+    try:
+        workbook = xlrd.open_workbook(file_contents=content)
+    except Exception as exc:  # pragma: no cover - 안전망
+        raise HTTPException(
+            status_code=422,
+            detail="기능리스트 엑셀 파일을 해석하는 중 오류가 발생했습니다.",
+        ) from exc
+
+    expected_headers = list(feature_list_templates.FEATURE_LIST_EXPECTED_HEADERS)
+
+    for sheet in workbook.sheets():
+        header_row_index: int | None = None
+        header_values: List[str] = []
+
+        for row_index in range(sheet.nrows):
+            row = sheet.row_values(row_index)
+            values = ["" if value is None else str(value).strip() for value in row]
+            if not any(values):
+                continue
+
+            normalized = values[:]
+            if normalized:
+                normalized[0] = normalized[0].lstrip("\ufeff")
+
+            header_tokens = [
+                feature_list_templates.match_feature_list_header(value) for value in values if value
+            ]
+            if header_tokens or looks_like_header_row(values, expected_headers):
+                header_row_index = row_index
+                header_values = normalized
+                break
+
+        if header_row_index is None:
+            continue
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow(header_values)
+
+        for row_index in range(header_row_index + 1, sheet.nrows):
+            row = sheet.row_values(row_index)
+            values = ["" if value is None else str(value).strip() for value in row]
+            if not any(values):
+                continue
+            if looks_like_header_row(values, expected_headers):
+                continue
+            writer.writerow(values)
+
+        records = feature_list_templates.normalize_feature_list_records(buffer.getvalue())
+        normalized = _normalize_template_feature_list(records)
+        if normalized:
+            return normalized
+
+    return []
+
+
+def _build_feature_list_context(rows: Sequence[Dict[str, str]], *, limit: int = 40) -> str:
+    lines: List[str] = []
+    total = len(rows)
+    for idx, row in enumerate(rows[:limit], start=1):
+        major = str(row.get("majorCategory", "") or "").strip()
+        middle = str(row.get("middleCategory", "") or "").strip()
+        minor = str(row.get("minorCategory", "") or "").strip()
+        description = str(row.get("featureDescription", "") or "").strip()
+
+        categories = [part for part in [major, middle, minor] if part]
+        if categories and description:
+            lines.append(f"{idx}. {' | '.join(categories)}: {description}")
+        elif description:
+            lines.append(f"{idx}. {description}")
+        elif categories:
+            lines.append(f"{idx}. {' | '.join(categories)}")
+
+    if total > limit:
+        lines.append(f"… (총 {total}개 기능 중 상위 {limit}개 항목만 요약했습니다.)")
+
+    return "\n".join(lines)
+
+
+async def _extract_feature_list_context(upload: UploadFile) -> str:
+    filename = upload.filename or "feature-list"
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    content = await _read_upload_bytes(upload)
+
+    if not content:
+        raise HTTPException(status_code=422, detail="업로드된 기능리스트 파일이 비어 있습니다.")
+
+    rows: List[Dict[str, str]] = []
+
+    if extension in {"xlsx", "xlsm"}:
+        try:
+            _, _, _, parsed_rows = drive_feature_lists.parse_feature_list_workbook(content)
+            rows = _normalize_feature_list_records(parsed_rows)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pragma: no cover - 안전망
+            raise HTTPException(
+                status_code=422,
+                detail="기능리스트 엑셀 파일을 해석하는 중 오류가 발생했습니다.",
+            ) from exc
+    elif extension == "xls":
+        rows = _decode_feature_list_xls(content)
+    elif extension == "csv":
+        rows = _normalize_feature_list_records(_decode_feature_list_csv(content))
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="지원하지 않는 기능리스트 파일 형식입니다. XLSX, XLS 또는 CSV 파일을 업로드해 주세요.",
         )
-    return normalized
+
+    if not rows:
+        raise HTTPException(status_code=422, detail="기능리스트에서 항목을 찾을 수 없습니다.")
+
+    return _build_feature_list_context(rows)
 
 
 def _build_feature_list_context(rows: Sequence[Dict[str, str]], *, limit: int = 40) -> str:
@@ -826,6 +956,8 @@ async def prepare_testcase_feature_list(
             _, project_overview = feature_list_templates.extract_feature_list_overview(content)
         except Exception:  # pragma: no cover - 개요 추출 실패는 무시
             project_overview = ""
+    elif extension == "xls":
+        rows = _decode_feature_list_xls(content)
     else:
         rows = _normalize_feature_list_records(_decode_feature_list_csv(content))
 
