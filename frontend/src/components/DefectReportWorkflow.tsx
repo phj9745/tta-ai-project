@@ -22,6 +22,7 @@ import {
   decodeBase64,
 } from './defect-report-workflow/utils'
 import { buildPromptResourcesPayload } from './defect-report-workflow/promptResources'
+import { normalizeDefectResultCells } from './defect-report-workflow/normalizers'
 
 const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품질특성', '결함 설명'] as const
 
@@ -353,7 +354,7 @@ export function DefectReportWorkflow({
           throw new Error('생성된 결함 요약을 찾을 수 없습니다.')
         }
 
-        const result = { ...row.cells }
+        const result = normalizeDefectResultCells({ ...row.cells })
         const assistantText = RESULT_COLUMN_KEYS.map((key) => {
           const value = result[key]?.trim()
           return `${key}: ${value || '-'}`

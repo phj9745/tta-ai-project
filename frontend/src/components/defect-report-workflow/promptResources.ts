@@ -2,6 +2,10 @@ import type { ConversationMessage } from './types';
 
 export const DEFECT_JUDGEMENT_CRITERIA = `이미지와 결함 내용, 결함 판단 기준, 출력 예시를 참고하여 결함 리포트 행을 작성하세요.
 
+[출력 형식 지침]
+- 결함정도는 위험도에 따라 H(High) / M(Medium) / L(Low) 코드 중 하나로만 작성합니다.
+- 발생빈도는 항상 발생(A) 또는 가끔 발생(R) 중 하나의 코드로만 작성합니다.
+
 [결함 판단 기준]
 1. 기능 적합성 : 주요 기능이 잘 동작하는지
     1. 기능 완전성 : 매뉴얼에 기술된 모든 기능이 구현되어 있는지 

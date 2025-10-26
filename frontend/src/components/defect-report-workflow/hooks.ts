@@ -17,6 +17,7 @@ import {
   decodeBase64,
 } from './utils'
 import { buildPromptResourcesPayload } from './promptResources'
+import { normalizeDefectRows } from './normalizers'
 
 type FormalizeOptions = {
   backendUrl: string
@@ -416,7 +417,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
 
         const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
         if (encodedTable) {
-          const rows = buildRowsFromCsv(encodedTable)
+          const rows = normalizeDefectRows(buildRowsFromCsv(encodedTable))
           setTableRows(rows)
           if (rows.length > 0) {
             setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
@@ -535,7 +536,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
 
         const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
         if (encodedTable) {
-          const rows = buildRowsFromCsv(encodedTable)
+          const rows = normalizeDefectRows(buildRowsFromCsv(encodedTable))
           setTableRows(rows)
           if (!selectedCell && rows.length > 0) {
             setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
