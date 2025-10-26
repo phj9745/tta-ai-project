@@ -56,6 +56,22 @@ export function createFileKey(file: File): string {
   return `${file.name}-${file.size}-${file.lastModified}`
 }
 
+function normalizeRowArray(row: unknown): string[] | null {
+  if (Array.isArray(row)) {
+    return row.map((value) => toCellText(value).trim())
+  }
+
+  if (typeof row === 'string') {
+    const trimmed = row.trim()
+    if (!trimmed) {
+      return []
+    }
+    return trimmed.split('|').map((value) => value.trim())
+  }
+
+  return null
+}
+
 export function buildRowsFromJsonTable(
   headersInput: unknown,
   rowsInput: unknown,
@@ -73,12 +89,20 @@ export function buildRowsFromJsonTable(
     }
   })
 
-  const rowsArray = Array.isArray(rowsInput) ? rowsInput : []
+  const rowsArray: unknown[] = Array.isArray(rowsInput)
+    ? rowsInput
+    : typeof rowsInput === 'string'
+      ? rowsInput
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+      : []
   const tableRows: DefectReportTableRow[] = []
 
   rowsArray.forEach((rawRow) => {
     const rowCells: Record<string, string> = {}
     const rowObject = rawRow && typeof rawRow === 'object' && !Array.isArray(rawRow) ? rawRow : null
+    const rowArray = normalizeRowArray(rawRow)
     const normalizedObjectValues = new Map<string, string>()
 
     if (rowObject) {
@@ -111,10 +135,10 @@ export function buildRowsFromJsonTable(
         }
       }
 
-      if (!value) {
+      if (!value && rowArray) {
         const index = headerIndex.get(headerKey)
-        if (index !== undefined && Array.isArray(rawRow)) {
-          value = toCellText(rawRow[index])
+        if (index !== undefined && index < rowArray.length) {
+          value = rowArray[index]
         }
       }
 
