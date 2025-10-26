@@ -94,4 +94,36 @@ describe('DefectTable', () => {
     await user.click(screen.getByRole('button', { name: '수정' }))
     expect(handleResume).toHaveBeenCalledWith(1)
   })
+
+  it('hides generated sections before GPT creates a result', () => {
+    const item: DefectWorkItem = {
+      entry: { index: 2, originalText: '원문', polishedText: '정제' },
+      attachments: [],
+      status: 'idle',
+      error: null,
+      result: {},
+      messages: [],
+      input: '',
+      inputError: null,
+      isCollapsed: false,
+    }
+
+    render(
+      <DefectTable
+        items={[item]}
+        onPolishedChange={vi.fn()}
+        onAddAttachments={vi.fn()}
+        onRemoveAttachment={vi.fn()}
+        onGenerate={vi.fn()}
+        onChatInputChange={vi.fn()}
+        onChatSubmit={vi.fn()}
+        onResultChange={vi.fn()}
+        onComplete={vi.fn()}
+        onResume={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('생성된 결함 요약')).not.toBeInTheDocument()
+    expect(screen.queryByText('GPT와 결함 요약 다듬기')).not.toBeInTheDocument()
+  })
 })

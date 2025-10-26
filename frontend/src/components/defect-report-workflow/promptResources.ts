@@ -1,3 +1,5 @@
+import type { ConversationMessage } from './types';
+
 export const DEFECT_JUDGEMENT_CRITERIA = `이미지와 결함 내용, 결함 판단 기준, 출력 예시를 참고하여 결함 리포트 행을 작성하세요.
 
 [결함 판단 기준]
@@ -223,57 +225,19 @@ export const DEFECT_OUTPUT_EXAMPLE = `기업 선택 기능 오류\tM\tA\t기능�
 
  - 계약명 : SafetyGuard Vision Pro V1.0"`;
 
-export function buildConversationTranscript(messages: { role: 'user' | 'assistant'; text: string }[]): string | null {
-  if (!messages.length) {
-    return null;
-  }
-
-  const lines = messages.map((message, index) => {
-    const speaker = message.role === 'user' ? '사용자' : 'GPT';
-    return `${index + 1}. ${speaker}: ${message.text}`;
-  });
-
-  return ['[이전 대화]', ...lines].join('\n');
+export interface PromptResourcesPayload {
+  judgementCriteria: string;
+  outputExample: string;
+  conversation: ConversationMessage[];
 }
 
-export function createPromptAttachmentFiles(messages: { role: 'user' | 'assistant'; text: string }[]) {
-  const attachments: Array<{ file: File; metadata: Record<string, unknown> }> = [];
-
-  const criteriaFile = new File([DEFECT_JUDGEMENT_CRITERIA], '결함-판단-기준.txt', { type: 'text/plain' });
-  attachments.push({
-    file: criteriaFile,
-    metadata: {
-      role: 'additional',
-      description: '결함 판단 기준',
-      label: '결함 판단 기준',
-      notes: '결함 판단 기준 전문',
-    },
-  });
-
-  const exampleFile = new File([DEFECT_OUTPUT_EXAMPLE], '결함-출력-예시.txt', { type: 'text/plain' });
-  attachments.push({
-    file: exampleFile,
-    metadata: {
-      role: 'additional',
-      description: '결함 출력 예시',
-      label: '결함 출력 예시',
-      notes: '결함 리포트 예시 행',
-    },
-  });
-
-  const transcript = buildConversationTranscript(messages);
-  if (transcript) {
-    const conversationFile = new File([transcript], '대화-이력.txt', { type: 'text/plain' });
-    attachments.push({
-      file: conversationFile,
-      metadata: {
-        role: 'additional',
-        description: '대화 이력',
-        label: '대화 이력',
-        notes: '사용자와 GPT 간 대화 이력',
-      },
-    });
-  }
-
-  return attachments;
+export function buildPromptResourcesPayload(messages: ConversationMessage[]): PromptResourcesPayload {
+  return {
+    judgementCriteria: DEFECT_JUDGEMENT_CRITERIA,
+    outputExample: DEFECT_OUTPUT_EXAMPLE,
+    conversation: messages.map((message) => ({
+      role: message.role,
+      text: message.text,
+    })),
+  };
 }

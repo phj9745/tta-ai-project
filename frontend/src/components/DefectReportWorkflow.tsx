@@ -21,7 +21,7 @@ import {
   createFileKey,
   decodeBase64,
 } from './defect-report-workflow/utils'
-import { createPromptAttachmentFiles } from './defect-report-workflow/promptResources'
+import { buildPromptResourcesPayload } from './defect-report-workflow/promptResources'
 
 const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품질특성', '결함 설명'] as const
 
@@ -283,6 +283,7 @@ export function DefectReportWorkflow({
             })),
           },
         ],
+        promptResources: buildPromptResourcesPayload(messages),
       }
 
       const formData = new FormData()
@@ -317,11 +318,6 @@ export function DefectReportWorkflow({
           notes: `원본 파일명: ${file.name}`,
           defect_index: card.entry.index,
         })
-      })
-
-      createPromptAttachmentFiles(messages).forEach((attachment) => {
-        formData.append('files', attachment.file)
-        metadataEntries.push(attachment.metadata)
       })
 
       formData.append('file_metadata', JSON.stringify(metadataEntries))

@@ -68,6 +68,11 @@ export function DefectTable({
           const files = item.attachments
           const canComplete = canCompleteMap.get(defectIndex) ?? false
           const isCollapsed = item.isCollapsed
+          const hasGeneratedResult = DISPLAY_COLUMN_KEYS.some(
+            (key) => (item.result[key] ?? '').trim().length > 0,
+          )
+          const shouldShowResult = hasGeneratedResult
+          const shouldShowChat = hasGeneratedResult || item.messages.length > 0
           return (
             <article
               key={defectIndex}
@@ -170,21 +175,23 @@ export function DefectTable({
                     </div>
                   </div>
 
-                  <div className="defect-workflow__result-fields">
-                    <h4 className="defect-workflow__chat-title">생성된 결함 요약</h4>
-                    <div className="defect-workflow__result-grid">
-                      {DISPLAY_COLUMNS.map((column) => (
-                        <label key={column.key} className="defect-workflow__scenario-field">
-                          <span>{column.label}</span>
-                          <textarea
-                            className="defect-workflow__textarea"
-                            value={item.result[column.key] ?? ''}
-                            onChange={(event) => onResultChange(defectIndex, column.key, event.target.value)}
-                          />
-                        </label>
-                      ))}
+                  {shouldShowResult && (
+                    <div className="defect-workflow__result-fields">
+                      <h4 className="defect-workflow__chat-title">생성된 결함 요약</h4>
+                      <div className="defect-workflow__result-grid">
+                        {DISPLAY_COLUMNS.map((column) => (
+                          <label key={column.key} className="defect-workflow__scenario-field">
+                            <span>{column.label}</span>
+                            <textarea
+                              className="defect-workflow__textarea"
+                              value={item.result[column.key] ?? ''}
+                              onChange={(event) => onResultChange(defectIndex, column.key, event.target.value)}
+                            />
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {item.status === 'error' && item.error && (
                     <p className="defect-workflow__status defect-workflow__status--error" role="alert">
@@ -197,55 +204,57 @@ export function DefectTable({
                     </p>
                   )}
 
-                  <div className="defect-workflow__chat">
-                    <h4 className="defect-workflow__chat-title">GPT와 결함 요약 다듬기</h4>
-                    <p className="defect-workflow__chat-helper">
-                      수정이 필요한 방향을 설명하면 현재 결함 정보를 참고해 GPT가 새로운 안을 제안합니다.
-                    </p>
-                    <div className="defect-workflow__chat-log" role="log" aria-live="polite">
-                      {item.messages.length === 0 && (
-                        <p className="defect-workflow__chat-helper">아직 대화가 없습니다.</p>
-                      )}
-                      {item.messages.map((message, messageIndex) => (
-                        <div
-                          key={`${message.role}-${messageIndex}`}
-                          className={`defect-workflow__chat-message defect-workflow__chat-message--${message.role}`}
-                        >
-                          <span>{message.role === 'user' ? '요청' : 'GPT 응답'}</span>
-                          <p>{message.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                    {item.inputError && (
-                      <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-                        {item.inputError}
+                  {shouldShowChat && (
+                    <div className="defect-workflow__chat">
+                      <h4 className="defect-workflow__chat-title">GPT와 결함 요약 다듬기</h4>
+                      <p className="defect-workflow__chat-helper">
+                        수정이 필요한 방향을 설명하면 현재 결함 정보를 참고해 GPT가 새로운 안을 제안합니다.
                       </p>
-                    )}
-                    <form
-                      className="defect-workflow__chat-form"
-                      onSubmit={(event) => {
-                        event.preventDefault()
-                        onChatSubmit(defectIndex)
-                      }}
-                    >
-                      <textarea
-                        className="defect-workflow__textarea"
-                        value={item.input}
-                        onChange={(event) => onChatInputChange(defectIndex, event.target.value)}
-                        placeholder="예: 결함 요약을 두 문장으로 줄여줘"
-                        disabled={item.status === 'loading'}
-                      />
-                      <div className="defect-workflow__chat-actions">
-                        <button
-                          type="submit"
-                          className="defect-workflow__button"
-                          disabled={item.status === 'loading'}
-                        >
-                          {item.status === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
-                        </button>
+                      <div className="defect-workflow__chat-log" role="log" aria-live="polite">
+                        {item.messages.length === 0 && (
+                          <p className="defect-workflow__chat-helper">아직 대화가 없습니다.</p>
+                        )}
+                        {item.messages.map((message, messageIndex) => (
+                          <div
+                            key={`${message.role}-${messageIndex}`}
+                            className={`defect-workflow__chat-message defect-workflow__chat-message--${message.role}`}
+                          >
+                            <span>{message.role === 'user' ? '요청' : 'GPT 응답'}</span>
+                            <p>{message.text}</p>
+                          </div>
+                        ))}
                       </div>
-                    </form>
-                  </div>
+                      {item.inputError && (
+                        <p className="defect-workflow__status defect-workflow__status--error" role="alert">
+                          {item.inputError}
+                        </p>
+                      )}
+                      <form
+                        className="defect-workflow__chat-form"
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          onChatSubmit(defectIndex)
+                        }}
+                      >
+                        <textarea
+                          className="defect-workflow__textarea"
+                          value={item.input}
+                          onChange={(event) => onChatInputChange(defectIndex, event.target.value)}
+                          placeholder="예: 결함 요약을 두 문장으로 줄여줘"
+                          disabled={item.status === 'loading'}
+                        />
+                        <div className="defect-workflow__chat-actions">
+                          <button
+                            type="submit"
+                            className="defect-workflow__button"
+                            disabled={item.status === 'loading'}
+                          >
+                            {item.status === 'loading' ? '요청 중…' : 'GPT에게 수정 요청'}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
                 </div>
               )}
             </article>
