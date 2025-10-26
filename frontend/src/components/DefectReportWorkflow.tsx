@@ -16,6 +16,7 @@ import {
 } from './defect-report-workflow/hooks'
 import {
   buildAttachmentFileName,
+  buildRowsFromJsonTable,
   createFileKey,
 } from './defect-report-workflow/utils'
 import { buildPromptResourcesPayload } from './defect-report-workflow/promptResources'
@@ -314,14 +315,12 @@ export function DefectReportWorkflow({
           throw new Error(detail)
         }
 
-        await response.blob()
-
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (!encodedTable) {
-          throw new Error('생성된 결함 요약을 찾을 수 없습니다.')
+        const payload = (await response.json().catch(() => ({}))) as {
+          rows?: unknown
+          headers?: unknown
         }
 
-        const rows = buildRowsFromCsv(encodedTable)
+        const rows = buildRowsFromJsonTable(payload.headers, payload.rows)
         const row = rows[0]
         if (!row) {
           throw new Error('생성된 결함 요약을 찾을 수 없습니다.')
