@@ -25,6 +25,18 @@ export interface DefectReportTableRow {
   cells: Record<string, string>
 }
 
+export interface DefectWorkItem {
+  entry: DefectEntry
+  attachments: File[]
+  status: AsyncStatus
+  error: string | null
+  result: Record<string, string>
+  messages: ConversationMessage[]
+  input: string
+  inputError: string | null
+  isCollapsed: boolean
+}
+
 export interface DefectReportWorkflowProps {
   backendUrl: string
   projectId: string
