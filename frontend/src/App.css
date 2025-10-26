@@ -2071,6 +2071,7 @@
   font: inherit;
   line-height: 1.5;
   color: #111827;
+  overflow: hidden;
 }
 
 .defect-workflow__textarea:focus {

@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { type TextareaHTMLAttributes, useLayoutEffect, useMemo, useRef } from 'react'
 
 import { createFileKey } from './utils'
 import {
@@ -11,6 +11,29 @@ const DISPLAY_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '�
 const DISPLAY_COLUMNS = DEFECT_REPORT_COLUMNS.filter((column) =>
   DISPLAY_COLUMN_KEYS.includes(column.key as (typeof DISPLAY_COLUMN_KEYS)[number]),
 )
+
+type AutoResizeTextareaProps = Omit<
+  TextareaHTMLAttributes<HTMLTextAreaElement>,
+  'value' | 'defaultValue'
+> & {
+  value: string
+}
+
+function AutoResizeTextarea({ value, ...props }: AutoResizeTextareaProps) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useLayoutEffect(() => {
+    const element = textareaRef.current
+    if (!element) {
+      return
+    }
+
+    element.style.height = 'auto'
+    element.style.height = `${element.scrollHeight}px`
+  }, [value])
+
+  return <textarea {...props} ref={textareaRef} value={value} />
+}
 
 interface DefectTableProps {
   items: DefectWorkItem[]
@@ -135,7 +158,7 @@ export function DefectTable({
                   <div className="defect-workflow__card-grid defect-workflow__card-grid--defect">
                     <label className="defect-workflow__scenario-field">
                       <span>정제된 문장</span>
-                      <textarea
+                      <AutoResizeTextarea
                         className="defect-workflow__textarea"
                         value={item.entry.polishedText}
                         onChange={(event) => onPolishedChange(defectIndex, event.target.value)}
@@ -182,10 +205,12 @@ export function DefectTable({
                         {DISPLAY_COLUMNS.map((column) => (
                           <label key={column.key} className="defect-workflow__scenario-field">
                             <span>{column.label}</span>
-                            <textarea
+                            <AutoResizeTextarea
                               className="defect-workflow__textarea"
                               value={item.result[column.key] ?? ''}
-                              onChange={(event) => onResultChange(defectIndex, column.key, event.target.value)}
+                              onChange={(event) =>
+                                onResultChange(defectIndex, column.key, event.target.value)
+                              }
                             />
                           </label>
                         ))}
