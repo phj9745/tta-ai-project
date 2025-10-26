@@ -37,6 +37,7 @@ export interface SelectedCell {
 }
 
 export const TXT_ONLY = ['txt'] as const
+export const FEATURE_LIST_TYPES = ['xlsx', 'xls', 'csv'] as const
 
 export const ATTACHMENT_ACCEPT = new Set(['image/jpeg', 'image/png'])
 
