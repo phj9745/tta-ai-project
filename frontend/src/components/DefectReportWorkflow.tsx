@@ -14,6 +14,7 @@ import {
 import {
   useDefectFinalize,
   useFormalizeDefects,
+  type DefectFinalizeRow,
 } from './defect-report-workflow/hooks'
 import {
   buildAttachmentFileName,

@@ -706,6 +706,19 @@ type FinalizeOptions = {
   projectId: string
 }
 
+export interface DefectFinalizeRow {
+  order?: string | number
+  environment?: string | null
+  summary?: string | null
+  severity?: string | null
+  frequency?: string | null
+  quality?: string | null
+  description?: string | null
+  vendorResponse?: string | null
+  fixStatus?: string | null
+  note?: string | null
+}
+
 interface DefectFinalizeResponse {
   fileId?: string
   fileName?: string
@@ -722,7 +735,7 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
     async (rows: FinalizedDefectRow[], attachments: AttachmentMap) => {
       if (!rows.length) {
         setStatus('error')
-        setError('먼저 결함 문장을 정제해 주세요.')
+        setError('업데이트할 결함 리포트가 없습니다.')
         return null
       }
 
