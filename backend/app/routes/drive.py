@@ -586,11 +586,11 @@ async def generate_project_asset(
     file_metadata: Optional[str] = Form(
         None, description="업로드된 파일에 대한 메타데이터(JSON 배열)"
     ),
-    defect_rows: Optional[str] = Form(
-        None, description="결함 리포트 행 데이터(JSON 배열)"
+    serialized_rows: Optional[str] = Form(
+        None, alias="rows", description="결함 리포트 행 데이터(JSON 배열)"
     ),
-    attachment_names: Optional[str] = Form(
-        None, description="결함 첨부 파일 이름 정보(JSON)"
+    attachment_stub_metadata: Optional[str] = Form(
+        None, alias="attachment_names", description="결함 첨부 파일명(JSON 배열)"
     ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
@@ -615,6 +615,79 @@ async def generate_project_asset(
 
     if metadata_entries and len(metadata_entries) != len(uploads):
         raise HTTPException(status_code=422, detail="파일 메타데이터와 업로드된 파일 수가 일치하지 않습니다.")
+
+    if menu_id == "defect-report" and serialized_rows:
+        try:
+            parsed_rows = json.loads(serialized_rows)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="결함 리포트 행 데이터 형식이 올바르지 않습니다.") from exc
+
+        if not isinstance(parsed_rows, list) or not parsed_rows:
+            raise HTTPException(status_code=422, detail="결함 리포트 행 데이터 형식이 올바르지 않습니다.")
+
+        normalized_input: List[Dict[str, Any]] = []
+        for index, entry in enumerate(parsed_rows, start=1):
+            if not isinstance(entry, Mapping):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{index}번째 결함 리포트 행 데이터 형식이 올바르지 않습니다.",
+                )
+            normalized_input.append(dict(entry))
+
+        normalized_rows = drive_defect_reports.normalize_defect_report_rows(normalized_input)
+
+        attachment_notes: Dict[int, List[str]] = {}
+        if attachment_stub_metadata:
+            try:
+                parsed_stubs = json.loads(attachment_stub_metadata)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=422, detail="결함 첨부 파일명 데이터 형식이 올바르지 않습니다.") from exc
+
+            if not isinstance(parsed_stubs, list):
+                raise HTTPException(status_code=422, detail="결함 첨부 파일명 데이터 형식이 올바르지 않습니다.")
+
+            for item in parsed_stubs:
+                if not isinstance(item, Mapping):
+                    raise HTTPException(status_code=422, detail="결함 첨부 파일명 데이터 형식이 올바르지 않습니다.")
+
+                defect_index = item.get("defect_index")
+                try:
+                    normalized_index = int(defect_index)
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=422, detail="결함 첨부 파일 순번이 올바르지 않습니다.")
+
+                file_name = item.get("fileName") or item.get("file_name")
+                if not isinstance(file_name, str) or not file_name.strip():
+                    raise HTTPException(status_code=422, detail="결함 첨부 파일명이 올바르지 않습니다.")
+
+                attachment_notes.setdefault(normalized_index, []).append(file_name.strip())
+
+        for upload in uploads:
+            await upload.close()
+
+        update_info = await drive_service.update_defect_report_rows(
+            project_id=project_id,
+            rows=normalized_rows,
+            google_id=google_id,
+            images=None,
+            attachment_notes=attachment_notes if attachment_notes else None,
+        )
+
+        file_id = update_info.get("fileId")
+        if not file_id:
+            raise HTTPException(status_code=500, detail="결함 리포트 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        payload: Dict[str, Any] = {
+            "status": "updated",
+            "projectId": project_id,
+            "fileId": file_id,
+            "fileName": update_info.get("fileName"),
+            "modifiedTime": update_info.get("modifiedTime"),
+            "rows": normalized_rows,
+            "headers": list(drive_defect_reports.DEFECT_REPORT_EXPECTED_HEADERS),
+        }
+
+        return JSONResponse(payload)
 
     if menu_id == "security-report":
         if metadata_entries:
