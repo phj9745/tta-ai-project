@@ -25,6 +25,12 @@ export interface DefectReportTableRow {
   cells: Record<string, string>
 }
 
+export interface FinalizedDefectRow {
+  index: number
+  cells: Record<string, string>
+  attachmentNames: string[]
+}
+
 export interface DefectWorkItem {
   entry: DefectEntry
   attachments: File[]

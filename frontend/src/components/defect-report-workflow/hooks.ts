@@ -8,6 +8,7 @@ import {
   type ConversationMessage,
   type DefectEntry,
   type DefectReportTableRow,
+  type FinalizedDefectRow,
   type SelectedCell,
 } from './types'
 import {
@@ -718,8 +719,8 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
   const [error, setError] = useState<string | null>(null)
 
   const finalize = useCallback(
-    async (defects: DefectEntry[], attachments: AttachmentMap) => {
-      if (!defects.length) {
+    async (rows: FinalizedDefectRow[], attachments: AttachmentMap) => {
+      if (!rows.length) {
         setStatus('error')
         setError('먼저 결함 문장을 정제해 주세요.')
         return null
@@ -728,54 +729,37 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
       setStatus('loading')
       setError(null)
 
-      const summary = {
-        defects: defects.map((item) => ({
-          index: item.index,
-          originalText: item.originalText,
-          polishedText: item.polishedText,
-          attachments: (attachments[item.index] ?? []).map((file) => ({
-            fileName: buildAttachmentFileName(item.index, file.name),
-            originalFileName: file.name,
-          })),
-        })),
-        promptResources: buildPromptResourcesPayload([], promptResources ?? undefined),
-      }
-
       const formData = new FormData()
       formData.append('menu_id', 'defect-report')
 
-      const summaryFile = new File([JSON.stringify(summary, null, 2)], '정제된-결함-목록.json', {
-        type: 'application/json',
-      })
+      const rowPayload = rows.map((row) => ({ index: row.index, cells: row.cells }))
+      const attachmentNameMap: Record<number, string[]> = {}
 
-      const metadataEntries: Array<Record<string, unknown>> = [
-        {
-          role: 'additional',
-          description: '정제된 결함 목록',
-          label: '정제된 결함 목록',
-          notes: '결함 문장 정제 결과(JSON)',
-        },
-      ]
+      const metadataEntries: Array<Record<string, unknown>> = []
 
-      formData.append('files', summaryFile)
+      rows.forEach((row) => {
+        if (row.attachmentNames.length > 0) {
+          attachmentNameMap[row.index] = row.attachmentNames
+        }
 
-      defects.forEach((item) => {
-        const files = attachments[item.index] ?? []
+        const files = attachments[row.index] ?? []
         files.forEach((file) => {
-          const normalizedName = buildAttachmentFileName(item.index, file.name)
+          const normalizedName = buildAttachmentFileName(row.index, file.name)
           const renamed =
             file.name === normalizedName ? file : new File([file], normalizedName, { type: file.type })
           formData.append('files', renamed)
           metadataEntries.push({
             role: 'additional',
-            description: `결함 ${item.index} 이미지`,
-            label: `결함 ${item.index} 이미지`,
+            description: `결함 ${row.index} 이미지`,
+            label: `결함 ${row.index} 이미지`,
             notes: `원본 파일명: ${file.name}`,
-            defect_index: item.index,
+            defect_index: row.index,
           })
         })
       })
 
+      formData.append('rows_json', JSON.stringify(rowPayload))
+      formData.append('attachment_names_json', JSON.stringify(attachmentNameMap))
       formData.append('file_metadata', JSON.stringify(metadataEntries))
 
       try {
