@@ -18,6 +18,7 @@ from app.services.excel_templates import (
     SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
     extract_feature_list_overview,
+    populate_defect_report,
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,
@@ -183,3 +184,50 @@ def test_populate_security_report_fills_rows() -> None:
     assert _cell_text(root, "E6") == "A"
     assert _cell_text(root, "G6") == "상세 설명"
     assert _cell_text(root, "J6") == "비고"
+
+
+def test_populate_defect_report_accepts_spaced_headers() -> None:
+    template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    csv_header = ",".join(
+        [
+            "순번",
+            "시험환경 OS",
+            "결함 요약",
+            "결함 정도",
+            "발생 빈도",
+            "품질 특성",
+            "결함 설명",
+            "업체 응답",
+            "수정 여부",
+            "비고",
+        ]
+    )
+    csv_row = ",".join(
+        [
+            "7",
+            "시험환경 모든 OS",
+            "요약 텍스트",
+            "M",
+            "R",
+            "보안성",
+            "상세 설명",
+            "",
+            "",
+            "비고 메모",
+        ]
+    )
+    csv_text = f"{csv_header}\n{csv_row}"
+
+    updated = populate_defect_report(template_bytes, csv_text)
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "A6") == "7"
+    assert _cell_text(root, "B6") == "시험환경 모든 OS"
+    assert _cell_text(root, "C6") == "요약 텍스트"
+    assert _cell_text(root, "D6") == "M"
+    assert _cell_text(root, "E6") == "R"
+    assert _cell_text(root, "F6") == "보안성"
+    assert _cell_text(root, "G6") == "상세 설명"
+    assert _cell_text(root, "J6") == "비고 메모"
