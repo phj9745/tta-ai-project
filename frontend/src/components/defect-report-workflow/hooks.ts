@@ -356,6 +356,11 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
 
       formData.append('files', summaryFile)
 
+      createPromptAttachmentFiles([]).forEach((attachment) => {
+        formData.append('files', attachment.file)
+        metadataEntries.push(attachment.metadata)
+      })
+
       defects.forEach((item) => {
         const files = attachments[item.index] ?? []
         files.forEach((file) => {
