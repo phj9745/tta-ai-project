@@ -29,6 +29,7 @@ from ..services.google_drive.naming import looks_like_header_row
 from ..services.security_report import SecurityReportService
 from ..services.excel_templates import defect_report, testcases
 from ..services.excel_templates import feature_list as feature_list_templates
+from ..services.excel_templates.utils import AI_CSV_DELIMITER
 from ..services.excel_templates.models import (
     DEFECT_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
@@ -562,7 +563,7 @@ async def generate_project_asset(
 
     if menu_id == "defect-report":
         stream = io.StringIO(result.csv_text)
-        reader = csv.DictReader(stream)
+        reader = csv.DictReader(stream, delimiter=AI_CSV_DELIMITER)
         raw_rows: List[Dict[str, str]] = []
         for row in reader:
             if not isinstance(row, dict):
@@ -740,7 +741,12 @@ def _normalize_template_feature_list(records: Sequence[Dict[str, str]]) -> List[
 
 def _csv_from_testcase_rows(rows: Sequence[TestcaseFinalizeRowModel]) -> str:
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=list(TESTCASE_EXPECTED_HEADERS), lineterminator="\n")
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=list(TESTCASE_EXPECTED_HEADERS),
+        lineterminator="\n",
+        delimiter=AI_CSV_DELIMITER,
+    )
     writer.writeheader()
     for row in rows:
         writer.writerow(
@@ -815,7 +821,7 @@ def _decode_feature_list_xls(content: bytes) -> List[Dict[str, str]]:
             continue
 
         buffer = io.StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
+        writer = csv.writer(buffer, lineterminator="\n", delimiter=AI_CSV_DELIMITER)
         writer.writerow(header_values)
 
         for row_index in range(header_row_index + 1, sheet.nrows):
@@ -1401,7 +1407,11 @@ async def compile_defect_report(
         raise HTTPException(status_code=422, detail="최소 한 개의 행 데이터가 필요합니다.")
 
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=DEFECT_REPORT_EXPECTED_HEADERS)
+    writer = csv.DictWriter(
+        buffer,
+        fieldnames=DEFECT_REPORT_EXPECTED_HEADERS,
+        delimiter=AI_CSV_DELIMITER,
+    )
     writer.writeheader()
     writer.writerows(normalized_rows)
     csv_text = buffer.getvalue()

@@ -16,6 +16,7 @@ from ..excel_templates.models import (
     DEFECT_REPORT_START_ROW,
     DefectReportImage,
 )
+from ..excel_templates.utils import AI_CSV_DELIMITER
 from .naming import drive_name_matches, looks_like_header_row
 
 __all__ = [
@@ -348,6 +349,7 @@ def build_defect_report_rows_csv(rows: Sequence[Mapping[str, Any]]) -> str:
         output,
         fieldnames=list(DEFECT_REPORT_EXPECTED_HEADERS),
         lineterminator="\n",
+        delimiter=AI_CSV_DELIMITER,
     )
     writer.writeheader()
 

@@ -147,10 +147,11 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
     "feature-list": PromptConfig(
         label="기능리스트 생성",
         summary="요구사항 문서를 기반으로 신규 프로젝트의 기능 정의서를 작성합니다.",
-        request_description="업로드된 자료에서 주요 기능과 근거를 추출하여 CSV로 정리합니다.",
+        request_description="업로드된 자료에서 주요 기능과 근거를 추출하여 CSV(열은 파이프(|)로 구분)를 정리합니다.",
         system_prompt="당신은 소프트웨어 기획 QA 리드입니다. 업로드된 요구사항을 기반으로 기능 정의서를 작성합니다.",
         user_prompt=(
             "요구사항 자료에서 주요 기능을 발췌하여 CSV로 정리하세요. "
+            "각 열은 파이프(|) 기호로 구분합니다. "
             "다음 열을 포함해야 합니다: 대분류, 중분류, 소분류. "
             "각 열은 템플릿의 계층 구조에 맞춰 핵심 기능을 요약해야 합니다."
         ),
@@ -177,7 +178,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
                 label="후속 지시",
                 content=(
                     "CSV에는 열 순서를 ‘대분류, 중분류, 소분류, 기능명, 기능설명, 근거자료’로 고정하고, "
-                    "추가 제안은 별도 Markdown 섹션으로 출력하세요."
+                    "열은 파이프(|)로 구분합니다. 추가 제안은 별도 Markdown 섹션으로 출력하세요."
                 ),
             ),
         ],
@@ -185,7 +186,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
             attachments_heading="첨부 파일 목록",
             attachments_intro=(
                 "다음 첨부 파일을 참고하여 요구사항을 분석하고 지침에 맞는 CSV를 작성하세요.\n"
-                "각 파일은 업로드된 순서대로 첨부되어 있습니다."
+                "모든 열은 파이프(|)로 구분하며, 각 파일은 업로드된 순서대로 첨부되어 있습니다."
             ),
             closing_note="위 자료는 {{context_summary}}입니다. 이 자료를 활용하여 기능리스트를 작성해 주세요.",
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
@@ -205,12 +206,12 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
     "testcase-generation": PromptConfig(
         label="테스트케이스 생성",
         summary="요구사항을 바탕으로 테스트 케이스 초안을 작성합니다.",
-        request_description="핵심 시나리오를 도출하고 CSV 포맷으로 정리합니다.",
+        request_description="핵심 시나리오를 도출하고 CSV 포맷(열은 파이프(|)로 구분)으로 정리합니다.",
         system_prompt="당신은 소프트웨어 QA 테스터입니다. 업로드된 요구사항을 읽고 테스트 케이스 초안을 설계합니다.",
         user_prompt=(
             "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
             "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
-            "테스트 케이스 ID는 TC-001부터 순차적으로 부여하고 테스트 결과는 기본값으로 '미실행'을 사용하세요."
+            "모든 열은 파이프(|) 기호로 구분하고 테스트 케이스 ID는 TC-001부터 순차적으로 부여하며 테스트 결과는 기본값으로 '미실행'을 사용하세요."
         ),
         user_prompt_sections=[
             PromptSection(
@@ -235,7 +236,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
                 label="작성 지침",
                 content=(
                     "CSV 열 순서는 ‘대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고’로 고정합니다.\n"
-                    "테스트 케이스 ID는 TC-001부터 증가시키고, 테스트 결과는 기본값으로 ‘미실행’을 입력하세요."
+                    "모든 열은 파이프(|) 기호로 구분하고, 테스트 케이스 ID는 TC-001부터 증가시키며 테스트 결과는 기본값으로 ‘미실행’을 입력하세요."
                 ),
             ),
         ],
@@ -243,7 +244,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
             attachments_heading="첨부 파일 목록",
             attachments_intro=(
                 "다음 첨부 파일을 참고하여 요구사항을 분석한 뒤 지침에 맞는 테스트 케이스를 작성하세요.\n"
-                "각 파일은 업로드된 순서대로 첨부되어 있습니다."
+                "CSV는 파이프(|)로 열을 구분해야 하며, 각 파일은 업로드된 순서대로 첨부되어 있습니다."
             ),
             closing_note="위 자료는 {{context_summary}}입니다. 이 자료를 바탕으로 테스트케이스를 작성해 주세요.",
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
@@ -263,11 +264,11 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
     "defect-report": PromptConfig(
         label="결함 리포트",
         summary="정제된 결함 목록과 증적 자료를 바탕으로 결함 리포트 표를 작성합니다.",
-        request_description="결함별 현상, 심각도, 발생 정보를 표 형식으로 정리합니다.",
+        request_description="결함별 현상, 심각도, 발생 정보를 CSV(열은 파이프(|)로 구분) 표 형식으로 정리합니다.",
         system_prompt="당신은 QA 분석가입니다. 업로드된 정제된 결함 설명과 첨부 증적을 바탕으로 결함 리포트를 작성합니다.",
         user_prompt=(
             "정제된 결함 목록과 첨부 자료를 참고하여 다음 열을 포함한 CSV를 작성하세요: 순번, 시험환경(OS), 결함요약, 결함정도, 발생빈도, 품질특성, 결함 설명, 업체 응답, 수정여부, 비고. "
-            "자료가 없는 항목은 '-'로 표기하고, 첨부 이미지가 있다면 결함 설명 또는 비고에 파일명을 괄호로 명시하세요."
+            "모든 열은 파이프(|) 기호로 구분하고 자료가 없는 항목은 '-'로 표기하며, 첨부 이미지가 있다면 결함 설명 또는 비고에 파일명을 괄호로 명시하세요."
         ),
         user_prompt_sections=[
             PromptSection(
@@ -290,7 +291,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
                 id="defect-format",
                 label="출력 형식",
                 content=(
-                    "모든 열을 지정된 순서로 포함한 CSV만 출력하세요. 값이 비어 있으면 '-'를 사용하고, 순번은 1부터 원본 순서를 유지합니다."
+                    "모든 열을 지정된 순서로 포함한 CSV만 출력하세요. 값이 비어 있으면 '-'를 사용하고, 순번은 1부터 원본 순서를 유지합니다. 모든 열은 파이프(|) 기호로 구분합니다."
                 ),
             ),
         ],
@@ -298,7 +299,7 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
             attachments_heading="첨부 파일 목록",
             attachments_intro=(
                 "정제된 결함 요약과 추가 증적을 참고하여 결함을 정리하세요.\n"
-                "이미지나 로그 파일이 있다면 해당 결함과 매핑해 활용하세요."
+                "CSV는 파이프(|)로 열을 구분해야 하며, 이미지나 로그 파일이 있다면 해당 결함과 매핑해 활용하세요."
             ),
             format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
         ),

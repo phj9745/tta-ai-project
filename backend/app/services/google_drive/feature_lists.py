@@ -12,6 +12,7 @@ try:  # pragma: no cover - optional dependency
 except ImportError:  # pragma: no cover
     load_workbook = None  # type: ignore[assignment]
 from ..excel_templates.models import FEATURE_LIST_EXPECTED_HEADERS
+from ..excel_templates.utils import AI_CSV_DELIMITER
 from .naming import drive_name_matches, looks_like_header_row
 from .templates import FEATURE_LIST_SHEET_CANDIDATES, FEATURE_LIST_START_ROW
 
@@ -142,6 +143,7 @@ def build_feature_list_rows_csv(rows: Sequence[Dict[str, str]]) -> str:
         output,
         fieldnames=list(FEATURE_LIST_EXPECTED_HEADERS),
         lineterminator="\n",
+        delimiter=AI_CSV_DELIMITER,
     )
     writer.writeheader()
 

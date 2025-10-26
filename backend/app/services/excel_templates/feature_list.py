@@ -14,7 +14,7 @@ from .models import (
     SPREADSHEET_NS,
     XLSX_SHEET_PATH,
 )
-from .utils import summarize_feature_description
+from .utils import AI_CSV_DELIMITER, summarize_feature_description
 from .workbook import (
     WorksheetPopulator,
     cell_text_from_sheet,
@@ -89,7 +89,7 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     if not stripped:
         return []
 
-    reader = csv.reader(io.StringIO(stripped))
+    reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader if any(cell.strip() for cell in row)]
     if not rows:
         return []

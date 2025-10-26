@@ -10,7 +10,7 @@ from xml.etree import ElementTree as ET
 import zipfile
 from copy import copy as clone_style
 
-from .utils import parse_csv_records as _parse_csv_records
+from .utils import AI_CSV_DELIMITER, parse_csv_records as _parse_csv_records
 
 
 def summarize_feature_description(description: object, max_length: int = 120) -> str:
@@ -791,7 +791,7 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     if not stripped:
         return []
 
-    reader = csv.reader(io.StringIO(stripped))
+    reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader]
     if not rows:
         return []
@@ -901,7 +901,7 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
     if not stripped:
         return []
 
-    reader = csv.reader(io.StringIO(stripped))
+    reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader if any(cell.strip() for cell in row)]
     if not rows:
         return []
@@ -1119,7 +1119,7 @@ def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
     records = _parse_csv_records(csv_text, SECURITY_REPORT_EXPECTED_HEADERS)
 
     buffer = io.StringIO()
-    writer = csv.writer(buffer)
+    writer = csv.writer(buffer, delimiter=AI_CSV_DELIMITER)
     writer.writerow(DEFECT_REPORT_EXPECTED_HEADERS)
     for record in records:
         writer.writerow(
