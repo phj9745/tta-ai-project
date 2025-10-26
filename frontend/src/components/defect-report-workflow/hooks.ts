@@ -16,6 +16,7 @@ import {
   createFileKey,
   decodeBase64,
 } from './utils'
+import { buildPromptResourcesPayload } from './promptResources'
 
 type FormalizeOptions = {
   backendUrl: string
@@ -333,6 +334,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
             originalFileName: file.name,
           })),
         })),
+        promptResources: buildPromptResourcesPayload([]),
       }
 
       const formData = new FormData()
