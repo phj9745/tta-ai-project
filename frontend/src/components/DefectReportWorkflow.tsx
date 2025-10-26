@@ -9,6 +9,7 @@ import {
   type ConversationMessage,
   type DefectReportWorkflowProps,
   type DefectWorkItem,
+  type FinalizedDefectRow,
 } from './defect-report-workflow/types'
 import {
   useDefectFinalize,
@@ -25,6 +26,42 @@ import {
   type PromptResourcesConfig,
 } from './defect-report-workflow/promptResources'
 import { normalizeDefectResultCells } from './defect-report-workflow/normalizers'
+
+function buildFinalizedRows(items: DefectWorkItem[]): FinalizedDefectRow[] {
+  return items.map((item) => {
+    const normalized = normalizeDefectResultCells(item.result)
+    const getValue = (key: string) => {
+      const value = normalized[key]
+      return typeof value === 'string' ? value.trim() : ''
+    }
+    const attachmentNames = item.attachments.map((file) =>
+      buildAttachmentFileName(item.entry.index, file.name),
+    )
+
+    const environment = attachmentNames.length > 0 ? '시험환경 모든 OS' : '-'
+    const description = getValue('결함 설명') || item.entry.polishedText || ''
+    const note = attachmentNames.join('\n')
+
+    const cells: Record<string, string> = {
+      순번: String(item.entry.index),
+      '시험환경(OS)': environment,
+      결함요약: getValue('결함요약'),
+      결함정도: getValue('결함정도'),
+      발생빈도: getValue('발생빈도'),
+      품질특성: getValue('품질특성'),
+      '결함 설명': description,
+      '업체 응답': getValue('업체 응답'),
+      수정여부: getValue('수정여부'),
+      비고: note,
+    }
+
+    return {
+      index: item.entry.index,
+      cells,
+      attachmentNames,
+    }
+  })
+}
 
 const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품질특성', '결함 설명'] as const
 
@@ -94,6 +131,8 @@ export function DefectReportWorkflow({
     })
     return map
   }, [defectItems])
+
+  const finalizedRows = useMemo(() => buildFinalizedRows(defectItems), [defectItems])
 
   const hasAttachments = useMemo(
     () => defectItems.some((item) => item.attachments.length > 0),
@@ -450,62 +489,7 @@ export function DefectReportWorkflow({
       return
     }
 
-    const finalizeRows: DefectFinalizeRow[] = defectItems
-      .map((item) => {
-        const cells = item.result || {}
-        const attachments = attachmentMap[item.entry.index] ?? []
-
-        const getCellValue = (key: string) => {
-          const value = (cells as Record<string, unknown>)[key]
-          if (typeof value === 'string') {
-            return value.trim()
-          }
-          if (value == null) {
-            return ''
-          }
-          return String(value).trim()
-        }
-
-        const summary = getCellValue('결함요약')
-        const severity = getCellValue('결함정도')
-        const frequency = getCellValue('발생빈도')
-        const quality = getCellValue('품질특성')
-        const description = getCellValue('결함 설명')
-        const vendorResponse = getCellValue('업체 응답')
-        const fixStatus = getCellValue('수정여부')
-        const note = getCellValue('비고')
-        const environment = getCellValue('시험환경(OS)')
-
-        const hasContent =
-          summary.length > 0 ||
-          severity.length > 0 ||
-          frequency.length > 0 ||
-          quality.length > 0 ||
-          description.length > 0 ||
-          vendorResponse.length > 0 ||
-          fixStatus.length > 0 ||
-          note.length > 0
-
-        if (!hasContent && attachments.length === 0) {
-          return null
-        }
-
-        return {
-          order: item.entry.index,
-          environment,
-          summary,
-          severity,
-          frequency,
-          quality,
-          description,
-          vendorResponse,
-          fixStatus,
-          note,
-        }
-      })
-      .filter((row): row is DefectFinalizeRow => row !== null)
-
-    const payload = await finalizeReport(finalizeRows, attachmentMap)
+    const payload = await finalizeReport(finalizedRows, attachmentMap)
     if (!payload || typeof payload !== 'object') {
       return
     }
@@ -544,7 +528,7 @@ export function DefectReportWorkflow({
     navigate(
       `/projects/${encodeURIComponent(projectId)}/defect-report/edit${query ? `?${query}` : ''}`,
     )
-  }, [attachmentMap, defectItems, finalizeReport, finalizeStatus, projectId, projectName])
+  }, [attachmentMap, finalizedRows, finalizeReport, finalizeStatus, projectId, projectName])
 
   const handleReset = useCallback(() => {
     resetFormalize()
