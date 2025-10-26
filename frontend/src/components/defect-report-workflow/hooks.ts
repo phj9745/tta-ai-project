@@ -12,10 +12,8 @@ import {
 } from './types'
 import {
   buildAttachmentFileName,
-  buildRowsFromCsv,
   buildRowsFromJsonTable,
   createFileKey,
-  decodeBase64,
 } from './utils'
 import { buildPromptResourcesPayload } from './promptResources'
 import { normalizeDefectRows } from './normalizers'
@@ -526,15 +524,6 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
           }
         }
 
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (encodedTable) {
-          const rows = normalizeDefectRows(buildRowsFromCsv(encodedTable))
-          setTableRows(rows)
-          if (!selectedCell && rows.length > 0) {
-            setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
-          }
-        }
-
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
         }
@@ -563,7 +552,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
         return false
       }
     },
-    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, selectedCell, tableRows.length],
+    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, tableRows.length],
   )
 
   const submitRewrite = useCallback(async () => {

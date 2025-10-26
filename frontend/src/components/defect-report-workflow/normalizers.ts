@@ -27,12 +27,51 @@ const QUALITY_KEYS = new Set(Object.keys(QUALITY_LABEL_MAP))
 
 const SENTENCE_PUNCTUATION = /[.!?]|[\.\?!]$|[\.\?!]/
 
+const QUOTE_PAIRS: Array<[string, string]> = [
+  ['"', '"'],
+  ["'", "'"],
+  ['“', '”'],
+  ['‘', '’'],
+  ['「', '」'],
+  ['『', '』'],
+  ['《', '》'],
+  ['〈', '〉'],
+]
+
+function stripWrappingQuotes(value: string): string {
+  let result = value.trim()
+  if (result.length < 2) {
+    return result
+  }
+
+  let changed = true
+  while (changed && result.length >= 2) {
+    changed = false
+    for (const [open, close] of QUOTE_PAIRS) {
+      if (!result.startsWith(open) || !result.endsWith(close)) {
+        continue
+      }
+
+      const inner = result.slice(open.length, result.length - close.length)
+      if (inner.length === result.length) {
+        continue
+      }
+
+      result = inner.trim()
+      changed = true
+      break
+    }
+  }
+
+  return result
+}
+
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, '')
 }
 
 function detectSeverity(raw: string): 'H' | 'M' | 'L' | null {
-  const trimmed = raw.trim()
+  const trimmed = stripWrappingQuotes(raw)
   if (!trimmed) {
     return null
   }
@@ -80,7 +119,7 @@ function detectSeverity(raw: string): 'H' | 'M' | 'L' | null {
 }
 
 function detectFrequency(raw: string): 'A' | 'R' | null {
-  const trimmed = raw.trim()
+  const trimmed = stripWrappingQuotes(raw)
   if (!trimmed) {
     return null
   }
@@ -123,7 +162,7 @@ function detectFrequency(raw: string): 'A' | 'R' | null {
 }
 
 function detectQuality(raw: string): string | null {
-  const trimmed = raw.trim()
+  const trimmed = stripWrappingQuotes(raw)
   if (!trimmed) {
     return null
   }
@@ -142,7 +181,7 @@ function detectQuality(raw: string): string | null {
 }
 
 function isLikelyDescription(value: string): boolean {
-  const trimmed = value.trim()
+  const trimmed = stripWrappingQuotes(value)
   if (!trimmed) {
     return false
   }
@@ -169,13 +208,18 @@ function isLikelyDescription(value: string): boolean {
 export function normalizeDefectResultCells(
   cells: Record<string, string>,
 ): Record<string, string> {
-  const normalized: Record<string, string> = { ...cells }
+  const normalized: Record<string, string> = {}
+
+  Object.entries(cells).forEach(([key, value]) => {
+    const rawValue = typeof value === 'string' ? value : value != null ? String(value) : ''
+    normalized[key] = stripWrappingQuotes(rawValue)
+  })
 
   const severitySources: Array<{ key: string; value: string }> = [
-    { key: '결함정도', value: cells['결함정도'] ?? '' },
-    { key: '발생빈도', value: cells['발생빈도'] ?? '' },
-    { key: '품질특성', value: cells['품질특성'] ?? '' },
-    { key: '결함 설명', value: cells['결함 설명'] ?? '' },
+    { key: '결함정도', value: normalized['결함정도'] ?? '' },
+    { key: '발생빈도', value: normalized['발생빈도'] ?? '' },
+    { key: '품질특성', value: normalized['품질특성'] ?? '' },
+    { key: '결함 설명', value: normalized['결함 설명'] ?? '' },
   ]
 
   let severity: 'H' | 'M' | 'L' | null = null
@@ -191,8 +235,8 @@ export function normalizeDefectResultCells(
 
   if (severity) {
     normalized['결함정도'] = severity
-  } else if (cells['결함정도']) {
-    normalized['결함정도'] = cells['결함정도'].trim()
+  } else if (normalized['결함정도']) {
+    normalized['결함정도'] = normalized['결함정도'].trim()
   }
 
   const frequencySources: Array<{ key: string; value: string }> = severitySource
@@ -212,8 +256,8 @@ export function normalizeDefectResultCells(
 
   if (frequency) {
     normalized['발생빈도'] = frequency
-  } else if (cells['발생빈도']) {
-    normalized['발생빈도'] = cells['발생빈도'].trim()
+  } else if (normalized['발생빈도']) {
+    normalized['발생빈도'] = normalized['발생빈도'].trim()
   }
 
   const qualitySources: Array<{ key: string; value: string }> = []
@@ -237,8 +281,8 @@ export function normalizeDefectResultCells(
 
   if (quality) {
     normalized['품질특성'] = quality
-  } else if (cells['품질특성']) {
-    normalized['품질특성'] = cells['품질특성'].trim()
+  } else if (normalized['품질특성']) {
+    normalized['품질특성'] = normalized['품질특성'].trim()
   }
 
   const descriptionCandidates: Array<{ key: string; value: string }> = []
@@ -253,11 +297,11 @@ export function normalizeDefectResultCells(
     descriptionCandidates.push(candidate)
   })
 
-  let description = (cells['결함 설명'] ?? '').trim()
+  let description = normalized['결함 설명'] ?? ''
   if (!isLikelyDescription(description)) {
     for (const candidate of descriptionCandidates) {
       if (isLikelyDescription(candidate.value)) {
-        description = candidate.value.trim()
+        description = stripWrappingQuotes(candidate.value)
         break
       }
     }

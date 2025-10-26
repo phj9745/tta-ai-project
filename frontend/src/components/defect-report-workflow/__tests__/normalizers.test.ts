@@ -38,6 +38,24 @@ describe('normalizeDefectResultCells', () => {
     expect(result['품질특성']).toBe('신뢰성')
     expect(result['결함 설명']).toBe('로그 저장 기능이 5분 간격으로 실패합니다.')
   })
+
+  it('strips wrapping quotes while preserving multiline descriptions', () => {
+    const input = {
+      결함요약: '"동일 CCTV 다수 관제점 등록 시 탐지 오류"',
+      결함정도: '"H"',
+      발생빈도: '"A"',
+      품질특성: '"기능성"',
+      '결함 설명': '"동일 CCTV를 여러 관제점에 등록할 경우\n\n탐지가 실패합니다."',
+    }
+
+    const result = normalizeDefectResultCells(input)
+
+    expect(result['결함요약']).toBe('동일 CCTV 다수 관제점 등록 시 탐지 오류')
+    expect(result['결함정도']).toBe('H')
+    expect(result['발생빈도']).toBe('A')
+    expect(result['품질특성']).toBe('기능성')
+    expect(result['결함 설명']).toBe('동일 CCTV를 여러 관제점에 등록할 경우\n\n탐지가 실패합니다.')
+  })
 })
 
 describe('normalizeDefectRows', () => {

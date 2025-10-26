@@ -49,14 +49,10 @@ describe('useDefectDownload', () => {
       headers: new Headers({ 'content-type': 'application/json' }),
     })
 
-    const csvHeader = ['순번', DEFECT_REPORT_COLUMNS[1].key].join(',')
-    const csv = `${csvHeader}\n1,Issue\n`
-    const base64 = Buffer.from(csv, 'utf-8').toString('base64')
     const downloadResponse = new Response('file', {
       status: 200,
       headers: new Headers({
         'content-disposition': "attachment; filename=\"defect.xlsx\"",
-        'x-defect-table': base64,
       }),
     })
 
@@ -92,5 +88,6 @@ describe('useDefectDownload', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(createObjectURLMock).toHaveBeenCalled()
     expect(result.current.downloadStatus).toBe('success')
+    expect(result.current.tableRows).toHaveLength(1)
   })
 })
