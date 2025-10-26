@@ -12,9 +12,8 @@ import {
 } from './types'
 import {
   buildAttachmentFileName,
-  buildRowsFromCsv,
+  buildRowsFromJsonTable,
   createFileKey,
-  decodeBase64,
 } from './utils'
 import { buildPromptResourcesPayload } from './promptResources'
 import { normalizeDefectRows } from './normalizers'
@@ -400,39 +399,30 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
           return false
         }
 
-        const blob = await response.blob()
-        const disposition = response.headers.get('content-disposition')
-        let filename = 'defect-report.xlsx'
-        if (disposition) {
-          const match = disposition.match(/filename\*?=([^;]+)/i)
-          if (match) {
-            const value = match[1].replace(/^UTF-8''/i, '')
-            try {
-              filename = decodeURIComponent(value.replace(/"/g, ''))
-            } catch {
-              filename = value.replace(/"/g, '')
-            }
-          }
+        const payload = (await response.json().catch(() => ({}))) as {
+          headers?: unknown
+          rows?: unknown
+          fileName?: unknown
         }
 
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (encodedTable) {
-          const rows = normalizeDefectRows(buildRowsFromCsv(encodedTable))
-          setTableRows(rows)
-          if (rows.length > 0) {
-            setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
-          }
+        const rows = normalizeDefectRows(buildRowsFromJsonTable(payload.headers, payload.rows))
+        setTableRows(rows)
+        if (rows.length > 0) {
+          setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
         }
+
+        const filename =
+          typeof payload?.fileName === 'string' && payload.fileName.trim()
+            ? payload.fileName.trim()
+            : null
 
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
+          setDownloadUrl(null)
         }
 
-        const objectUrl = URL.createObjectURL(blob)
-        setDownloadUrl(objectUrl)
         setDownloadName(filename)
         setIsTableDirty(false)
-        setDownloadStatus('success')
         setGenerateStatus('success')
         return true
       } catch (error) {
@@ -534,15 +524,6 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
           }
         }
 
-        const encodedTable = decodeBase64(response.headers.get('x-defect-table'))
-        if (encodedTable) {
-          const rows = normalizeDefectRows(buildRowsFromCsv(encodedTable))
-          setTableRows(rows)
-          if (!selectedCell && rows.length > 0) {
-            setSelectedCell({ rowIndex: 0, columnKey: DEFECT_REPORT_COLUMNS[0].key })
-          }
-        }
-
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
         }
@@ -571,7 +552,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
         return false
       }
     },
-    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, selectedCell, tableRows.length],
+    [backendUrl, buildRowsPayload, downloadName, downloadStatus, downloadUrl, isTableDirty, projectId, tableRows.length],
   )
 
   const submitRewrite = useCallback(async () => {
