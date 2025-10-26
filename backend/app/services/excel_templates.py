@@ -10,6 +10,8 @@ from xml.etree import ElementTree as ET
 import zipfile
 from copy import copy as clone_style
 
+from .utils import parse_csv_records as _parse_csv_records
+
 
 def summarize_feature_description(description: object, max_length: int = 120) -> str:
     """Create a compact single-line summary for a feature description.
@@ -771,45 +773,6 @@ def _replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes
                     data = new_sheet_bytes
                 target_zip.writestr(info, data)
     return output_buffer.getvalue()
-
-
-def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Dict[str, str]]:
-    stripped = csv_text.strip()
-    if not stripped:
-        return []
-
-    reader = csv.reader(io.StringIO(stripped))
-    rows = [row for row in reader]
-    if not rows:
-        return []
-
-    header = [cell.strip() for cell in rows[0]]
-    if header:
-        header[0] = header[0].lstrip("\ufeff")
-    column_index: Dict[str, int] = {}
-    for idx, name in enumerate(header):
-        if name:
-            column_index[name] = idx
-
-    missing = [column for column in expected_columns if column not in column_index]
-    if missing:
-        raise ValueError(f"CSV에 필요한 열이 없습니다: {', '.join(missing)}")
-
-    records: List[Dict[str, str]] = []
-    for raw in rows[1:]:
-        entry: Dict[str, str] = {}
-        is_empty = True
-        for column in expected_columns:
-            idx = column_index[column]
-            value = raw[idx].strip() if idx < len(raw) else ""
-            if value:
-                is_empty = False
-            entry[column] = value
-        if not is_empty:
-            records.append(entry)
-    return records
-
-
 _FEATURE_LIST_START_ROW = 8
 
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {

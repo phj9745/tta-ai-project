@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from typing import Dict, Iterable, List, Sequence
 
 __all__ = [
@@ -10,6 +11,61 @@ __all__ = [
     "append_attachment_note",
     "parse_csv_records",
 ]
+
+
+def _normalize_header_token(value: str) -> str:
+    return re.sub(r"[\s()]+", "", value or "")
+
+
+_FLEXIBLE_COLUMNS = {
+    "결함설명",
+    "업체응답",
+    "비고",
+}
+
+
+def _rebalance_csv_row(
+    row: Sequence[str],
+    header: Sequence[str],
+    normalized_header: Sequence[str],
+) -> List[str]:
+    """Ensure rows with stray commas still align with the header order."""
+
+    if len(row) <= len(header):
+        return [cell.strip() for cell in row]
+
+    total_columns = len(header)
+    total_cells = len(row)
+    balanced: List[str] = []
+    cell_index = 0
+
+    for column_index, normalized_name in enumerate(normalized_header):
+        remaining_columns = total_columns - column_index - 1
+        remaining_cells = total_cells - cell_index
+
+        if remaining_cells <= 0:
+            balanced.append("")
+            continue
+
+        minimum_required = remaining_columns + 1
+        extra_cells = max(0, remaining_cells - minimum_required)
+
+        if remaining_columns == 0:
+            consume = remaining_cells
+        elif normalized_name in _FLEXIBLE_COLUMNS and extra_cells > 0:
+            consume = 1 + extra_cells
+        else:
+            consume = 1
+
+        segment = [cell.strip() for cell in row[cell_index : cell_index + consume]]
+        if consume > 1:
+            combined = ", ".join(segment)
+        else:
+            combined = segment[0] if segment else ""
+        balanced.append(combined)
+        cell_index += consume
+
+    return balanced
 
 
 def summarize_feature_description(description: object, max_length: int = 120) -> str:
@@ -79,6 +135,7 @@ def parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Di
     header = [cell.strip() for cell in rows[0]]
     if header:
         header[0] = header[0].lstrip("\ufeff")
+    normalized_header = [_normalize_header_token(name) for name in header]
     column_index: Dict[str, int] = {}
     for idx, name in enumerate(header):
         if name:
@@ -90,13 +147,14 @@ def parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Di
 
     records: List[Dict[str, str]] = []
     for raw in rows[1:]:
+        adjusted = _rebalance_csv_row(raw, header, normalized_header)
         entry: Dict[str, str] = {}
         is_empty = True
         for column in expected_columns:
             index = column_index[column]
             value = ""
-            if index < len(raw):
-                value = raw[index].strip()
+            if index < len(adjusted):
+                value = adjusted[index].strip()
             if value:
                 is_empty = False
             entry[column] = value
