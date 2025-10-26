@@ -257,7 +257,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }, {} as Record<MenuItemId, MenuItemContent>)
   }, [])
   const additionalIdRef = useRef(0)
-  const [isDefectPreviewVisible, setIsDefectPreviewVisible] = useState(false)
 
   const releaseDownloadUrl = useCallback((id: MenuItemId, url: string | null) => {
     if (url) {
@@ -275,12 +274,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
-
-  useEffect(() => {
-    if (!isDefectReport && isDefectPreviewVisible) {
-      setIsDefectPreviewVisible(false)
-    }
-  }, [isDefectReport, isDefectPreviewVisible])
 
   const handleChangeFiles = useCallback(
     (id: MenuItemId, nextFiles: File[]) => {
@@ -737,20 +730,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }
   }, [])
 
-  const pageClassName = `project-management-page${
-    isDefectReport && isDefectPreviewVisible ? ' project-management-page--preview' : ''
-  }`
-
-  const contentInnerClassName = `project-management-content__inner${
-    isDefectReport && isDefectPreviewVisible ? ' project-management-content__inner--preview' : ''
-  }`
-
-  const contentClassName = `project-management-content${
-    isDefectReport && isDefectPreviewVisible ? ' project-management-content--preview' : ''
-  }`
-
   return (
-    <div className={pageClassName}>
+    <div className="project-management-page">
       <aside className="project-management-sidebar">
         <div className="project-management-overview">
           <span className="project-management-overview__label">프로젝트</span>
@@ -785,8 +766,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         </nav>
       </aside>
 
-      <main className={contentClassName} aria-label="프로젝트 관리 컨텐츠">
-        <div className={contentInnerClassName}>
+      <main className="project-management-content" aria-label="프로젝트 관리 컨텐츠">
+        <div className="project-management-content__inner">
           <div className="project-management-content__toolbar" role="navigation" aria-label="프로젝트 작업 메뉴">
             <button
               type="button"
@@ -815,7 +796,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                   <DefectReportWorkflow
                     backendUrl={backendUrl}
                     projectId={projectId}
-                    onPreviewModeChange={setIsDefectPreviewVisible}
+                    projectName={projectName}
                   />
                 ) : hasRequiredDocuments ? (
                   <>
