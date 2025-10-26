@@ -15,7 +15,10 @@ import {
   buildRowsFromJsonTable,
   createFileKey,
 } from './utils'
-import { buildPromptResourcesPayload } from './promptResources'
+import {
+  buildPromptResourcesPayload,
+  type PromptResourcesConfig,
+} from './promptResources'
 import { normalizeDefectRows } from './normalizers'
 
 type FormalizeOptions = {
@@ -214,9 +217,10 @@ export function useDefectAttachments() {
 type DownloadOptions = {
   backendUrl: string
   projectId: string
+  promptResources?: PromptResourcesConfig | null
 }
 
-export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
+export function useDefectDownload({ backendUrl, projectId, promptResources }: DownloadOptions) {
   const [tableRows, setTableRows] = useState<DefectReportTableRow[]>([])
   const [isTableDirty, setIsTableDirty] = useState(false)
   const [generateStatus, setGenerateStatus] = useState<AsyncStatus>('idle')
@@ -334,7 +338,7 @@ export function useDefectDownload({ backendUrl, projectId }: DownloadOptions) {
             originalFileName: file.name,
           })),
         })),
-        promptResources: buildPromptResourcesPayload([]),
+        promptResources: buildPromptResourcesPayload([], promptResources ?? undefined),
       }
 
       const formData = new FormData()
@@ -734,7 +738,7 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
             originalFileName: file.name,
           })),
         })),
-        promptResources: buildPromptResourcesPayload([]),
+        promptResources: buildPromptResourcesPayload([], promptResources ?? undefined),
       }
 
       const formData = new FormData()

@@ -19,7 +19,10 @@ import {
   buildRowsFromJsonTable,
   createFileKey,
 } from './defect-report-workflow/utils'
-import { buildPromptResourcesPayload } from './defect-report-workflow/promptResources'
+import {
+  buildPromptResourcesPayload,
+  type PromptResourcesConfig,
+} from './defect-report-workflow/promptResources'
 import { normalizeDefectResultCells } from './defect-report-workflow/normalizers'
 
 const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품질특성', '결함 설명'] as const
@@ -95,6 +98,41 @@ export function DefectReportWorkflow({
     () => defectItems.some((item) => item.attachments.length > 0),
     [defectItems],
   )
+
+  const [promptResources, setPromptResources] = useState<PromptResourcesConfig | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadPromptResources() {
+      try {
+        const response = await fetch(`${backendUrl}/admin/prompts/defect-report`, {
+          method: 'GET',
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          return
+        }
+        const payload = (await response.json()) as {
+          config?: { promptResources?: PromptResourcesConfig | null }
+        }
+        const raw = payload?.config?.promptResources
+        if (raw && typeof raw.judgementCriteria === 'string' && typeof raw.outputExample === 'string') {
+          setPromptResources({
+            judgementCriteria: raw.judgementCriteria,
+            outputExample: raw.outputExample,
+          })
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error(error)
+        }
+      }
+    }
+
+    loadPromptResources()
+    return () => controller.abort()
+  }, [backendUrl])
 
   const {
     status: finalizeStatus,
@@ -258,7 +296,7 @@ export function DefectReportWorkflow({
             })),
           },
         ],
-        promptResources: buildPromptResourcesPayload(messages),
+        promptResources: buildPromptResourcesPayload(messages, promptResources ?? undefined),
       }
 
       const formData = new FormData()

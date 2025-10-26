@@ -36,7 +36,12 @@ from ..config import Settings
 from .excel_templates import TESTCASE_EXPECTED_HEADERS
 from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
-from .prompt_config import PromptBuiltinContext, PromptConfigService
+from .prompt_config import (
+    PromptBuiltinContext,
+    PromptConfig,
+    PromptConfigService,
+    PromptResourcesConfig,
+)
 from .prompt_request_log import PromptRequestLogService
 
 
@@ -1725,7 +1730,7 @@ class AIGenerationService:
                 defect_prompt_section,
                 defect_summary_entries,
                 defect_image_map,
-            ) = self._prepare_defect_report_contexts(contexts)
+            ) = self._prepare_defect_report_contexts(contexts, prompt_config)
 
         client = self._get_client()
         uploaded_file_records: List[tuple[str, bool]] = []
@@ -2099,7 +2104,7 @@ class AIGenerationService:
         return f"data:{media_type};base64,{encoded}"
 
     def _prepare_defect_report_contexts(
-        self, contexts: List[UploadContext]
+        self, contexts: List[UploadContext], prompt_config: PromptConfig
     ) -> tuple[
         List[UploadContext],
         str | None,
@@ -2107,7 +2112,6 @@ class AIGenerationService:
         Dict[int, List[BufferedUpload]],
     ]:
         summary_entries: List[DefectSummaryEntry] | None = None
-        prompt_section: str | None = None
         prompt_resources: DefectPromptResources | None = None
         image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
         filtered_contexts: List[UploadContext] = []
@@ -2135,15 +2139,63 @@ class AIGenerationService:
                     summary_entries = parsed_entries
                 if prompt_resources is None and parsed_resources:
                     prompt_resources = parsed_resources
-                if (summary_entries and len(summary_entries) > 0) or prompt_resources:
-                    prompt_section = self._format_defect_prompt_section(
-                        summary_entries or [], prompt_resources
-                    )
                 continue
 
             filtered_contexts.append(context)
 
+        prompt_resources = self._merge_defect_prompt_resources(
+            prompt_resources, prompt_config.prompt_resources
+        )
+
+        prompt_section: str | None = None
+        if (summary_entries and len(summary_entries) > 0) or prompt_resources:
+            prompt_section = self._format_defect_prompt_section(
+                summary_entries or [], prompt_resources
+            )
+
         return filtered_contexts, prompt_section, summary_entries, image_map
+
+    @staticmethod
+    def _merge_defect_prompt_resources(
+        parsed: DefectPromptResources | None,
+        config_resources: PromptResourcesConfig | None,
+    ) -> DefectPromptResources | None:
+        if parsed is None and config_resources is None:
+            return None
+
+        config_judgement = (
+            config_resources.judgement_criteria.strip()
+            if config_resources and config_resources.judgement_criteria
+            else ""
+        )
+        config_example = (
+            config_resources.output_example.strip()
+            if config_resources and config_resources.output_example
+            else ""
+        )
+
+        parsed_judgement = (
+            parsed.judgement_criteria.strip()
+            if parsed and parsed.judgement_criteria
+            else ""
+        )
+        parsed_example = (
+            parsed.output_example.strip() if parsed and parsed.output_example else ""
+        )
+
+        conversation = list(parsed.conversation) if parsed else []
+
+        judgement = parsed_judgement or config_judgement
+        example = parsed_example or config_example
+
+        if not judgement and not example and not conversation:
+            return None
+
+        return DefectPromptResources(
+            judgement_criteria=judgement or None,
+            output_example=example or None,
+            conversation=conversation,
+        )
 
     @staticmethod
     def _parse_defect_summary_upload(
