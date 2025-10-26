@@ -122,6 +122,17 @@ def append_attachment_note(value: object, names: Sequence[str]) -> str:
     return note
 
 
+def _normalize_header_token(value: str) -> str:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = cleaned.lstrip("\ufeff")
+    cleaned = re.sub(r"[\s\u00a0]+", "", cleaned)
+    cleaned = re.sub(r"[()\[\]{}<>]+", "", cleaned)
+    cleaned = cleaned.replace("-", "").replace("_", "")
+    return cleaned
+
+
 def parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Dict[str, str]]:
     stripped = csv_text.strip()
     if not stripped:
@@ -137,9 +148,20 @@ def parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Di
         header[0] = header[0].lstrip("\ufeff")
     normalized_header = [_normalize_header_token(name) for name in header]
     column_index: Dict[str, int] = {}
+    normalized_lookup: Dict[str, str] = {}
+    for column in expected_columns:
+        normalized = _normalize_header_token(column)
+        if normalized and normalized not in normalized_lookup:
+            normalized_lookup[normalized] = column
+
     for idx, name in enumerate(header):
-        if name:
-            column_index[name] = idx
+        if not name:
+            continue
+        column_index.setdefault(name, idx)
+        normalized = _normalize_header_token(name)
+        canonical = normalized_lookup.get(normalized)
+        if canonical:
+            column_index.setdefault(canonical, idx)
 
     missing = [column for column in expected_columns if column not in column_index]
     if missing:

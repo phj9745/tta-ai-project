@@ -773,6 +773,67 @@ def _replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes
                     data = new_sheet_bytes
                 target_zip.writestr(info, data)
     return output_buffer.getvalue()
+
+
+def _normalize_header_token(value: str) -> str:
+    cleaned = str(value or "").strip().lower()
+    if not cleaned:
+        return ""
+    cleaned = cleaned.lstrip("\ufeff")
+    cleaned = re.sub(r"[\s\u00a0]+", "", cleaned)
+    cleaned = re.sub(r"[()\[\]{}<>]+", "", cleaned)
+    cleaned = cleaned.replace("-", "").replace("_", "")
+    return cleaned
+
+
+def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Dict[str, str]]:
+    stripped = csv_text.strip()
+    if not stripped:
+        return []
+
+    reader = csv.reader(io.StringIO(stripped))
+    rows = [row for row in reader]
+    if not rows:
+        return []
+
+    header = [cell.strip() for cell in rows[0]]
+    if header:
+        header[0] = header[0].lstrip("\ufeff")
+    column_index: Dict[str, int] = {}
+    normalized_lookup: Dict[str, str] = {}
+    for column in expected_columns:
+        normalized = _normalize_header_token(column)
+        if normalized and normalized not in normalized_lookup:
+            normalized_lookup[normalized] = column
+
+    for idx, name in enumerate(header):
+        if not name:
+            continue
+        column_index.setdefault(name, idx)
+        normalized = _normalize_header_token(name)
+        canonical = normalized_lookup.get(normalized)
+        if canonical:
+            column_index.setdefault(canonical, idx)
+
+    missing = [column for column in expected_columns if column not in column_index]
+    if missing:
+        raise ValueError(f"CSV에 필요한 열이 없습니다: {', '.join(missing)}")
+
+    records: List[Dict[str, str]] = []
+    for raw in rows[1:]:
+        entry: Dict[str, str] = {}
+        is_empty = True
+        for column in expected_columns:
+            idx = column_index[column]
+            value = raw[idx].strip() if idx < len(raw) else ""
+            if value:
+                is_empty = False
+            entry[column] = value
+        if not is_empty:
+            records.append(entry)
+    return records
+
+
 _FEATURE_LIST_START_ROW = 8
 
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
