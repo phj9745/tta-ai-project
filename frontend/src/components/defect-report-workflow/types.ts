@@ -40,7 +40,7 @@ export interface DefectWorkItem {
 export interface DefectReportWorkflowProps {
   backendUrl: string
   projectId: string
-  onPreviewModeChange?: (isPreviewVisible: boolean) => void
+  projectName: string
 }
 
 export interface SelectedCell {

@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { navigate } from '../navigation'
 import { DefectTable } from './defect-report-workflow/DefectTable'
-import { PreviewSection } from './defect-report-workflow/PreviewSection'
 import { SourceUploadPanel } from './defect-report-workflow/SourceUploadPanel'
 import {
-  DEFECT_REPORT_COLUMNS,
   ATTACHMENT_ACCEPT,
   type AttachmentMap,
   type ConversationMessage,
@@ -12,14 +11,12 @@ import {
   type DefectWorkItem,
 } from './defect-report-workflow/types'
 import {
-  useDefectDownload,
+  useDefectFinalize,
   useFormalizeDefects,
 } from './defect-report-workflow/hooks'
 import {
   buildAttachmentFileName,
-  buildRowsFromCsv,
   createFileKey,
-  decodeBase64,
 } from './defect-report-workflow/utils'
 import { buildPromptResourcesPayload } from './defect-report-workflow/promptResources'
 import { normalizeDefectResultCells } from './defect-report-workflow/normalizers'
@@ -29,11 +26,9 @@ const RESULT_COLUMN_KEYS = ['결함요약', '결함정도', '발생빈도', '품
 export function DefectReportWorkflow({
   backendUrl,
   projectId,
-  onPreviewModeChange,
+  projectName,
 }: DefectReportWorkflowProps) {
-  const previewSectionRef = useRef<HTMLElement | null>(null)
-  const previousRowCountRef = useRef(0)
-
+  
   const {
     featureFiles,
     sourceFiles,
@@ -101,42 +96,20 @@ export function DefectReportWorkflow({
   )
 
   const {
-    tableRows,
-    isTableDirty,
-    generateStatus,
-    generateError,
-    isGenerating,
-    downloadStatus,
-    downloadError,
-    hasDownload,
-    hasPreviewRows,
-    selectedCell,
-    selectedRow,
-    selectedColumn,
-    selectedValue,
-    rewriteMessages,
-    rewriteStatus,
-    rewriteError,
-    rewriteInput,
-    generateReport,
-    downloadReport,
-    selectCell,
-    applyCellUpdate,
-    updateRewriteInput,
-    submitRewrite,
-    reset: resetDownload,
-  } = useDefectDownload({ backendUrl, projectId })
-
+    status: finalizeStatus,
+    error: finalizeError,
+    finalize: finalizeReport,
+    reset: resetFinalize,
+  } = useDefectFinalize({ backendUrl, projectId })
 
   const handleFormalize = useCallback(async () => {
-    previousRowCountRef.current = 0
-    resetDownload()
+    resetFinalize()
     setDefectItems([])
     const success = await formalize()
     if (!success) {
       setDefectItems([])
     }
-  }, [formalize, resetDownload])
+  }, [formalize, resetFinalize])
 
   const handleAddAttachments = useCallback((defectIndex: number, files: FileList | File[]) => {
     const list = Array.from(files)
@@ -434,50 +407,59 @@ export function DefectReportWorkflow({
     [handleGenerateDefectRow],
   )
 
-  const handleGenerate = useCallback(() => {
-    void generateReport(
-      defects,
-      attachmentMap,
-      defects.length > 0 && formalizeStatus === 'success',
-    )
-  }, [attachmentMap, defects, formalizeStatus, generateReport])
+  const handleGenerate = useCallback(async () => {
+    if (finalizeStatus === 'loading') {
+      return
+    }
 
-  const handleDownload = useCallback(() => {
-    void downloadReport(attachmentMap)
-  }, [attachmentMap, downloadReport])
+    const payload = await finalizeReport(defects, attachmentMap)
+    if (!payload || typeof payload !== 'object') {
+      return
+    }
+
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const nextParams = new URLSearchParams(window.location.search)
+    if (projectName && projectName !== projectId && !nextParams.get('name')) {
+      nextParams.set('name', projectName)
+    }
+
+    const fileId = typeof payload.fileId === 'string' ? payload.fileId.trim() : ''
+    if (fileId) {
+      nextParams.set('fileId', fileId)
+    } else {
+      nextParams.delete('fileId')
+    }
+
+    const fileName = typeof payload.fileName === 'string' ? payload.fileName.trim() : ''
+    if (fileName) {
+      nextParams.set('fileName', fileName)
+    } else {
+      nextParams.delete('fileName')
+    }
+
+    const modified = typeof payload.modifiedTime === 'string' ? payload.modifiedTime.trim() : ''
+    if (modified) {
+      nextParams.set('modifiedTime', modified)
+    } else {
+      nextParams.delete('modifiedTime')
+    }
+
+    const query = nextParams.toString()
+    navigate(
+      `/projects/${encodeURIComponent(projectId)}/defect-report/edit${query ? `?${query}` : ''}`,
+    )
+  }, [attachmentMap, defects, finalizeReport, finalizeStatus, projectId, projectName])
 
   const handleReset = useCallback(() => {
-    previousRowCountRef.current = 0
     resetFormalize()
-    resetDownload()
+    resetFinalize()
     setDefectItems([])
-  }, [resetDownload, resetFormalize])
-
-  const handleSelectCell = useCallback(
-    (rowIndex: number, columnKey: string) => {
-      selectCell(rowIndex, columnKey)
-    },
-    [selectCell],
-  )
-
-  const handleUpdateSelectedValue = useCallback(
-    (value: string) => {
-      if (!selectedCell) {
-        return
-      }
-      applyCellUpdate(selectedCell.rowIndex, selectedCell.columnKey, value)
-    },
-    [applyCellUpdate, selectedCell],
-  )
-
-  const handleRewriteSubmit = useCallback(() => {
-    void submitRewrite()
-  }, [submitRewrite])
+  }, [resetFinalize, resetFormalize])
 
   const canGenerate = defectItems.length > 0 && formalizeStatus === 'success'
-  const isGenerated = generateStatus === 'success'
-  const shouldHideReviewStep = isGenerating || isGenerated || hasPreviewRows
-  const shouldShowPreviewSection = hasPreviewRows || isGenerating || isGenerated
   const hasSource = featureFiles.length > 0 || sourceFiles.length > 0
 
   const hasDefectWork = useMemo(
@@ -494,66 +476,15 @@ export function DefectReportWorkflow({
   )
 
   const hasProgress = useMemo(
-    () =>
-      hasSource ||
-      defectItems.length > 0 ||
-      hasAttachments ||
-      hasDefectWork ||
-      hasPreviewRows ||
-      isGenerating ||
-      isGenerated ||
-      isTableDirty ||
-      rewriteMessages.length > 0 ||
-      hasDownload,
-    [
-      defectItems.length,
-      hasAttachments,
-      hasDefectWork,
-      hasDownload,
-      hasPreviewRows,
-      hasSource,
-      isGenerating,
-      isGenerated,
-      isTableDirty,
-      rewriteMessages.length,
-    ],
+    () => hasSource || defectItems.length > 0 || hasAttachments || hasDefectWork,
+    [defectItems.length, hasAttachments, hasDefectWork, hasSource],
   )
 
-  const isResetDisabled =
-    formalizeStatus === 'loading' || isGenerating || downloadStatus === 'loading'
+  const isResetDisabled = formalizeStatus === 'loading' || finalizeStatus === 'loading'
 
   const showResetInUpload = hasProgress && formalizeStatus !== 'success'
-  const showResetInPreview = hasProgress && shouldShowPreviewSection
 
-  useEffect(() => {
-    const previousCount = previousRowCountRef.current
-    if (tableRows.length > 0 && previousCount === 0 && previewSectionRef.current) {
-      previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    previousRowCountRef.current = tableRows.length
-  }, [tableRows.length])
-
-  useEffect(() => {
-    if (generateStatus === 'loading' || generateStatus === 'success') {
-      if (previewSectionRef.current) {
-        previewSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
-    }
-  }, [generateStatus])
-
-  useEffect(() => {
-    if (!onPreviewModeChange) {
-      return
-    }
-
-    onPreviewModeChange(shouldShowPreviewSection)
-
-    return () => {
-      onPreviewModeChange(false)
-    }
-  }, [onPreviewModeChange, shouldShowPreviewSection])
-
-  const rootClassName = `defect-workflow${shouldShowPreviewSection ? ' defect-workflow--preview-visible' : ''}`
+  const rootClassName = 'defect-workflow'
 
   return (
     <div className={rootClassName}>
@@ -572,7 +503,7 @@ export function DefectReportWorkflow({
         />
       )}
 
-      {defectItems.length > 0 && !shouldHideReviewStep && (
+      {defectItems.length > 0 && (
         <DefectTable
           items={defectItems}
           onPolishedChange={handlePolishedChange}
@@ -587,74 +518,27 @@ export function DefectReportWorkflow({
         />
       )}
 
-      {shouldShowPreviewSection && (
-        <PreviewSection
-          columns={DEFECT_REPORT_COLUMNS}
-          tableRows={tableRows}
-          selectedCell={selectedCell}
-          onSelectCell={handleSelectCell}
-          selectedRow={selectedRow}
-          selectedColumn={selectedColumn}
-          selectedValue={selectedValue}
-          onUpdateSelectedValue={handleUpdateSelectedValue}
-          rewriteMessages={rewriteMessages}
-          rewriteStatus={rewriteStatus}
-          rewriteError={rewriteError}
-          rewriteInput={rewriteInput}
-          onRewriteInputChange={updateRewriteInput}
-          onRewriteSubmit={handleRewriteSubmit}
-          isGenerating={isGenerating}
-          showReset={showResetInPreview}
-          onReset={handleReset}
-          isResetDisabled={isResetDisabled}
-          sectionRef={previewSectionRef}
-        />
-      )}
-
       <div className="defect-workflow__footer">
         <div className="defect-workflow__buttons">
-          {!shouldHideReviewStep && (
-            <button
-              type="button"
-              className="defect-workflow__primary"
-              onClick={handleGenerate}
-              disabled={!canGenerate || isGenerating}
-            >
-              {isGenerating ? '리포트 생성 중…' : '결함 리포트 생성'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="defect-workflow__primary"
+            onClick={handleGenerate}
+            disabled={!canGenerate || finalizeStatus === 'loading'}
+          >
+            {finalizeStatus === 'loading' ? '리포트 생성 중…' : '결함 리포트 생성'}
+          </button>
         </div>
 
-        {generateStatus === 'error' && generateError && (
+        {finalizeStatus === 'error' && finalizeError && (
           <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-            {generateError}
+            {finalizeError}
           </p>
         )}
-
-        {tableRows.length > 0 && (
-          <div className="defect-workflow__result">
-            <button
-              type="button"
-              className="defect-workflow__primary"
-              onClick={handleDownload}
-              disabled={downloadStatus === 'loading'}
-            >
-              {downloadStatus === 'loading' ? '다운로드 준비 중…' : '엑셀 다운로드'}
-            </button>
-            {isTableDirty && (
-              <p className="defect-workflow__status defect-workflow__status--success">
-                화면에서 수정한 내용이 반영된 새 파일을 생성합니다.
-              </p>
-            )}
-            {downloadError && (
-              <p className="defect-workflow__status defect-workflow__status--error" role="alert">
-                {downloadError}
-              </p>
-            )}
-            <p className="defect-workflow__helper defect-workflow__helper--small">
-              생성된 리포트는 프로젝트 드라이브의 결함 리포트 템플릿에도 반영되었습니다.
-            </p>
-          </div>
+        {finalizeStatus === 'success' && (
+          <p className="defect-workflow__status defect-workflow__status--success">
+            결함 리포트 파일로 이동합니다. 잠시만 기다려 주세요.
+          </p>
         )}
       </div>
     </div>
