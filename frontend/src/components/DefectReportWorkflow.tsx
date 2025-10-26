@@ -13,6 +13,7 @@ import {
 import {
   useDefectFinalize,
   useFormalizeDefects,
+  type DefectFinalizeRow,
 } from './defect-report-workflow/hooks'
 import {
   buildAttachmentFileName,
@@ -449,7 +450,62 @@ export function DefectReportWorkflow({
       return
     }
 
-    const payload = await finalizeReport(defects, attachmentMap)
+    const finalizeRows: DefectFinalizeRow[] = defectItems
+      .map((item) => {
+        const cells = item.result || {}
+        const attachments = attachmentMap[item.entry.index] ?? []
+
+        const getCellValue = (key: string) => {
+          const value = (cells as Record<string, unknown>)[key]
+          if (typeof value === 'string') {
+            return value.trim()
+          }
+          if (value == null) {
+            return ''
+          }
+          return String(value).trim()
+        }
+
+        const summary = getCellValue('결함요약')
+        const severity = getCellValue('결함정도')
+        const frequency = getCellValue('발생빈도')
+        const quality = getCellValue('품질특성')
+        const description = getCellValue('결함 설명')
+        const vendorResponse = getCellValue('업체 응답')
+        const fixStatus = getCellValue('수정여부')
+        const note = getCellValue('비고')
+        const environment = getCellValue('시험환경(OS)')
+
+        const hasContent =
+          summary.length > 0 ||
+          severity.length > 0 ||
+          frequency.length > 0 ||
+          quality.length > 0 ||
+          description.length > 0 ||
+          vendorResponse.length > 0 ||
+          fixStatus.length > 0 ||
+          note.length > 0
+
+        if (!hasContent && attachments.length === 0) {
+          return null
+        }
+
+        return {
+          order: item.entry.index,
+          environment,
+          summary,
+          severity,
+          frequency,
+          quality,
+          description,
+          vendorResponse,
+          fixStatus,
+          note,
+        }
+      })
+      .filter((row): row is DefectFinalizeRow => row !== null)
+
+    const payload = await finalizeReport(finalizeRows, attachmentMap)
     if (!payload || typeof payload !== 'object') {
       return
     }
@@ -488,7 +544,7 @@ export function DefectReportWorkflow({
     navigate(
       `/projects/${encodeURIComponent(projectId)}/defect-report/edit${query ? `?${query}` : ''}`,
     )
-  }, [attachmentMap, defects, finalizeReport, finalizeStatus, projectId, projectName])
+  }, [attachmentMap, defectItems, finalizeReport, finalizeStatus, projectId, projectName])
 
   const handleReset = useCallback(() => {
     resetFormalize()
