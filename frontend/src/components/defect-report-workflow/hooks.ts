@@ -13,6 +13,7 @@ import {
 } from './types'
 import {
   buildAttachmentFileName,
+  buildFinalizeRowPayload,
   buildRowsFromJsonTable,
   createFileKey,
 } from './utils'
@@ -745,7 +746,7 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
       const formData = new FormData()
       formData.append('menu_id', 'defect-report')
 
-      const rowPayload = rows.map((row) => ({ index: row.index, cells: row.cells }))
+      const rowPayload = rows.map((row) => buildFinalizeRowPayload(row))
       const attachmentNameMap: Record<number, string[]> = {}
 
       const metadataEntries: Array<Record<string, unknown>> = []

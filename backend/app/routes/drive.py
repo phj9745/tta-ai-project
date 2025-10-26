@@ -592,6 +592,14 @@ async def generate_project_asset(
     attachment_stub_metadata: Optional[str] = Form(
         None, alias="attachment_names", description="결함 첨부 파일명(JSON 배열)"
     ),
+    defect_rows_json: Optional[str] = Form(
+        None, alias="rows_json", description="결함 리포트 행 데이터(JSON 배열)"
+    ),
+    attachment_names_json: Optional[str] = Form(
+        None,
+        alias="attachment_names_json",
+        description="결함 첨부 파일명(JSON)",
+    ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     drive_service: GoogleDriveService = Depends(get_drive_service),
@@ -786,9 +794,9 @@ async def generate_project_asset(
             elif role not in {"required", "additional"}:
                 raise HTTPException(status_code=422, detail="파일 메타데이터 형식이 올바르지 않습니다.")
 
-    if menu_id == "defect-report" and defect_rows is not None:
+    if menu_id == "defect-report" and defect_rows_json is not None:
         try:
-            parsed_rows = json.loads(defect_rows)
+            parsed_rows = json.loads(defect_rows_json)
         except json.JSONDecodeError as exc:
             await _close_uploads(uploads)
             raise HTTPException(status_code=422, detail="결함 리포트 행 데이터 형식이 올바르지 않습니다.") from exc
@@ -817,7 +825,7 @@ async def generate_project_asset(
         normalized_rows, index_order_map = drive_defect_reports.normalize_defect_report_rows(validated_rows)
         row_lookup = _build_defect_row_lookup(normalized_rows, index_order_map)
 
-        attachment_notes = _parse_attachment_names_payload(attachment_names, row_lookup)
+        attachment_notes = _parse_attachment_names_payload(attachment_names_json, row_lookup)
 
         image_map, upload_notes = await _collect_defect_report_attachments(
             uploads,

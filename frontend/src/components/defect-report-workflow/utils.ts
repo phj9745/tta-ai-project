@@ -1,6 +1,11 @@
-import { DEFECT_REPORT_COLUMNS, DEFECT_REPORT_START_ROW, type DefectReportTableRow } from './types'
+import {
+  DEFECT_REPORT_COLUMNS,
+  DEFECT_REPORT_START_ROW,
+  type DefectReportTableRow,
+  type FinalizedDefectRow,
+} from './types'
 
-const DEFECT_COLUMN_TO_FIELD: Record<string, string> = {
+export const DEFECT_COLUMN_TO_FIELD: Record<string, string> = {
   순번: 'order',
   '시험환경(OS)': 'environment',
   결함요약: 'summary',
@@ -11,6 +16,19 @@ const DEFECT_COLUMN_TO_FIELD: Record<string, string> = {
   '업체 응답': 'vendorResponse',
   수정여부: 'fixStatus',
   비고: 'note',
+}
+
+const FINALIZE_FIELD_TO_COLUMN: Record<string, string> = {
+  order: '순번',
+  environment: '시험환경(OS)',
+  summary: '결함요약',
+  severity: '결함정도',
+  frequency: '발생빈도',
+  quality: '품질특성',
+  description: '결함 설명',
+  vendorResponse: '업체 응답',
+  fixStatus: '수정여부',
+  note: '비고',
 }
 
 function normalizeKey(key: unknown): string {
@@ -124,5 +142,28 @@ export function buildRowsFromJsonTable(
   })
 
   return tableRows
+}
+
+function normalizeFinalizeValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+  if (value == null) {
+    return ''
+  }
+  return String(value).trim()
+}
+
+export function buildFinalizeRowPayload(row: FinalizedDefectRow): Record<string, string> {
+  const payload: Record<string, string> = {}
+  Object.entries(FINALIZE_FIELD_TO_COLUMN).forEach(([field, column]) => {
+    payload[field] = normalizeFinalizeValue(row.cells[column])
+  })
+
+  if (!payload.order) {
+    payload.order = normalizeFinalizeValue(row.cells['순번']) || String(row.index)
+  }
+
+  return payload
 }
 
