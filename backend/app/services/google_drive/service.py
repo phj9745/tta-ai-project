@@ -10,6 +10,7 @@ from ...config import Settings
 from ...token_store import StoredTokens, TokenStorage
 from .client import (
     DRIVE_FILES_ENDPOINT,
+    DRIVE_FOLDER_MIME_TYPE,
     XLSX_MIME_TYPE,
     GoogleDriveClient,
 )
@@ -759,3 +760,61 @@ class GoogleDriveService:
             },
             "uploadedFiles": uploaded_files,
         }
+
+    async def delete_project(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Dict[str, Any]:
+        normalized_id = project_id.strip()
+        if not normalized_id:
+            raise HTTPException(status_code=422, detail="삭제할 프로젝트 ID를 입력해주세요.")
+
+        active_tokens = await self._get_active_tokens(google_id)
+        metadata, active_tokens = await self._client.get_file_metadata(
+            active_tokens, file_id=normalized_id
+        )
+        if metadata is None:
+            raise HTTPException(status_code=404, detail="삭제할 프로젝트를 찾을 수 없습니다.")
+
+        mime_type = metadata.get("mimeType")
+        if not isinstance(mime_type, str) or mime_type != DRIVE_FOLDER_MIME_TYPE:
+            raise HTTPException(status_code=400, detail="프로젝트 폴더만 삭제할 수 있습니다.")
+
+        raw_name = metadata.get("name")
+        if isinstance(raw_name, bytes):
+            project_name = raw_name.decode("utf-8", errors="ignore")
+        elif isinstance(raw_name, str) and raw_name.strip():
+            project_name = raw_name
+        else:
+            project_name = normalized_id
+
+        parent_id: Optional[str] = None
+        parents = metadata.get("parents")
+        if isinstance(parents, Sequence) and parents:
+            parent_candidate = parents[0]
+            if isinstance(parent_candidate, bytes):
+                parent_id = parent_candidate.decode("utf-8", errors="ignore")
+            elif isinstance(parent_candidate, str):
+                parent_id = parent_candidate
+
+        await self._client.delete_file(active_tokens, file_id=normalized_id)
+
+        logger.info(
+            "Deleted Drive project '%s' (%s)",
+            project_name,
+            normalized_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "message": "프로젝트 폴더를 삭제했습니다.",
+            "project": {
+                "id": normalized_id,
+                "name": project_name,
+            },
+        }
+        if parent_id:
+            payload["project"]["parentId"] = parent_id
+
+        return payload
