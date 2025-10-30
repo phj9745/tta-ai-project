@@ -533,6 +533,17 @@ async def create_drive_project(
     )
 
 
+@router.delete("/drive/projects/{project_id}")
+async def delete_drive_project(
+    project_id: str,
+    google_id: Optional[str] = Query(
+        None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"
+    ),
+    drive_service: GoogleDriveService = Depends(get_drive_service),
+) -> Dict[str, Any]:
+    return await drive_service.delete_project(project_id=project_id, google_id=google_id)
+
+
 @router.post("/drive/projects/{project_id}/defect-report/formalize")
 async def formalize_defect_report(
     project_id: str,
