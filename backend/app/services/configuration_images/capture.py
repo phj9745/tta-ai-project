@@ -9,6 +9,7 @@ web application.
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 import math
 from dataclasses import dataclass
@@ -230,6 +231,23 @@ def capture_video_changes(source_path: Path, output_dir: Path) -> CaptureResult:
     last_capture_time = -1e9
     frame_index = 0
 
+    base_time = dt.datetime.fromtimestamp(source_path.stat().st_mtime, tz=dt.timezone.utc)
+    name_counters: dict[str, int] = {}
+
+    def build_filename(timestamp: float, *, suffix: str = "") -> str:
+        capture_time = base_time + dt.timedelta(seconds=timestamp)
+        capture_time = capture_time.replace(microsecond=0)
+        label = capture_time.strftime("%Y-%m-%d %H %M %S")
+
+        counter_key = f"{label}{suffix}"
+        counter = name_counters.get(counter_key, 0)
+        name_counters[counter_key] = counter + 1
+
+        if counter:
+            label = f"{label}_{counter:02d}"
+
+        return _format_filename(label, suffix=suffix)
+
     try:
         while True:
             ok, frame = capture.read()
@@ -244,7 +262,7 @@ def capture_video_changes(source_path: Path, output_dir: Path) -> CaptureResult:
             gray_small, _ = _to_gray_small(frame, long_side=LONG_SIDE)
 
             if last_gray is None:
-                filename = _format_filename(f"{int(timestamp * 1000):012d}", suffix="_start")
+                filename = build_filename(timestamp, suffix="_start")
                 file_path = output_dir / filename
                 if not cv2.imwrite(str(file_path), frame):
                     raise RuntimeError(f"이미지를 저장하지 못했습니다: {file_path}")
@@ -304,7 +322,7 @@ def capture_video_changes(source_path: Path, output_dir: Path) -> CaptureResult:
 
             should_capture = pending >= PERSIST_FRAMES and (timestamp - last_capture_time) >= MIN_GAP_SECONDS
             if should_capture:
-                filename = _format_filename(f"{int(timestamp * 1000):012d}")
+                filename = build_filename(timestamp)
                 file_path = output_dir / filename
                 if not cv2.imwrite(str(file_path), frame):
                     raise RuntimeError(f"이미지를 저장하지 못했습니다: {file_path}")
