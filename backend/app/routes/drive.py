@@ -18,10 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..dependencies import (
     get_ai_generation_service,
+    get_configuration_image_service,
     get_drive_service,
     get_security_report_service,
 )
 from ..services.ai_generation import AIGenerationService
+from ..services.configuration_images import ConfigurationImageService
 from ..services.google_drive import GoogleDriveService
 from ..services.google_drive import defect_reports as drive_defect_reports
 from ..services.google_drive import feature_lists as drive_feature_lists
@@ -80,6 +82,12 @@ class FeatureListRowModel(BaseModel):
 class FeatureListUpdateRequest(BaseModel):
     rows: List[FeatureListRowModel] = Field(default_factory=list)
     project_overview: str = Field("", alias="projectOverview")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ConfigurationImageDeleteRequest(BaseModel):
+    file_ids: List[str] = Field(..., alias="fileIds", description="삭제할 형상 이미지 ID 목록")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -287,6 +295,14 @@ def _build_attachment_header(filename: str, *, default_filename: str = "security
         ascii_fallback = default_filename
     quoted = quote(filename)
     return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
+
+
+def _build_inline_header(filename: str, *, default_filename: str = "capture.png") -> str:
+    ascii_fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+    if not ascii_fallback or not re.search(r"[A-Za-z0-9]", ascii_fallback):
+        ascii_fallback = default_filename
+    quoted = quote(filename)
+    return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
 
 
 def _coerce_positive_int(value: Any) -> Optional[int]:
@@ -613,6 +629,9 @@ async def generate_project_asset(
     ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
+    configuration_image_service: ConfigurationImageService = Depends(
+        get_configuration_image_service
+    ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
     security_report_service: SecurityReportService = Depends(get_security_report_service),
 ) -> Response:
@@ -634,6 +653,21 @@ async def generate_project_asset(
 
     if metadata_entries and len(metadata_entries) != len(uploads):
         raise HTTPException(status_code=422, detail="파일 메타데이터와 업로드된 파일 수가 일치하지 않습니다.")
+
+    if menu_id == "configuration-images":
+        if len(uploads) != 1:
+            raise HTTPException(status_code=422, detail="동영상 파일을 1개 업로드해 주세요.")
+        upload = uploads[0]
+        try:
+            result = await configuration_image_service.capture_and_upload(
+                project_id=project_id,
+                upload=upload,
+                google_id=google_id,
+            )
+        finally:
+            await upload.close()
+
+        return JSONResponse(result)
 
     if menu_id == "defect-report" and serialized_rows:
         try:
@@ -1026,6 +1060,66 @@ async def generate_project_asset(
     }
 
     return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
+
+
+@router.get("/drive/projects/{project_id}/configuration-images")
+async def list_configuration_images(
+    project_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    configuration_image_service: ConfigurationImageService = Depends(
+        get_configuration_image_service
+    ),
+) -> Dict[str, Any]:
+    return await configuration_image_service.list_images(
+        project_id=project_id,
+        google_id=google_id,
+    )
+
+
+@router.delete("/drive/projects/{project_id}/configuration-images")
+async def delete_configuration_images(
+    project_id: str,
+    payload: ConfigurationImageDeleteRequest,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    configuration_image_service: ConfigurationImageService = Depends(
+        get_configuration_image_service
+    ),
+) -> Dict[str, Any]:
+    removed = await configuration_image_service.delete_images(
+        project_id=project_id,
+        google_id=google_id,
+        file_ids=payload.file_ids,
+    )
+    return {"status": "deleted", "removed": removed}
+
+
+@router.get("/drive/projects/{project_id}/configuration-images/{file_id}")
+async def download_configuration_image(
+    project_id: str,
+    file_id: str,
+    google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
+    configuration_image_service: ConfigurationImageService = Depends(
+        get_configuration_image_service
+    ),
+) -> Response:
+    payload = await configuration_image_service.download_file(
+        project_id=project_id,
+        google_id=google_id,
+        file_id=file_id,
+    )
+
+    file_name = str(payload.get("fileName", file_id))
+    content = payload.get("content")
+    if not isinstance(content, (bytes, bytearray)):
+        raise HTTPException(status_code=500, detail="파일을 다운로드하지 못했습니다. 다시 시도해 주세요.")
+    media_type = str(payload.get("mimeType") or "application/octet-stream")
+
+    headers = {
+        "Cache-Control": "no-store",
+        "Content-Disposition": _build_inline_header(file_name, default_filename="capture.png"),
+    }
+
+    return Response(content=bytes(content), media_type=media_type, headers=headers)
 
 
 @router.get("/drive/projects/{project_id}/feature-list")

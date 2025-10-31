@@ -8,6 +8,8 @@ export type FileType =
   | 'png'
   | 'csv'
   | 'html'
+  | 'mp4'
+  | 'mov'
 
 interface FileTypeInfo {
   label: string
@@ -66,6 +68,16 @@ export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
     label: 'HTML',
     accept: ['.html', '.htm', 'text/html'],
     extensions: ['html', 'htm'],
+  },
+  mp4: {
+    label: 'MP4',
+    accept: ['.mp4', 'video/mp4'],
+    extensions: ['mp4'],
+  },
+  mov: {
+    label: 'MOV',
+    accept: ['.mov', 'video/quicktime'],
+    extensions: ['mov'],
   },
 }
 

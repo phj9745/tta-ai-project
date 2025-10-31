@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .config import Settings, load_settings
 from .services.ai_generation import AIGenerationService
+from .services.configuration_images import ConfigurationImageService
 from .services.prompt_config import PromptConfigService
 from .services.prompt_request_log import PromptRequestLogService
 from .services.google_drive import GoogleDriveService
@@ -36,6 +37,7 @@ class Container:
             prompt_request_log_service=self._prompt_request_log_service,
             openai_client=openai_client,
         )
+        self._configuration_image_service = ConfigurationImageService(self._drive_service)
 
     @property
     def settings(self) -> Settings:
@@ -68,3 +70,7 @@ class Container:
     @property
     def security_report_service(self) -> SecurityReportService:
         return self._security_report_service
+
+    @property
+    def configuration_image_service(self) -> ConfigurationImageService:
+        return self._configuration_image_service

@@ -8,6 +8,7 @@ import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
 type MenuItemId =
+  | 'configuration-images'
   | 'feature-list'
   | 'testcase-generation'
   | 'defect-report'
@@ -55,6 +56,26 @@ interface FeatureListGenerateResponse {
   modifiedTime?: string
   generatedFilename?: string
 }
+
+interface ConfigurationCaptureResponse {
+  status?: string
+  projectId?: string
+  folderId?: string
+  files?: Array<{
+    id?: string
+    name?: string
+    mimeType?: string
+    timeSec?: number
+    isStart?: boolean
+  }>
+  eventsFile?: {
+    id?: string
+    name?: string
+    mimeType?: string
+  } | null
+}
+
+type ConfigurationCaptureFile = NonNullable<ConfigurationCaptureResponse['files']>[number]
 
 const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
 
@@ -126,6 +147,26 @@ const XLSX_RESULT_MENUS: Set<MenuItemId> = new Set([
 ])
 
 const MENU_ITEMS: MenuItemContent[] = [
+  {
+    id: 'configuration-images',
+    label: '형상 이미지 추출',
+    eyebrow: '형상 관리',
+    title: '장면 전환 감지로 화면 캡처',
+    description:
+      '프로그램 기능 시연 동영상을 업로드하면 장면 전환을 감지하여 주요 화면 이미지를 자동으로 추출합니다.',
+    helper: 'MP4 또는 MOV 형식의 동영상 1개만 업로드하면 됩니다. 추가 문서는 필요하지 않습니다.',
+    buttonLabel: '형상 이미지 추출하기',
+    allowedTypes: ['mp4', 'mov'],
+    requiredDocuments: [
+      {
+        id: 'capture-video',
+        label: '시연 동영상',
+        allowedTypes: ['mp4', 'mov'],
+      },
+    ],
+    maxFiles: 1,
+    hideDropzoneWhenFilled: true,
+  },
   {
     id: 'feature-list',
     label: '기능리스트 생성',
@@ -565,6 +606,72 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               },
             }))
           }
+          return
+        }
+
+        if (id === 'configuration-images') {
+          let payload: ConfigurationCaptureResponse | null = null
+          try {
+            payload = (await response.json()) as ConfigurationCaptureResponse
+          } catch {
+            payload = null
+          }
+
+          if (controller.signal.aborted) {
+            return
+          }
+
+          const captureFiles: ConfigurationCaptureFile[] = Array.isArray(payload?.files)
+            ? (payload?.files as ConfigurationCaptureFile[])
+            : []
+          const files: Array<ConfigurationCaptureFile & { id: string }> = captureFiles.filter(
+            (file): file is ConfigurationCaptureFile & { id: string } =>
+              typeof file?.id === 'string',
+          )
+
+          if (!payload || files.length === 0) {
+            setItemStates((prev) => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                status: 'error',
+                errorMessage: '추출된 형상 이미지 정보를 확인하지 못했습니다.',
+              },
+            }))
+            return
+          }
+
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: createItemState(menu),
+          }))
+
+          const nextParams = new URLSearchParams(window.location.search)
+          if (!nextParams.get('name') && projectName && projectName !== projectId) {
+            nextParams.set('name', projectName)
+          }
+          if (payload.folderId) {
+            nextParams.set('folderId', payload.folderId)
+          } else {
+            nextParams.delete('folderId')
+          }
+
+          const recentIds = files
+            .map((file) => (typeof file.id === 'string' ? file.id : null))
+            .filter((value): value is string => Boolean(value))
+
+          if (recentIds.length > 0) {
+            nextParams.set('recent', recentIds.join(','))
+          } else {
+            nextParams.delete('recent')
+          }
+
+          const query = nextParams.toString()
+          navigate(
+            `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${
+              query ? `?${query}` : ''
+            }`,
+          )
           return
         }
 
