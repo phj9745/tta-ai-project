@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -10,6 +11,7 @@ from ...config import Settings
 from ...token_store import StoredTokens, TokenStorage
 from .client import (
     DRIVE_FILES_ENDPOINT,
+    DRIVE_FOLDER_MIME_TYPE,
     XLSX_MIME_TYPE,
     GoogleDriveClient,
 )
@@ -41,6 +43,12 @@ class _ResolvedSpreadsheet:
 class GoogleDriveService:
     """High level operations for interacting with Google Drive."""
 
+    CONFIGURATION_ROOT_FOLDER_NAME = "나.설계"
+    CONFIGURATION_CONTAINER_FOLDER_NAME = "형상"
+    CONFIGURATION_BEFORE_PATCH_FOLDER_NAME = "패치전"
+    CONFIGURATION_AFTER_PATCH_FOLDER_NAME = "패치후"
+    _CAPTURE_TIME_PATTERN = re.compile(r"^(?P<millis>\d{6,})(?:_[^.]*)?\.[^.]+$")
+
     def __init__(
         self,
         settings: Settings,
@@ -56,6 +64,72 @@ class GoogleDriveService:
         self._oauth_service.ensure_credentials()
         stored_tokens = self._client.load_tokens(google_id)
         return await self._client.ensure_valid_tokens(stored_tokens)
+
+    async def _ensure_configuration_folder(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Tuple[str, StoredTokens]:
+        active_tokens = await self._get_active_tokens(google_id)
+        design_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=project_id,
+            name=self.CONFIGURATION_ROOT_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if design_folder is None or not design_folder.get("id"):
+            design_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_ROOT_FOLDER_NAME,
+                parent_id=project_id,
+            )
+
+        design_folder_id = str(design_folder["id"])
+
+        container_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=design_folder_id,
+            name=self.CONFIGURATION_CONTAINER_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if container_folder is None or not container_folder.get("id"):
+            container_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_CONTAINER_FOLDER_NAME,
+                parent_id=design_folder_id,
+            )
+
+        container_folder_id = str(container_folder["id"])
+
+        before_patch_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=container_folder_id,
+            name=self.CONFIGURATION_BEFORE_PATCH_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if before_patch_folder is None or not before_patch_folder.get("id"):
+            before_patch_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_BEFORE_PATCH_FOLDER_NAME,
+                parent_id=container_folder_id,
+            )
+            return str(before_patch_folder["id"]), active_tokens
+
+        after_patch_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=container_folder_id,
+            name=self.CONFIGURATION_AFTER_PATCH_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if after_patch_folder is None or not after_patch_folder.get("id"):
+            after_patch_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_AFTER_PATCH_FOLDER_NAME,
+                parent_id=container_folder_id,
+            )
+
+        return str(after_patch_folder["id"]), active_tokens
 
     async def _resolve_menu_spreadsheet(
         self,
@@ -148,6 +222,225 @@ class GoogleDriveService:
             modified_time=modified_time,
             content=content,
         )
+
+    def _parse_capture_time(self, name: str) -> Optional[float]:
+        match = self._CAPTURE_TIME_PATTERN.match(name)
+        if not match:
+            return None
+        try:
+            millis = int(match.group("millis"))
+        except ValueError:
+            return None
+        return millis / 1000.0
+
+    @staticmethod
+    def _is_start_capture(name: str) -> bool:
+        lowered = name.lower()
+        return "_start" in lowered
+
+    @staticmethod
+    def _normalize_parent_ids(parents: Any) -> List[str]:
+        normalized: List[str] = []
+        if isinstance(parents, Sequence):
+            for parent in parents:
+                if isinstance(parent, bytes):
+                    normalized.append(parent.decode("utf-8", errors="ignore"))
+                elif isinstance(parent, str):
+                    normalized.append(parent)
+        return normalized
+
+    async def upload_configuration_captures(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        images: Sequence[Mapping[str, Any]],
+        events_file: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        if not images:
+            raise HTTPException(status_code=422, detail="업로드할 이미지가 필요합니다.")
+
+        folder_id, active_tokens = await self._ensure_configuration_folder(
+            project_id=project_id, google_id=google_id
+        )
+
+        uploaded: List[Dict[str, Any]] = []
+        tokens = active_tokens
+        for entry in images:
+            name = str(entry.get("name") or "capture.png")
+            content = entry.get("content")
+            if isinstance(content, bytearray):
+                payload = bytes(content)
+            elif isinstance(content, bytes):
+                payload = content
+            else:
+                raise HTTPException(status_code=422, detail="이미지 데이터 형식이 올바르지 않습니다.")
+
+            content_type = str(entry.get("contentType") or "image/png")
+
+            file_info, tokens = await self._client.upload_file_to_folder(
+                tokens,
+                file_name=name,
+                parent_id=folder_id,
+                content=payload,
+                content_type=content_type,
+            )
+
+            file_id = str(file_info.get("id"))
+            uploaded.append(
+                {
+                    "id": file_id,
+                    "name": file_info.get("name", name),
+                    "mimeType": content_type,
+                    "timeSec": entry.get("timeSec"),
+                    "isStart": bool(entry.get("isStart")),
+                }
+            )
+
+        events_info: Optional[Dict[str, Any]] = None
+        if events_file and events_file.get("content"):
+            event_name = str(events_file.get("name") or "events.csv")
+            event_content = events_file.get("content")
+            if isinstance(event_content, bytearray):
+                event_payload = bytes(event_content)
+            elif isinstance(event_content, bytes):
+                event_payload = event_content
+            else:
+                raise HTTPException(status_code=422, detail="이벤트 로그 데이터 형식이 올바르지 않습니다.")
+
+            event_type = str(events_file.get("contentType") or "text/csv")
+            info, tokens = await self._client.upload_file_to_folder(
+                tokens,
+                file_name=event_name,
+                parent_id=folder_id,
+                content=event_payload,
+                content_type=event_type,
+            )
+            events_info = {
+                "id": str(info.get("id")),
+                "name": info.get("name", event_name),
+                "mimeType": event_type,
+            }
+
+        return {
+            "status": "captured",
+            "projectId": project_id,
+            "folderId": folder_id,
+            "files": uploaded,
+            "eventsFile": events_info,
+        }
+
+    async def list_configuration_images(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Dict[str, Any]:
+        folder_id, active_tokens = await self._ensure_configuration_folder(
+            project_id=project_id, google_id=google_id
+        )
+        entries, _ = await self._client.list_child_files(active_tokens, parent_id=folder_id)
+
+        images: List[Dict[str, Any]] = []
+        events_file: Optional[Dict[str, Any]] = None
+
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            file_id = entry.get("id")
+            name = entry.get("name")
+            if not isinstance(file_id, str) or not isinstance(name, str):
+                continue
+            mime_type = entry.get("mimeType")
+            modified_time = entry.get("modifiedTime") if isinstance(entry.get("modifiedTime"), str) else None
+
+            if isinstance(mime_type, str) and mime_type.startswith("image/"):
+                images.append(
+                    {
+                        "id": file_id,
+                        "name": name,
+                        "mimeType": mime_type,
+                        "modifiedTime": modified_time,
+                        "timeSec": self._parse_capture_time(name),
+                        "isStart": self._is_start_capture(name),
+                    }
+                )
+            elif name.lower().endswith(".csv"):
+                candidate = {
+                    "id": file_id,
+                    "name": name,
+                    "mimeType": mime_type or "text/csv",
+                    "modifiedTime": modified_time,
+                }
+                if events_file is None:
+                    events_file = candidate
+                else:
+                    prev_time = events_file.get("modifiedTime")
+                    if prev_time is None or (modified_time and modified_time > prev_time):
+                        events_file = candidate
+
+        images.sort(key=lambda item: (item["timeSec"] if item.get("timeSec") is not None else float("inf")))
+
+        return {"folderId": folder_id, "files": images, "eventsFile": events_file}
+
+    async def delete_configuration_images(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_ids: Sequence[str],
+    ) -> int:
+        normalized = [fid.strip() for fid in file_ids if isinstance(fid, str) and fid.strip()]
+        if not normalized:
+            raise HTTPException(status_code=422, detail="삭제할 이미지 ID를 선택해 주세요.")
+
+        folder_id, active_tokens = await self._ensure_configuration_folder(
+            project_id=project_id, google_id=google_id
+        )
+
+        removed = 0
+        tokens = active_tokens
+        for file_id in normalized:
+            metadata, tokens = await self._client.get_file_metadata(tokens, file_id=file_id)
+            if not metadata:
+                continue
+            parents = self._normalize_parent_ids(metadata.get("parents"))
+            if folder_id not in parents:
+                continue
+            tokens = await self._client.delete_file(tokens, file_id=file_id)
+            removed += 1
+
+        return removed
+
+    async def download_configuration_file(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        file_id: str,
+    ) -> Dict[str, Any]:
+        folder_id, active_tokens = await self._ensure_configuration_folder(
+            project_id=project_id, google_id=google_id
+        )
+
+        metadata, active_tokens = await self._client.get_file_metadata(active_tokens, file_id=file_id)
+        if not metadata:
+            raise HTTPException(status_code=404, detail="요청한 파일을 찾을 수 없습니다.")
+
+        parents = self._normalize_parent_ids(metadata.get("parents"))
+        if folder_id not in parents:
+            raise HTTPException(status_code=404, detail="형상 이미지 폴더에서 파일을 찾을 수 없습니다.")
+
+        mime_type = metadata.get("mimeType") if isinstance(metadata.get("mimeType"), str) else None
+        content, _ = await self._client.download_file_content(
+            active_tokens, file_id=file_id, mime_type=mime_type
+        )
+
+        file_name = metadata.get("name")
+        if not isinstance(file_name, str) or not file_name:
+            file_name = file_id
+
+        return {"fileName": file_name, "content": content, "mimeType": mime_type or "application/octet-stream"}
 
     async def apply_csv_to_spreadsheet(
         self,
@@ -759,3 +1052,61 @@ class GoogleDriveService:
             },
             "uploadedFiles": uploaded_files,
         }
+
+    async def delete_project(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+    ) -> Dict[str, Any]:
+        normalized_id = project_id.strip()
+        if not normalized_id:
+            raise HTTPException(status_code=422, detail="삭제할 프로젝트 ID를 입력해주세요.")
+
+        active_tokens = await self._get_active_tokens(google_id)
+        metadata, active_tokens = await self._client.get_file_metadata(
+            active_tokens, file_id=normalized_id
+        )
+        if metadata is None:
+            raise HTTPException(status_code=404, detail="삭제할 프로젝트를 찾을 수 없습니다.")
+
+        mime_type = metadata.get("mimeType")
+        if not isinstance(mime_type, str) or mime_type != DRIVE_FOLDER_MIME_TYPE:
+            raise HTTPException(status_code=400, detail="프로젝트 폴더만 삭제할 수 있습니다.")
+
+        raw_name = metadata.get("name")
+        if isinstance(raw_name, bytes):
+            project_name = raw_name.decode("utf-8", errors="ignore")
+        elif isinstance(raw_name, str) and raw_name.strip():
+            project_name = raw_name
+        else:
+            project_name = normalized_id
+
+        parent_id: Optional[str] = None
+        parents = metadata.get("parents")
+        if isinstance(parents, Sequence) and parents:
+            parent_candidate = parents[0]
+            if isinstance(parent_candidate, bytes):
+                parent_id = parent_candidate.decode("utf-8", errors="ignore")
+            elif isinstance(parent_candidate, str):
+                parent_id = parent_candidate
+
+        await self._client.delete_file(active_tokens, file_id=normalized_id)
+
+        logger.info(
+            "Deleted Drive project '%s' (%s)",
+            project_name,
+            normalized_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "message": "프로젝트 폴더를 삭제했습니다.",
+            "project": {
+                "id": normalized_id,
+                "name": project_name,
+            },
+        }
+        if parent_id:
+            payload["project"]["parentId"] = parent_id
+
+        return payload

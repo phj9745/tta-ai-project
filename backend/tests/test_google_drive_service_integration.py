@@ -4,7 +4,7 @@ import io
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import asyncio
 import pytest
@@ -16,7 +16,11 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
+from fastapi import HTTPException
+
 from app.config import Settings
+from app.services.google_drive import templates as drive_templates
+from app.services.google_drive.client import DRIVE_FOLDER_MIME_TYPE
 from app.services.google_drive.service import GoogleDriveService
 from app.token_store import StoredAccount, StoredTokens
 
@@ -55,6 +59,13 @@ class StubClient:
         self.workbook_bytes = workbook_bytes
         self.tokens = tokens
         self.updated_payload: Optional[Dict[str, Any]] = None
+        self.metadata: Optional[Dict[str, Any]] = {
+            "id": "proj",
+            "name": "[GS-B-12-3456] Project",
+            "mimeType": DRIVE_FOLDER_MIME_TYPE,
+            "parents": ["parent"],
+        }
+        self.deleted_ids: List[str] = []
 
     def load_tokens(self, google_id: Optional[str]) -> StoredTokens:
         return self.tokens
@@ -92,6 +103,14 @@ class StubClient:
     ) -> Tuple[bytes, StoredTokens]:
         return self.workbook_bytes, tokens
 
+    async def get_file_metadata(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> Tuple[Optional[Dict[str, Any]], StoredTokens]:
+        return self.metadata, tokens
+
     async def update_file_content(
         self,
         tokens: StoredTokens,
@@ -120,6 +139,15 @@ class StubClient:
 
     async def list_child_folders(self, tokens: StoredTokens, *, parent_id: str):
         return ([{"id": "p1", "name": "Proj"}], tokens)
+
+    async def delete_file(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> StoredTokens:
+        self.deleted_ids.append(file_id)
+        return tokens
 
 
 def _settings() -> Settings:
@@ -178,6 +206,15 @@ def test_update_feature_list_rows_updates_workbook(monkeypatch) -> None:
     stub_client = StubClient(_feature_workbook(), tokens)
     service._client = stub_client  # type: ignore[attr-defined]
 
+    def fake_populate(workbook_bytes: bytes, csv_text: str, overview: str) -> bytes:
+        return b"updated"
+
+    monkeypatch.setitem(
+        drive_templates.SPREADSHEET_RULES["feature-list"],
+        "populate",
+        fake_populate,
+    )
+
     asyncio.run(
         service.update_feature_list_rows(
             project_id="proj",
@@ -198,3 +235,51 @@ def test_get_project_exam_number_reads_name() -> None:
     service._client = stub_client  # type: ignore[attr-defined]
     exam = asyncio.run(service.get_project_exam_number(project_id="proj", google_id="user"))
     assert exam == "GS-B-12-3456"
+
+
+def test_delete_project_removes_folder() -> None:
+    tokens = _stored_tokens()
+    storage = StubTokenStorage(tokens)
+    service = GoogleDriveService(_settings(), storage, StubOAuthService())
+    stub_client = StubClient(_feature_workbook(), tokens)
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    result = asyncio.run(service.delete_project(project_id="proj", google_id="user"))
+
+    assert stub_client.deleted_ids == ["proj"]
+    assert result["message"] == "프로젝트 폴더를 삭제했습니다."
+    assert result["project"]["parentId"] == "parent"
+
+
+def test_delete_project_rejects_non_folder() -> None:
+    tokens = _stored_tokens()
+    storage = StubTokenStorage(tokens)
+    service = GoogleDriveService(_settings(), storage, StubOAuthService())
+    stub_client = StubClient(_feature_workbook(), tokens)
+    stub_client.metadata = {
+        "id": "proj",
+        "name": "My File",
+        "mimeType": "application/pdf",
+    }
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.delete_project(project_id="proj", google_id="user"))
+
+    assert exc.value.status_code == 400
+    assert stub_client.deleted_ids == []
+
+
+def test_delete_project_missing_metadata_returns_404() -> None:
+    tokens = _stored_tokens()
+    storage = StubTokenStorage(tokens)
+    service = GoogleDriveService(_settings(), storage, StubOAuthService())
+    stub_client = StubClient(_feature_workbook(), tokens)
+    stub_client.metadata = None
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(service.delete_project(project_id="proj", google_id="user"))
+
+    assert exc.value.status_code == 404
+    assert stub_client.deleted_ids == []

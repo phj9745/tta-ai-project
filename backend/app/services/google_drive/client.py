@@ -542,6 +542,23 @@ class GoogleDriveClient:
 
         raise HTTPException(status_code=401, detail="Google Drive 인증이 만료되었습니다. 다시 로그인해주세요.")
 
+    async def delete_file(
+        self,
+        tokens: StoredTokens,
+        *,
+        file_id: str,
+    ) -> StoredTokens:
+        params = {
+            "supportsAllDrives": "true",
+        }
+        _, updated_tokens = await self.drive_request(
+            tokens,
+            method="DELETE",
+            path=f"{DRIVE_FILES_ENDPOINT}/{file_id}",
+            params=params,
+        )
+        return updated_tokens
+
     async def find_file_by_name(
         self,
         tokens: StoredTokens,
