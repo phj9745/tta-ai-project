@@ -43,7 +43,10 @@ class _ResolvedSpreadsheet:
 class GoogleDriveService:
     """High level operations for interacting with Google Drive."""
 
-    CONFIGURATION_FOLDER_NAME = "형상 이미지"
+    CONFIGURATION_ROOT_FOLDER_NAME = "나.설계"
+    CONFIGURATION_CONTAINER_FOLDER_NAME = "형상"
+    CONFIGURATION_BEFORE_PATCH_FOLDER_NAME = "패치전"
+    CONFIGURATION_AFTER_PATCH_FOLDER_NAME = "패치후"
     _CAPTURE_TIME_PATTERN = re.compile(r"^(?P<millis>\d{6,})(?:_[^.]*)?\.[^.]+$")
 
     def __init__(
@@ -69,21 +72,64 @@ class GoogleDriveService:
         google_id: Optional[str],
     ) -> Tuple[str, StoredTokens]:
         active_tokens = await self._get_active_tokens(google_id)
-        folder, active_tokens = await self._client.find_child_folder_by_name(
+        design_folder, active_tokens = await self._client.find_child_folder_by_name(
             active_tokens,
             parent_id=project_id,
-            name=self.CONFIGURATION_FOLDER_NAME,
+            name=self.CONFIGURATION_ROOT_FOLDER_NAME,
             matcher=drive_name_variants,
         )
-        if folder is None or not folder.get("id"):
-            folder, active_tokens = await self._client.create_child_folder(
+        if design_folder is None or not design_folder.get("id"):
+            design_folder, active_tokens = await self._client.create_child_folder(
                 active_tokens,
-                name=self.CONFIGURATION_FOLDER_NAME,
+                name=self.CONFIGURATION_ROOT_FOLDER_NAME,
                 parent_id=project_id,
             )
 
-        folder_id = str(folder["id"])
-        return folder_id, active_tokens
+        design_folder_id = str(design_folder["id"])
+
+        container_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=design_folder_id,
+            name=self.CONFIGURATION_CONTAINER_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if container_folder is None or not container_folder.get("id"):
+            container_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_CONTAINER_FOLDER_NAME,
+                parent_id=design_folder_id,
+            )
+
+        container_folder_id = str(container_folder["id"])
+
+        before_patch_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=container_folder_id,
+            name=self.CONFIGURATION_BEFORE_PATCH_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if before_patch_folder is None or not before_patch_folder.get("id"):
+            before_patch_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_BEFORE_PATCH_FOLDER_NAME,
+                parent_id=container_folder_id,
+            )
+            return str(before_patch_folder["id"]), active_tokens
+
+        after_patch_folder, active_tokens = await self._client.find_child_folder_by_name(
+            active_tokens,
+            parent_id=container_folder_id,
+            name=self.CONFIGURATION_AFTER_PATCH_FOLDER_NAME,
+            matcher=drive_name_variants,
+        )
+        if after_patch_folder is None or not after_patch_folder.get("id"):
+            after_patch_folder, active_tokens = await self._client.create_child_folder(
+                active_tokens,
+                name=self.CONFIGURATION_AFTER_PATCH_FOLDER_NAME,
+                parent_id=container_folder_id,
+            )
+
+        return str(after_patch_folder["id"]), active_tokens
 
     async def _resolve_menu_spreadsheet(
         self,
