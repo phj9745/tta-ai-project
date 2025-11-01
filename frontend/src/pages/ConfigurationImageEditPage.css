@@ -179,15 +179,27 @@
   background: #ffffff;
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.configuration-images__card--selected {
-  border-color: #2f855a;
-  box-shadow: 0 0 0 2px rgba(47, 133, 90, 0.15);
+  cursor: pointer;
 }
 
 .configuration-images__card--recent {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.configuration-images__card--selected {
+  border-color: #2f855a;
+  box-shadow: 0 0 0 3px rgba(47, 133, 90, 0.25);
+}
+
+.configuration-images__card--selected.configuration-images__card--recent {
+  box-shadow:
+    0 0 0 3px rgba(47, 133, 90, 0.25),
+    0 0 0 6px rgba(59, 130, 246, 0.2);
+}
+
+.configuration-images__card:focus-visible {
+  outline: 3px solid rgba(47, 133, 90, 0.45);
+  outline-offset: 2px;
 }
 
 .configuration-images__thumb {

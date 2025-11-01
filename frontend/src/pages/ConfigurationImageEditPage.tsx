@@ -1,6 +1,7 @@
 import './ConfigurationImageEditPage.css'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { KeyboardEvent } from 'react'
 
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
@@ -200,6 +201,16 @@ export function ConfigurationImageEditPage({ projectId }: ConfigurationImageEdit
     setSelectedIds(new Set())
   }, [])
 
+  const handleCardKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>, id: string) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        handleToggleSelect(id)
+      }
+    },
+    [handleToggleSelect],
+  )
+
   const handleDeleteSelected = useCallback(async () => {
     if (selectedIds.size === 0 || isDeleting) {
       return
@@ -359,7 +370,15 @@ export function ConfigurationImageEditPage({ projectId }: ConfigurationImageEdit
                   .join(' ')
 
                 return (
-                  <div key={image.id} className={classes}>
+                  <div
+                    key={image.id}
+                    className={classes}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isSelected}
+                    onClick={() => handleToggleSelect(image.id)}
+                    onKeyDown={(event) => handleCardKeyDown(event, image.id)}
+                  >
                     <div className="configuration-images__thumb">
                       <img
                         src={`${backendUrl}/drive/projects/${encodeURIComponent(projectId)}/configuration-images/${encodeURIComponent(image.id)}`}
@@ -375,10 +394,15 @@ export function ConfigurationImageEditPage({ projectId }: ConfigurationImageEdit
                         {image.isStart && <span className="configuration-images__badge">시작 화면</span>}
                         {timestampLabel && <span>{timestampLabel}</span>}
                       </div>
-                      <label className="configuration-images__select">
+                      <label
+                        className="configuration-images__select"
+                        onClick={(event) => event.stopPropagation()}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
                         <input
                           type="checkbox"
                           checked={isSelected}
+                          onClick={(event) => event.stopPropagation()}
                           onChange={() => handleToggleSelect(image.id)}
                         />
                         <span>선택</span>
