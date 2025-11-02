@@ -1,13 +1,13 @@
 import type { DefectReportTableRow } from './types'
 
 const SEVERITY_CODES = new Set(['H', 'M', 'L'])
-const FREQUENCY_CODES = new Set(['A', 'R'])
+const FREQUENCY_CODES = new Set(['A', 'I'])
 
 const QUALITY_LABEL_MAP: Record<string, string> = {
-  기능성: '기능성',
+  기능성: '기능적합성',
   기능적합성: '기능적합성',
-  기능: '기능성',
-  기능품질: '기능성',
+  기능: '기능적합성',
+  기능품질: '기능적합성',
   성능효율성: '성능효율성',
   성능효율: '성능효율성',
   성능: '성능효율성',
@@ -117,7 +117,7 @@ function detectSeverity(raw: string): 'H' | 'M' | 'L' | null {
   return null
 }
 
-function detectFrequency(raw: string): 'A' | 'R' | null {
+function detectFrequency(raw: string): 'A' | 'I' | null {
   const trimmed = stripWrappingQuotes(raw)
   if (!trimmed) {
     return null
@@ -125,7 +125,7 @@ function detectFrequency(raw: string): 'A' | 'R' | null {
 
   const upper = trimmed.toUpperCase()
   if (FREQUENCY_CODES.has(upper)) {
-    return upper as 'A' | 'R'
+    return upper as 'A' | 'I'
   }
 
   const normalized = normalizeWhitespace(trimmed).toLowerCase()
@@ -154,7 +154,7 @@ function detectFrequency(raw: string): 'A' | 'R' | null {
     normalized.includes('때때로') ||
     normalized.includes('조건부')
   ) {
-    return 'R'
+    return 'I'
   }
 
   return null
@@ -242,7 +242,7 @@ export function normalizeDefectResultCells(
     ? severitySources.filter((candidate) => candidate.key !== severitySource)
     : severitySources
 
-  let frequency: 'A' | 'R' | null = null
+  let frequency: 'A' | 'I' | null = null
   let frequencySource: string | null = null
   for (const candidate of frequencySources) {
     const detected = detectFrequency(candidate.value)
