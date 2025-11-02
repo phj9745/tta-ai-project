@@ -158,9 +158,7 @@ class _PerformanceWorkbookManager:
 
         for offset, sample in enumerate(samples):
             row = START_ROW + offset
-            worksheet.cell(row=row, column=1, value=round(sample.elapsed_seconds, 3))
-            worksheet.cell(row=row, column=2, value=round(sample.elapsed_seconds / 60, 3))
-            worksheet.cell(row=row, column=3, value=round(sample.elapsed_seconds / 3600, 3))
+            worksheet.cell(row=row, column=4, value=sample.timestamp.strftime("%Y-%m-%d %H:%M:%S"))
             worksheet.cell(row=row, column=5, value=_safe_round(sample.cpu_percent))
             if sample.private_bytes is not None:
                 worksheet.cell(row=row, column=6, value=int(sample.private_bytes))
@@ -169,7 +167,7 @@ class _PerformanceWorkbookManager:
 
         end_row = START_ROW + len(samples) - 1
         next_row = end_row + 1
-        for column in range(1, 7):
+        for column in range(4, 7):
             worksheet.cell(row=next_row, column=column, value=None)
 
         memory_value = dataset.metadata.get("memory_gb")
@@ -217,9 +215,6 @@ class _PerformanceWorkbookManager:
 
         for offset, sample in enumerate(samples):
             row = START_ROW + offset
-            worksheet.cell(row=row, column=1, value=round(sample.elapsed_seconds, 3))
-            worksheet.cell(row=row, column=2, value=round(sample.elapsed_seconds / 60, 3))
-            worksheet.cell(row=row, column=3, value=round(sample.elapsed_seconds / 3600, 3))
             worksheet.cell(row=row, column=4, value=_safe_round(sample.cpu_user_percent))
             worksheet.cell(row=row, column=5, value=_safe_round(sample.cpu_system_percent))
             worksheet.cell(row=row, column=6, value=sample.free_kib)
@@ -230,7 +225,7 @@ class _PerformanceWorkbookManager:
 
         end_row = START_ROW + len(samples) - 1
         next_row = end_row + 1
-        for column in range(1, 11):
+        for column in range(4, 11):
             worksheet.cell(row=next_row, column=column, value=None)
         return end_row
 
