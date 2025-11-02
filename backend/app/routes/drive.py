@@ -806,6 +806,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=None,
             attachment_notes=attachment_notes if attachment_notes else None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")
@@ -952,6 +953,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=image_map or None,
             attachment_notes=attachment_notes or None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")
@@ -1097,6 +1099,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=image_map if image_map else None,
             attachment_notes=attachment_notes if attachment_notes else None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")
