@@ -1324,6 +1324,7 @@
   align-items: stretch;
   background: #f8fafc;
   padding: 2.5rem;
+  min-width: 0;
 }
 
 .project-management-content--preview {
@@ -1340,6 +1341,9 @@
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
   padding: 2.25rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .project-management-content__inner--preview {
@@ -1720,6 +1724,7 @@
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  min-width: 0;
 }
 
 .defect-workflow__section-heading {
@@ -1894,7 +1899,6 @@
 .security-preview-overlay__body {
   padding: 0 28px;
   flex: 1;
-  overflow: hidden;
 }
 
 .security-preview-overlay__table-wrapper {
@@ -2279,12 +2283,17 @@
   gap: 24px;
   align-items: flex-start;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .defect-workflow__table-wrapper {
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
   max-height: 460px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid #e4e7ef;
   border-radius: 12px;
   background: #ffffff;
@@ -2292,8 +2301,8 @@
 }
 
 .defect-workflow__table {
-  width: 100%;
-  min-width: 640px;
+  width: max(1200px, 100%);
+  min-width: 900px;
   border-collapse: collapse;
 }
 
@@ -2305,6 +2314,7 @@
   font-size: 13px;
   color: #1f2937;
   vertical-align: top;
+  word-break: break-word;
 }
 
 .defect-workflow__loading {

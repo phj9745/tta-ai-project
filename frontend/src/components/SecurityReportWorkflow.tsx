@@ -296,7 +296,7 @@ export function SecurityReportWorkflow({
   )
 
   return (
-    <div className="defect-workflow">
+    <div className={`defect-workflow${isFullscreenPreview ? ' defect-workflow--fullscreen-open' : ''}`}>
       <section className="defect-workflow__section" aria-labelledby="security-upload">
         <div className="defect-workflow__section-heading">
           <h2 id="security-upload" className="defect-workflow__title">
