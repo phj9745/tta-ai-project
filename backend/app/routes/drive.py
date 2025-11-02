@@ -21,6 +21,7 @@ from ..dependencies import (
     get_configuration_image_service,
     get_drive_service,
     get_security_report_service,
+    get_performance_report_service,
 )
 from ..services.ai_generation import AIGenerationService
 from ..services.configuration_images import ConfigurationImageService
@@ -29,6 +30,11 @@ from ..services.google_drive import defect_reports as drive_defect_reports
 from ..services.google_drive import feature_lists as drive_feature_lists
 from ..services.google_drive.naming import looks_like_header_row
 from ..services.security_report import SecurityReportService
+from ..services.performance_report.service import (
+    PerformanceReportService,
+    PerformanceOSResolutionRequired,
+    PerformanceFileMetadata,
+)
 from ..services.excel_templates import defect_report, testcases
 from ..services.excel_templates import feature_list as feature_list_templates
 from ..services.excel_templates.utils import AI_CSV_DELIMITER
@@ -304,6 +310,16 @@ def _build_inline_header(filename: str, *, default_filename: str = "capture.png"
         ascii_fallback = default_filename
     quoted = quote(filename)
     return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
+
+
+def _safe_header_value(value: Optional[str], *, fallback: str = "") -> str:
+    if not value:
+        return fallback
+    try:
+        value.encode("latin-1")
+        return value
+    except UnicodeEncodeError:
+        return quote(value)
 
 
 def _coerce_positive_int(value: Any) -> Optional[int]:
@@ -654,6 +670,16 @@ async def generate_project_asset(
         alias="attachment_names_json",
         description="결함 첨부 파일명(JSON)",
     ),
+    performance_os_overrides: Optional[str] = Form(
+        None,
+        alias="performance_os_overrides",
+        description="성능 리포트 OS 매핑(JSON 객체)",
+    ),
+    performance_metadata_payload: Optional[str] = Form(
+        None,
+        alias="performance_metadata",
+        description="성능 리포트 메모리/장비 정보(JSON 배열)",
+    ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     configuration_image_service: ConfigurationImageService = Depends(
@@ -661,6 +687,7 @@ async def generate_project_asset(
     ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
     security_report_service: SecurityReportService = Depends(get_security_report_service),
+    performance_report_service: PerformanceReportService = Depends(get_performance_report_service),
 ) -> Response:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -680,6 +707,105 @@ async def generate_project_asset(
 
     if metadata_entries and len(metadata_entries) != len(uploads):
         raise HTTPException(status_code=422, detail="파일 메타데이터와 업로드된 파일 수가 일치하지 않습니다.")
+
+    if menu_id == "performance-report":
+        if metadata_entries:
+            raise HTTPException(status_code=422, detail="성능 리포트 생성에는 추가 파일 정보를 입력할 수 없습니다.")
+        if not uploads:
+            raise HTTPException(status_code=422, detail="성능 리포트 생성을 위해 rawdata 파일을 업로드해 주세요.")
+
+        try:
+            overrides_payload = json.loads(performance_os_overrides) if performance_os_overrides else {}
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.") from exc
+
+        if overrides_payload and not isinstance(overrides_payload, Mapping):
+            raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.")
+
+        overrides: Dict[str, str] = {}
+        for key, value in overrides_payload.items() if isinstance(overrides_payload, Mapping) else []:
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.")
+            overrides[key] = value
+
+        try:
+            metadata_payload = json.loads(performance_metadata_payload) if performance_metadata_payload else None
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="메모리·장비 정보 형식이 올바르지 않습니다.") from exc
+
+        if not isinstance(metadata_payload, list) or len(metadata_payload) != len(uploads):
+            raise HTTPException(status_code=422, detail="메모리(GB)와 장비명을 모두 입력해 주세요.")
+
+        metadata_entries: List[PerformanceFileMetadata] = []
+        for index, (entry, upload) in enumerate(zip(metadata_payload, uploads)):
+            if not isinstance(entry, Mapping):
+                raise HTTPException(status_code=422, detail="메모리·장비 정보 형식이 올바르지 않습니다.")
+
+            raw_memory = entry.get("memoryGb")
+            device_name = entry.get("deviceName")
+            if not isinstance(device_name, str) or not device_name.strip():
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 장비명을 입력해 주세요.")
+
+            try:
+                memory_value = float(raw_memory)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 메모리(GB)를 숫자로 입력해 주세요.") from None
+
+            if memory_value <= 0:
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 메모리(GB)는 0보다 커야 합니다.")
+
+            metadata_entries.append(
+                PerformanceFileMetadata(memory_gb=memory_value, device_name=device_name.strip())
+            )
+
+        try:
+            result = await performance_report_service.generate_workbook(
+                project_id=project_id,
+                google_id=google_id,
+                uploads=uploads,
+                overrides=overrides,
+                metadata=metadata_entries,
+            )
+        except PerformanceOSResolutionRequired as exc:
+            unresolved_payload = [
+                {"name": item.name, "index": item.index} for item in exc.files
+            ]
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "performance.os_required",
+                    "files": unresolved_payload,
+                },
+            ) from exc
+
+        update_info = await drive_service.update_performance_workbook(
+            project_id=project_id,
+            google_id=google_id,
+            content=result.content,
+        )
+
+        file_id = update_info.get("fileId") if isinstance(update_info, dict) else None
+        if not file_id:
+            raise HTTPException(status_code=500, detail="성능시험 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        headers = {
+            "Content-Disposition": _build_attachment_header(result.filename, default_filename="performance-report.xlsx"),
+            "Cache-Control": "no-store",
+        }
+        if result.warnings:
+            headers["X-Performance-Warnings"] = json.dumps(result.warnings, ensure_ascii=True)
+
+        response = StreamingResponse(
+            io.BytesIO(result.content),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+        response.headers["X-Drive-File-Id"] = _safe_header_value(file_id)
+        if isinstance(update_info.get("modifiedTime"), str):
+            response.headers["X-Drive-Modified-Time"] = _safe_header_value(update_info["modifiedTime"])
+        if isinstance(update_info.get("fileName"), str):
+            response.headers["X-Drive-File-Name"] = _safe_header_value(update_info["fileName"])
+        return response
 
     if menu_id == "security-report" and defect_rows_json is not None:
         if uploads:

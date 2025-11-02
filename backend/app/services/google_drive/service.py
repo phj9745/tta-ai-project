@@ -844,6 +844,36 @@ class GoogleDriveService:
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
         }
 
+    async def update_performance_workbook(
+        self,
+        *,
+        project_id: str,
+        google_id: Optional[str],
+        content: bytes,
+        file_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        resolved = await self._resolve_menu_spreadsheet(
+            project_id=project_id,
+            menu_id="performance-report",
+            google_id=google_id,
+            include_content=False,
+            file_id=file_id,
+        )
+
+        update_info, _ = await self._client.update_file_content(
+            resolved.tokens,
+            file_id=resolved.file_id,
+            file_name=resolved.file_name,
+            content=content,
+            content_type=XLSX_MIME_TYPE,
+        )
+
+        return {
+            "fileId": resolved.file_id,
+            "fileName": resolved.file_name,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+        }
+
     async def download_feature_list_workbook(
         self,
         *,

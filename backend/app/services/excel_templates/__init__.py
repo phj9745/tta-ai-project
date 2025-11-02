@@ -26,6 +26,7 @@ from .models import (
 )
 from .defect_report import populate_defect_report
 from .security_report import populate_security_report
+from .performance_report import build_performance_workbook, PerformanceWorkbookPayload
 from .testcases import populate_testcase_list
 
 __all__ = [
@@ -49,6 +50,8 @@ __all__ = [
     "populate_testcase_list",
     "populate_defect_report",
     "populate_security_report",
+    "build_performance_workbook",
+    "PerformanceWorkbookPayload",
 ]
 
 # Re-export models for backwards compatibility
