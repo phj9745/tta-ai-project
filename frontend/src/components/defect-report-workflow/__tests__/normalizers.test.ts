@@ -10,7 +10,7 @@ describe('normalizeDefectResultCells', () => {
       결함정도: '마지막으로 등록된 관제점만 탐지가 가능합니다.',
       발생빈도: '중대',
       품질특성: 'Always',
-      '결함 설명': '기능성',
+      '결함 설명': '기능적합성',
     }
 
     const result = normalizeDefectResultCells(input)
@@ -18,7 +18,7 @@ describe('normalizeDefectResultCells', () => {
     expect(result['결함요약']).toBe('동일한 CCTV를 여러 관제점에 등록할 경우')
     expect(result['결함정도']).toBe('H')
     expect(result['발생빈도']).toBe('A')
-    expect(result['품질특성']).toBe('기능성')
+    expect(result['품질특성']).toBe('기능적합성')
     expect(result['결함 설명']).toBe('마지막으로 등록된 관제점만 탐지가 가능합니다.')
   })
 
@@ -26,7 +26,7 @@ describe('normalizeDefectResultCells', () => {
     const input = {
       결함요약: '요약',
       결함정도: 'M',
-      발생빈도: 'R',
+      발생빈도: 'I',
       품질특성: '신뢰성',
       '결함 설명': '로그 저장 기능이 5분 간격으로 실패합니다.',
     }
@@ -34,7 +34,7 @@ describe('normalizeDefectResultCells', () => {
     const result = normalizeDefectResultCells(input)
 
     expect(result['결함정도']).toBe('M')
-    expect(result['발생빈도']).toBe('R')
+    expect(result['발생빈도']).toBe('I')
     expect(result['품질특성']).toBe('신뢰성')
     expect(result['결함 설명']).toBe('로그 저장 기능이 5분 간격으로 실패합니다.')
   })
@@ -44,7 +44,7 @@ describe('normalizeDefectResultCells', () => {
       결함요약: '"동일 CCTV 다수 관제점 등록 시 탐지 오류"',
       결함정도: '"H"',
       발생빈도: '"A"',
-      품질특성: '"기능성"',
+      품질특성: '"기능적합성"',
       '결함 설명': '"동일 CCTV를 여러 관제점에 등록할 경우\n\n탐지가 실패합니다."',
     }
 
@@ -53,7 +53,7 @@ describe('normalizeDefectResultCells', () => {
     expect(result['결함요약']).toBe('동일 CCTV 다수 관제점 등록 시 탐지 오류')
     expect(result['결함정도']).toBe('H')
     expect(result['발생빈도']).toBe('A')
-    expect(result['품질특성']).toBe('기능성')
+    expect(result['품질특성']).toBe('기능적합성')
     expect(result['결함 설명']).toBe('동일 CCTV를 여러 관제점에 등록할 경우\n\n탐지가 실패합니다.')
   })
 })

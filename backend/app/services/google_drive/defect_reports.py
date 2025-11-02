@@ -181,14 +181,14 @@ def _detect_frequency(value: str) -> str:
     if not normalized:
         return ""
     upper = normalized.upper()
-    if upper in {"A", "R"}:
+    if upper in {"A", "I"}:
         return upper
 
     compact = upper.replace(" ", "")
     if any(token in compact for token in ["ALWAYS", "항상", "항시", "상시", "지속", "매번", "항구"]):
         return "A"
     if any(token in compact for token in ["INTERMITTENT", "SOMETIMES", "OCCASIONAL", "RARE", "간헐", "가끔", "드물", "재현", "비정기", "때때로", "조건부"]):
-        return "R"
+        return "I"
     return normalized
 
 
