@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileUploader } from '../components/FileUploader'
 import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
 import { DefectReportWorkflow } from '../components/DefectReportWorkflow'
+import { SecurityReportWorkflow } from '../components/SecurityReportWorkflow'
 import { TestcaseWorkflow } from '../components/testcase-workflow/TestcaseWorkflow'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
@@ -308,6 +309,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
   const isDefectReport = activeContent.id === 'defect-report'
+  const isSecurityReport = activeContent.id === 'security-report'
   const isTestcaseWorkflow = activeContent.id === 'testcase-generation'
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
@@ -905,6 +907,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     projectId={projectId}
                     projectName={projectName}
                   />
+                ) : isSecurityReport ? (
+                  <SecurityReportWorkflow
+                    backendUrl={backendUrl}
+                    projectId={projectId}
+                    projectName={projectName}
+                  />
                 ) : hasRequiredDocuments ? (
                   <>
                     <section
@@ -1004,7 +1012,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 )
               )}
 
-              {!isDefectReport && (
+              {!isDefectReport && !isSecurityReport && (
                 <div className="project-management-content__actions">
                   {activeState.status !== 'success' && (
                     <>
