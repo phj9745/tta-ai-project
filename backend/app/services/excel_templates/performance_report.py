@@ -253,14 +253,18 @@ def _adjust_chart_and_formula_ranges(workbook_bytes: bytes, sheet_stats: Sequenc
         if not sheet_path:
             continue
         columns = WINDOWS_RANGE_COLUMNS if stats.os_type == PerformanceOSType.WINDOWS else LINUX_RANGE_COLUMNS
-        entries[sheet_path] = _rewrite_sheet_ranges(entries[sheet_path], columns, stats.end_row)
+        base_name = WINDOWS_BASE_SHEET if stats.os_type == PerformanceOSType.WINDOWS else LINUX_BASE_SHEET
+        entries[sheet_path] = _rewrite_sheet_ranges(
+            entries[sheet_path], columns, stats.end_row, stats.sheet_name, base_name
+        )
 
     chart_paths = [name for name in entries if name.startswith("xl/charts/")]
     for path in chart_paths:
         content = entries[path]
         for stats in sheet_stats:
             columns = WINDOWS_RANGE_COLUMNS if stats.os_type == PerformanceOSType.WINDOWS else LINUX_RANGE_COLUMNS
-            content = _rewrite_chart_ranges(content, stats.sheet_name, columns, stats.end_row)
+            base_name = WINDOWS_BASE_SHEET if stats.os_type == PerformanceOSType.WINDOWS else LINUX_BASE_SHEET
+            content = _rewrite_chart_ranges(content, stats.sheet_name, base_name, columns, stats.end_row)
         entries[path] = content
 
     output = io.BytesIO()
@@ -300,9 +304,26 @@ def _build_sheet_path_map(entries: Mapping[str, bytes]) -> Dict[str, str]:
     return sheet_map
 
 
-def _rewrite_sheet_ranges(content: bytes, allowed_columns: Iterable[str], end_row: int) -> bytes:
+def _rewrite_sheet_ranges(
+    content: bytes,
+    allowed_columns: Iterable[str],
+    end_row: int,
+    sheet_name: str,
+    base_sheet_name: str,
+) -> bytes:
     allowed = set(allowed_columns)
     text = content.decode("utf-8")
+
+    if sheet_name != base_sheet_name:
+        escaped_base = re.escape(base_sheet_name)
+        pattern_sheet = re.compile(rf"(?:'{escaped_base}'|{escaped_base})!")
+
+        def replace_sheet(match: re.Match[str]) -> str:
+            if match.group(0).startswith("'"):
+                return f"'{sheet_name}'!"
+            return f"{sheet_name}!"
+
+        text = pattern_sheet.sub(replace_sheet, text)
 
     pattern = re.compile(r"\$([A-Z]+)\$4:\$([A-Z]+)\$(\d+)")
 
@@ -316,9 +337,26 @@ def _rewrite_sheet_ranges(content: bytes, allowed_columns: Iterable[str], end_ro
     return updated.encode("utf-8")
 
 
-def _rewrite_chart_ranges(content: bytes, sheet_name: str, allowed_columns: Iterable[str], end_row: int) -> bytes:
+def _rewrite_chart_ranges(
+    content: bytes,
+    sheet_name: str,
+    base_sheet_name: str,
+    allowed_columns: Iterable[str],
+    end_row: int,
+) -> bytes:
     allowed = set(allowed_columns)
     text = content.decode("utf-8")
+
+    if sheet_name != base_sheet_name:
+        escaped_base = re.escape(base_sheet_name)
+        sheet_pattern = re.compile(rf"(?:'{escaped_base}'|{escaped_base})!")
+
+        def replace_sheet(match: re.Match[str]) -> str:
+            if match.group(0).startswith("'"):
+                return f"'{sheet_name}'!"
+            return f"{sheet_name}!"
+
+        text = sheet_pattern.sub(replace_sheet, text)
 
     escaped = re.escape(sheet_name)
     pattern = re.compile(rf"(?:'{escaped}'|{escaped})!\$([A-Z]+)\$4:\$([A-Z]+)\$(\d+)")
