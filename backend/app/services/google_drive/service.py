@@ -710,11 +710,12 @@ class GoogleDriveService:
         self,
         *,
         project_id: str,
-        rows: Sequence[Dict[str, str]],
+        rows: Sequence[Mapping[str, Any]],
         google_id: Optional[str],
         file_id: Optional[str] = None,
         images: Optional[Mapping[int, Sequence[DefectReportImage]]] = None,
         attachment_notes: Optional[Mapping[int, Sequence[str]]] = None,
+        append: bool = False,
     ) -> Dict[str, Any]:
         resolved = await self._resolve_menu_spreadsheet(
             project_id=project_id,
@@ -728,14 +729,97 @@ class GoogleDriveService:
         if workbook_bytes is None:
             raise HTTPException(status_code=500, detail="결함 리포트 파일을 불러오지 못했습니다. 다시 시도해 주세요.")
 
-        csv_text = defect_reports.build_defect_report_rows_csv(rows)
+        def _coerce_positive_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value if value > 0 else None
+
+            text = str(value).strip()
+            if not text:
+                return None
+            try:
+                number = int(text)
+            except ValueError:
+                return None
+            return number if number > 0 else None
+
+        prepared_rows: List[Dict[str, Any]] = []
+        for entry in rows:
+            if not isinstance(entry, Mapping):
+                continue
+            prepared_rows.append(dict(entry))
+
+        images_payload: Optional[Mapping[int, Sequence[DefectReportImage]]] = images
+        attachment_notes_payload: Optional[Mapping[int, Sequence[str]]] = attachment_notes
+
+        if append:
+            existing_rows: List[Dict[str, str]] = []
+            try:
+                _, _, _, existing_rows = defect_reports.parse_defect_report_workbook(workbook_bytes)
+            except Exception:
+                existing_rows = []
+
+            normalized_existing = [dict(row) for row in existing_rows]
+            max_existing_order = 0
+            for row in normalized_existing:
+                order_value = _coerce_positive_int(row.get("order"))
+                if order_value and order_value > max_existing_order:
+                    max_existing_order = order_value
+            next_order = max_existing_order + 1
+
+            note_sources: Dict[int, List[str]] = {}
+            if attachment_notes:
+                for key, values in attachment_notes.items():
+                    normalized_key = _coerce_positive_int(key)
+                    if normalized_key is None:
+                        continue
+                    note_sources[normalized_key] = [str(item) for item in values]
+
+            image_sources: Dict[int, List[DefectReportImage]] = {}
+            if images:
+                for key, values in images.items():
+                    normalized_key = _coerce_positive_int(key)
+                    if normalized_key is None:
+                        continue
+                    image_sources[normalized_key] = list(values)
+
+            remapped_notes: Dict[int, List[str]] = {}
+            remapped_images: Dict[int, List[DefectReportImage]] = {}
+            adjusted_rows: List[Dict[str, str]] = []
+
+            for index, entry in enumerate(prepared_rows, start=1):
+                normalized_row = defect_reports.normalize_defect_record(entry)
+                original_order = _coerce_positive_int(entry.get("order"))
+                if original_order is None:
+                    original_order = index
+
+                new_order = next_order + index - 1
+                normalized_row["order"] = str(new_order)
+                adjusted_rows.append(normalized_row)
+
+                if note_sources:
+                    note_values = note_sources.get(original_order)
+                    if note_values:
+                        remapped_notes[new_order] = [value for value in note_values if value]
+                if image_sources:
+                    image_values = image_sources.get(original_order)
+                    if image_values:
+                        remapped_images[new_order] = list(image_values)
+
+            combined_rows: List[Dict[str, Any]] = normalized_existing + adjusted_rows
+            csv_text = defect_reports.build_defect_report_rows_csv(combined_rows, preserve_order=True)
+            images_payload = remapped_images or None
+            attachment_notes_payload = remapped_notes or None
+        else:
+            csv_text = defect_reports.build_defect_report_rows_csv(prepared_rows)
 
         try:
             updated_bytes = resolved.rule["populate"](  # type: ignore[index]
                 workbook_bytes,
                 csv_text,
-                images=images,
-                attachment_notes=attachment_notes,
+                images=images_payload,
+                attachment_notes=attachment_notes_payload,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
