@@ -588,61 +588,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           setItemStates((prev) => ({
             ...prev,
             [id]: {
-            ...prev[id],
-            status: 'error',
-            errorMessage: `다음 필수 문서를 업로드해 주세요: ${missingDocs
-              .map((doc) => doc.label)
-              .join(', ')}`,
-            warnings: [],
-            downloadUrl: null,
-            downloadName: null,
-          },
-        }))
-        return
-      }
-
-      const handlePerformanceModalClose = useCallback(() => {
-    setPerformanceModalState(null)
-    performanceOverridesRef.current = null
-  }, [])
-
-  const handlePerformanceModalSubmit = useCallback(() => {
-    if (!performanceModalState) {
-      return
-    }
-
-    const missing = performanceModalState.files.filter(
-      (file) => !performanceModalState.selections[file.index],
-    )
-    if (missing.length > 0) {
-      setPerformanceModalState((prev) =>
-        prev
-          ? {
-              ...prev,
-              error: '모든 파일의 OS 종류를 선택해 주세요.',
-            }
-          : prev,
-      )
-      return
-    }
-
-    const overrides: Record<string, string> = {}
-    performanceModalState.files.forEach((file) => {
-      const choice = performanceModalState.selections[file.index]
-      if (!choice) {
-        return
-      }
-      if (file.name) {
-        overrides[file.name] = choice
-      }
-      overrides[`index:${file.index}`] = choice
-      overrides[`file:${file.index + 1}`] = choice
-    })
-
-    performanceOverridesRef.current = overrides
-    setPerformanceModalState(null)
-    void handleGenerate(performanceModalState.menuId)
-  }, [handleGenerate, performanceModalState])
+              ...prev[id],
+              status: 'error',
+              errorMessage: `다음 필수 문서를 업로드해 주세요: ${missingDocs
+                .map((doc) => doc.label)
+                .join(', ')}`,
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
+            },
+          }))
+          return
+        }
 
         const incompleteDescriptions = current.additionalFiles.filter(
           (entry) => entry.description.trim().length === 0,
@@ -651,16 +608,16 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           setItemStates((prev) => ({
             ...prev,
             [id]: {
-            ...prev[id],
-            status: 'error',
-            errorMessage: '추가로 업로드한 문서의 종류를 입력해 주세요.',
-            warnings: [],
-            downloadUrl: null,
-            downloadName: null,
-          },
-        }))
-        return
-      }
+              ...prev[id],
+              status: 'error',
+              errorMessage: '추가로 업로드한 문서의 종류를 입력해 주세요.',
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
+            },
+          }))
+          return
+        }
 
         requiredDocs.forEach((doc) => {
           const files = current.requiredFiles[doc.id] ?? []
@@ -1108,6 +1065,49 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     },
     [backendUrl, itemStates, menuById, projectId, projectName, releaseDownloadUrl],
   )
+
+  const handlePerformanceModalClose = useCallback(() => {
+    setPerformanceModalState(null)
+    performanceOverridesRef.current = null
+  }, [])
+
+  const handlePerformanceModalSubmit = useCallback(() => {
+    if (!performanceModalState) {
+      return
+    }
+
+    const missing = performanceModalState.files.filter(
+      (file) => !performanceModalState.selections[file.index],
+    )
+    if (missing.length > 0) {
+      setPerformanceModalState((prev) =>
+        prev
+          ? {
+              ...prev,
+              error: '모든 파일의 OS 종류를 선택해 주세요.',
+            }
+          : prev,
+      )
+      return
+    }
+
+    const overrides: Record<string, string> = {}
+    performanceModalState.files.forEach((file) => {
+      const choice = performanceModalState.selections[file.index]
+      if (!choice) {
+        return
+      }
+      if (file.name) {
+        overrides[file.name] = choice
+      }
+      overrides[`index:${file.index}`] = choice
+      overrides[`file:${file.index + 1}`] = choice
+    })
+
+    performanceOverridesRef.current = overrides
+    setPerformanceModalState(null)
+    void handleGenerate(performanceModalState.menuId)
+  }, [handleGenerate, performanceModalState])
 
   const handleReset = useCallback(
     (id: MenuItemId) => {
