@@ -103,5 +103,9 @@ def test_finalize_defect_report_updates_spreadsheet_without_ai():
         2: ["defect-02-settings.png"],
     }
 
-    assert payload.get("rows") == expected_rows
+    expected_rows_payload = [
+        expected_rows[0],
+        {str(key): value for key, value in expected_rows[1].items()},
+    ]
+    assert payload.get("rows") == expected_rows_payload
     assert payload.get("headers") == list(defect_reports.DEFECT_REPORT_EXPECTED_HEADERS)
