@@ -316,6 +316,7 @@ def _build_sheet_chart_map(entries: Mapping[str, bytes], sheet_map: Mapping[str,
         "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
         "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
         "drawing": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+        "chart": "http://schemas.openxmlformats.org/drawingml/2006/chart",
     }
 
     chart_map: Dict[str, Set[str]] = {}
@@ -362,7 +363,9 @@ def _build_sheet_chart_map(entries: Mapping[str, bytes], sheet_map: Mapping[str,
                 if rel.attrib.get("Type", "").endswith("/chart") and rel.attrib.get("Target")
             }
 
-            for chart_rel in drawing_tree.findall(".//drawing:graphicFrame/drawing:graphic/drawing:chart", ns):
+            for chart_rel in drawing_tree.findall(
+                ".//drawing:graphicFrame/drawing:graphic/chart:chart", ns
+            ):
                 chart_id = chart_rel.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
                 if not chart_id:
                     continue
