@@ -149,6 +149,11 @@
   color: #fecaca;
 }
 
+.app-shell__task-status-badge--cancelled {
+  background: rgba(148, 163, 184, 0.28);
+  color: #e2e8f0;
+}
+
 .app-shell__task-message {
   font-size: 0.8rem;
   color: rgba(226, 232, 240, 0.85);

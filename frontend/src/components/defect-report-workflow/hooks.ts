@@ -745,6 +745,10 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
       setStatus('loading')
       setError(null)
       const taskHandle = startTask('defect-report', '결함 리포트 저장')
+      taskHandle.onCancel(() => {
+        setStatus('idle')
+        setError(null)
+      })
 
       const formData = new FormData()
       formData.append('menu_id', 'defect-report')
@@ -785,11 +789,19 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
           {
             method: 'POST',
             body: formData,
+            signal: taskHandle.signal,
           },
         )
 
+        if (taskHandle.signal.aborted) {
+          return null
+        }
+
         if (!response.ok) {
           const payload = await response.json().catch(() => null)
+          if (taskHandle.signal.aborted) {
+            return null
+          }
           const detail =
             payload && typeof payload.detail === 'string'
               ? payload.detail
@@ -801,10 +813,18 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
         }
 
         const payload = (await response.json().catch(() => ({}))) as DefectFinalizeResponse
+        if (taskHandle.signal.aborted) {
+          return null
+        }
         setStatus('success')
-        taskHandle.complete({ type: 'data', payload }, '결함 리포트 저장 완료')
+        if (!taskHandle.signal.aborted) {
+          taskHandle.complete({ type: 'data', payload }, '결함 리포트 저장 완료')
+        }
         return payload
       } catch (caught) {
+        if (taskHandle.signal.aborted) {
+          return null
+        }
         console.error('Failed to finalize defect report', caught)
         setStatus('error')
         setError('결함 리포트를 생성하는 중 예기치 않은 오류가 발생했습니다.')

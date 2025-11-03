@@ -718,6 +718,19 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
       }
 
       const taskHandle = startTask(id, menu.label)
+      taskHandle.onCancel(() => {
+        setItemStates((prev) => ({
+          ...prev,
+          [id]: {
+            ...prev[id],
+            status: 'idle',
+            errorMessage: null,
+            warnings: [],
+            downloadUrl: null,
+            downloadName: null,
+          },
+        }))
+      })
 
       const formData = new FormData()
       formData.append('menu_id', id)
@@ -744,8 +757,13 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           {
             method: 'POST',
             body: formData,
+            signal: taskHandle.signal,
           },
         )
+
+        if (taskHandle.signal.aborted) {
+          return
+        }
 
         if (!response.ok) {
           if (response.status === 409 && id === 'performance-report') {
@@ -795,6 +813,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               }
             }
 
+            if (taskHandle.signal.aborted) {
+              return
+            }
+
             setItemStates((prev) => ({
               ...prev,
               [id]: {
@@ -816,6 +838,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               })
               taskHandle.fail('OS 종류 선택이 필요합니다.')
             } else {
+              if (taskHandle.signal.aborted) {
+                return
+              }
+
               setItemStates((prev) => ({
                 ...prev,
                 [id]: {
@@ -845,6 +871,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             }
           }
 
+          if (taskHandle.signal.aborted) {
+            return
+          }
+
           setItemStates((prev) => ({
             ...prev,
             [id]: {
@@ -860,6 +890,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           return
         }
 
+        if (taskHandle.signal.aborted) {
+          return
+        }
+
         if (id === 'configuration-images') {
           let payload: ConfigurationCaptureResponse | null = null
           try {
@@ -868,15 +902,21 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             payload = null
           }
 
+          if (taskHandle.signal.aborted) {
+            return
+          }
+
           const captureFiles: ConfigurationCaptureFile[] = Array.isArray(payload?.files)
             ? (payload?.files as ConfigurationCaptureFile[])
             : []
           const files: Array<ConfigurationCaptureFile & { id: string }> = captureFiles.filter(
-            (file): file is ConfigurationCaptureFile & { id: string } =>
-              typeof file?.id === 'string',
+            (file): file is ConfigurationCaptureFile & { id: string } => typeof file?.id === 'string',
           )
 
           if (!payload || files.length === 0) {
+            if (taskHandle.signal.aborted) {
+              return
+            }
             setItemStates((prev) => ({
               ...prev,
               [id]: {
@@ -886,6 +926,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               },
             }))
             taskHandle.fail('형상 이미지 정보를 확인하지 못했습니다.')
+            return
+          }
+
+          if (taskHandle.signal.aborted) {
             return
           }
 
@@ -918,10 +962,17 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           const targetUrl = `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${
             query ? `?${query}` : ''
           }`
-          taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '형상 이미지 추출 완료')
-          if (isMountedRef.current) {
-            navigate(targetUrl)
+
+          if (!taskHandle.signal.aborted) {
+            taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '형상 이미지 추출 완료')
+            if (isMountedRef.current) {
+              navigate(targetUrl)
+            }
           }
+          return
+        }
+
+        if (taskHandle.signal.aborted) {
           return
         }
 
@@ -933,7 +984,14 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             payload = null
           }
 
+          if (taskHandle.signal.aborted) {
+            return
+          }
+
           if (!payload || typeof payload.fileId !== 'string') {
+            if (taskHandle.signal.aborted) {
+              return
+            }
             setItemStates((prev) => ({
               ...prev,
               [id]: {
@@ -943,6 +1001,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               },
             }))
             taskHandle.fail('기능리스트 정보를 확인하지 못했습니다.')
+            return
+          }
+
+          if (taskHandle.signal.aborted) {
             return
           }
 
@@ -971,14 +1033,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           const targetUrl = `/projects/${encodeURIComponent(projectId)}/feature-list/edit${
             query ? `?${query}` : ''
           }`
-          taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '기능리스트 생성 완료')
-          if (isMountedRef.current) {
-            navigate(targetUrl)
+
+          if (!taskHandle.signal.aborted) {
+            taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '기능리스트 생성 완료')
+            if (isMountedRef.current) {
+              navigate(targetUrl)
+            }
           }
           return
         }
 
+        if (taskHandle.signal.aborted) {
+          return
+        }
+
         const blob = await response.blob()
+
+        if (taskHandle.signal.aborted) {
+          return
+        }
 
         const disposition = response.headers.get('content-disposition')
         const parsedName = parseFileNameFromDisposition(disposition)
@@ -1016,6 +1089,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         }
 
         setItemStates((prev) => {
+          if (taskHandle.signal.aborted) {
+            return prev
+          }
           const previous = prev[id]
           if (previous?.downloadUrl) {
             releaseDownloadUrl(id, previous.downloadUrl)
@@ -1034,14 +1110,25 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             },
           }
         })
+
+        if (taskHandle.signal.aborted) {
+          URL.revokeObjectURL(objectUrl)
+          return
+        }
+
         downloadUrlsRef.current[id] = objectUrl
 
         const successMessage = warnings.length > 0 ? '생성 완료 (주의 사항 있음)' : '생성 완료'
-        taskHandle.complete(
-          { type: 'download', blob, filename: safeName, contentType, warnings },
-          successMessage,
-        )
+        if (!taskHandle.signal.aborted) {
+          taskHandle.complete(
+            { type: 'download', blob, filename: safeName, contentType, warnings },
+            successMessage,
+          )
+        }
       } catch (error) {
+        if (taskHandle.signal.aborted) {
+          return
+        }
         const fallback =
           error instanceof Error
             ? error.message

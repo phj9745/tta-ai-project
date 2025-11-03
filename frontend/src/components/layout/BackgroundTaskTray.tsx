@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 
 import { navigate } from '../../navigation'
 import { useBackgroundTasks } from '../../app/background/BackgroundTaskContext'
+import type { BackgroundTaskStatus } from '../../app/background/BackgroundTaskContext'
 
-function formatStatus(status: 'running' | 'succeeded' | 'failed'): string {
+function formatStatus(status: BackgroundTaskStatus): string {
   switch (status) {
     case 'running':
       return '진행 중'
@@ -11,13 +12,15 @@ function formatStatus(status: 'running' | 'succeeded' | 'failed'): string {
       return '완료'
     case 'failed':
       return '실패'
+    case 'cancelled':
+      return '중단됨'
     default:
       return status
   }
 }
 
 export function BackgroundTaskTray() {
-  const { tasks, dismissTask, getDownloadUrl } = useBackgroundTasks()
+  const { tasks, cancelTask, dismissTask, getDownloadUrl } = useBackgroundTasks()
   const [isOpen, setIsOpen] = useState(false)
 
   const sortedTasks = useMemo(
@@ -106,7 +109,11 @@ export function BackgroundTaskTray() {
                       className="app-shell__task-button app-shell__task-button--dismiss"
                       onClick={() => {
                         if (window.confirm('정말로 이 작업을 중단하시겠습니까?')) {
-                          dismissTask(task.id)
+                          if (task.status === 'running') {
+                            cancelTask(task.id)
+                          } else {
+                            dismissTask(task.id)
+                          }
                         }
                       }}
                     >

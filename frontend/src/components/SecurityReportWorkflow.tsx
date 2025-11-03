@@ -69,6 +69,10 @@ export function SecurityReportWorkflow({
     setPreviewStatus('loading')
     setPreviewError(null)
     const taskHandle = startTask('security-report', '보안성 리포트 미리보기')
+    taskHandle.onCancel(() => {
+      setPreviewStatus('idle')
+      setPreviewError(null)
+    })
 
     try {
       const response = await fetch(
@@ -76,11 +80,19 @@ export function SecurityReportWorkflow({
         {
           method: 'POST',
           body: formData,
+          signal: taskHandle.signal,
         },
       )
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
+        if (taskHandle.signal.aborted) {
+          return
+        }
         const detail =
           payload && typeof payload.detail === 'string'
             ? payload.detail
@@ -96,6 +108,10 @@ export function SecurityReportWorkflow({
         rows?: unknown
       }
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       const rawRows = Array.isArray(payload.rows) ? payload.rows : []
       const normalizedRows = rawRows
         .map((entry, index) => normalizeSecurityPreviewRow(entry, index))
@@ -109,13 +125,22 @@ export function SecurityReportWorkflow({
         return
       }
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       setRows(normalizedRows)
       setPreviewStatus('success')
       setPreviewError(null)
       setSaveStatus('idle')
       setSaveError(null)
-      taskHandle.complete({ type: 'data', payload: normalizedRows }, '미리보기 준비 완료')
+      if (!taskHandle.signal.aborted) {
+        taskHandle.complete({ type: 'data', payload: normalizedRows }, '미리보기 준비 완료')
+      }
     } catch (error) {
+      if (taskHandle.signal.aborted) {
+        return
+      }
       console.error('Failed to preview security report', error)
       setPreviewStatus('error')
       setPreviewError('보안성 리포트 초안을 생성하는 중 예기치 않은 오류가 발생했습니다.')
@@ -152,6 +177,10 @@ export function SecurityReportWorkflow({
     setSaveStatus('loading')
     setSaveError(null)
     const taskHandle = startTask('security-report', '보안성 리포트 저장')
+    taskHandle.onCancel(() => {
+      setSaveStatus('idle')
+      setSaveError(null)
+    })
 
     try {
       const response = await fetch(
@@ -159,11 +188,19 @@ export function SecurityReportWorkflow({
         {
           method: 'POST',
           body: formData,
+          signal: taskHandle.signal,
         },
       )
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       if (!response.ok) {
         const payload = await response.json().catch(() => null)
+        if (taskHandle.signal.aborted) {
+          return
+        }
         const detail =
           payload && typeof payload.detail === 'string'
             ? payload.detail
@@ -180,10 +217,16 @@ export function SecurityReportWorkflow({
         modifiedTime?: unknown
       }
 
-      setSaveStatus('success')
-      taskHandle.complete({ type: 'data', payload }, '보안성 리포트 저장 완료')
+      if (taskHandle.signal.aborted) {
+        return
+      }
 
-      if (typeof window !== 'undefined') {
+      setSaveStatus('success')
+      if (!taskHandle.signal.aborted) {
+        taskHandle.complete({ type: 'data', payload }, '보안성 리포트 저장 완료')
+      }
+
+      if (typeof window !== 'undefined' && !taskHandle.signal.aborted) {
         const nextParams = new URLSearchParams(window.location.search)
         if (projectName && projectName !== projectId && !nextParams.get('name')) {
           nextParams.set('name', projectName)
@@ -217,6 +260,9 @@ export function SecurityReportWorkflow({
         )
       }
     } catch (error) {
+      if (taskHandle.signal.aborted) {
+        return
+      }
       console.error('Failed to save security report', error)
       setSaveStatus('error')
       setSaveError('보안성 리포트를 저장하는 중 예기치 않은 오류가 발생했습니다.')

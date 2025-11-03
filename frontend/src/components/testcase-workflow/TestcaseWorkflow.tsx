@@ -558,6 +558,10 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     setFinalStatus('loading')
     setFinalError(null)
     const taskHandle = startTask('testcase-generation', '테스트케이스 생성')
+    taskHandle.onCancel(() => {
+      setFinalStatus('idle')
+      setFinalError(null)
+    })
 
     const payload = {
       projectOverview,
@@ -583,16 +587,28 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
+          signal: taskHandle.signal,
         },
       )
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       if (!response.ok) {
         const body = await response.json().catch(() => null)
+        if (taskHandle.signal.aborted) {
+          return
+        }
         const detail = typeof body?.detail === 'string' ? body.detail : '테스트케이스를 완성하지 못했습니다.'
         throw new Error(detail)
       }
 
       const body = (await response.json()) as FinalizeResponsePayload
+
+      if (taskHandle.signal.aborted) {
+        return
+      }
 
       const rows = Array.isArray(body.rows) ? body.rows : []
       if (rows.length === 0) {
@@ -624,9 +640,14 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       const targetUrl = `/projects/${encodeURIComponent(projectId)}/testcases/edit${
         query ? `?${query}` : ''
       }`
-      taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '테스트케이스 생성 완료')
-      navigate(targetUrl)
+      if (!taskHandle.signal.aborted) {
+        taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '테스트케이스 생성 완료')
+        navigate(targetUrl)
+      }
     } catch (error) {
+      if (taskHandle.signal.aborted) {
+        return
+      }
       const message = error instanceof Error ? error.message : '테스트케이스를 완성하지 못했습니다.'
       setFinalStatus('error')
       setFinalError(message)
