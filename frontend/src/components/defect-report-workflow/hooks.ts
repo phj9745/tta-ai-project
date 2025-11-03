@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useBackgroundTasks } from '../../app/background/BackgroundTaskContext'
 
 import {
   ATTACHMENT_ACCEPT,
@@ -731,6 +732,7 @@ interface DefectFinalizeResponse {
 export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
   const [status, setStatus] = useState<AsyncStatus>('idle')
   const [error, setError] = useState<string | null>(null)
+  const { startTask } = useBackgroundTasks()
 
   const finalize = useCallback(
     async (rows: FinalizedDefectRow[], attachments: AttachmentMap) => {
@@ -742,6 +744,7 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
 
       setStatus('loading')
       setError(null)
+      const taskHandle = startTask('defect-report', '결함 리포트 저장')
 
       const formData = new FormData()
       formData.append('menu_id', 'defect-report')
@@ -793,20 +796,23 @@ export function useDefectFinalize({ backendUrl, projectId }: FinalizeOptions) {
               : '결함 리포트를 생성하는 중 오류가 발생했습니다.'
           setStatus('error')
           setError(detail)
+          taskHandle.fail(detail)
           return null
         }
 
         const payload = (await response.json().catch(() => ({}))) as DefectFinalizeResponse
         setStatus('success')
+        taskHandle.complete({ type: 'data', payload }, '결함 리포트 저장 완료')
         return payload
       } catch (caught) {
         console.error('Failed to finalize defect report', caught)
         setStatus('error')
         setError('결함 리포트를 생성하는 중 예기치 않은 오류가 발생했습니다.')
+        taskHandle.fail('결함 리포트를 저장하는 중 오류가 발생했습니다.')
         return null
       }
     },
-    [backendUrl, projectId],
+    [backendUrl, projectId, startTask],
   )
 
   const reset = useCallback(() => {

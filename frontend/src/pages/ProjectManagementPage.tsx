@@ -6,6 +6,7 @@ import { DefectReportWorkflow } from '../components/DefectReportWorkflow'
 import { SecurityReportWorkflow } from '../components/SecurityReportWorkflow'
 import { TestcaseWorkflow } from '../components/testcase-workflow/TestcaseWorkflow'
 import { Modal } from '../components/Modal'
+import { useBackgroundTasks } from '../app/background/BackgroundTaskContext'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -310,14 +311,13 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const backendUrl = useMemo(() => getBackendUrl(), [])
   const [activeItem, setActiveItem] = useState<MenuItemId>(FIRST_MENU_ITEM)
   const [itemStates, setItemStates] = useState<Record<MenuItemId, ItemState>>(() => createInitialItemStates())
-  const controllersRef = useRef<Record<MenuItemId, AbortController | null>>(
-    Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, AbortController | null>,
-  )
   const downloadUrlsRef = useRef<Record<MenuItemId, string | null>>(
     Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, string | null>,
   )
   const performanceOverridesRef = useRef<Record<string, string> | null>(null)
   const [performanceModalState, setPerformanceModalState] = useState<PerformanceOSModalState | null>(null)
+  const { startTask } = useBackgroundTasks()
+  const isMountedRef = useRef(true)
 
   const menuById = useMemo(() => {
     return MENU_ITEMS.reduce((acc, item) => {
@@ -343,6 +343,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false
+    }
   }, [])
 
   const handleChangeFiles = useCallback(
@@ -711,9 +717,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         releaseDownloadUrl(id, current.downloadUrl)
       }
 
-      controllersRef.current[id]?.abort()
-      const controller = new AbortController()
-      controllersRef.current[id] = controller
+      const taskHandle = startTask(id, menu.label)
 
       const formData = new FormData()
       formData.append('menu_id', id)
@@ -740,7 +744,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           {
             method: 'POST',
             body: formData,
-            signal: controller.signal,
           },
         )
 
@@ -792,7 +795,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               }
             }
 
-            if (!controller.signal.aborted) {
             setItemStates((prev) => ({
               ...prev,
               [id]: {
@@ -804,7 +806,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 downloadName: null,
               },
             }))
-          }
 
             if (modalFiles.length > 0) {
               setPerformanceModalState({
@@ -813,19 +814,21 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 selections: Object.fromEntries(modalFiles.map((file) => [file.index, ''])),
                 error: null,
               })
-            } else if (!controller.signal.aborted) {
-            setItemStates((prev) => ({
-              ...prev,
-              [id]: {
-                ...prev[id],
-                status: 'error',
-                errorMessage: '업로드된 파일의 OS 유형을 판별하지 못했습니다. 다시 시도해 주세요.',
-                warnings: [],
-                downloadUrl: null,
-                downloadName: null,
-              },
-            }))
-          }
+              taskHandle.fail('OS 종류 선택이 필요합니다.')
+            } else {
+              setItemStates((prev) => ({
+                ...prev,
+                [id]: {
+                  ...prev[id],
+                  status: 'error',
+                  errorMessage: '업로드된 파일의 OS 유형을 판별하지 못했습니다. 다시 시도해 주세요.',
+                  warnings: [],
+                  downloadUrl: null,
+                  downloadName: null,
+                },
+              }))
+              taskHandle.fail('OS 정보를 확인하지 못했습니다.')
+            }
             return
           }
 
@@ -842,19 +845,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             }
           }
 
-          if (!controller.signal.aborted) {
-            setItemStates((prev) => ({
-              ...prev,
-              [id]: {
-                ...prev[id],
-                status: 'error',
-                errorMessage: detail,
-                warnings: [],
-                downloadUrl: null,
-                downloadName: null,
-              },
-            }))
-          }
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id],
+              status: 'error',
+              errorMessage: detail,
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
+            },
+          }))
+          taskHandle.fail(detail)
           return
         }
 
@@ -864,10 +866,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             payload = (await response.json()) as ConfigurationCaptureResponse
           } catch {
             payload = null
-          }
-
-          if (controller.signal.aborted) {
-            return
           }
 
           const captureFiles: ConfigurationCaptureFile[] = Array.isArray(payload?.files)
@@ -887,6 +885,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 errorMessage: '추출된 형상 이미지 정보를 확인하지 못했습니다.',
               },
             }))
+            taskHandle.fail('형상 이미지 정보를 확인하지 못했습니다.')
             return
           }
 
@@ -916,11 +915,13 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           }
 
           const query = nextParams.toString()
-          navigate(
-            `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${
-              query ? `?${query}` : ''
-            }`,
-          )
+          const targetUrl = `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${
+            query ? `?${query}` : ''
+          }`
+          taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '형상 이미지 추출 완료')
+          if (isMountedRef.current) {
+            navigate(targetUrl)
+          }
           return
         }
 
@@ -932,10 +933,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             payload = null
           }
 
-          if (controller.signal.aborted) {
-            return
-          }
-
           if (!payload || typeof payload.fileId !== 'string') {
             setItemStates((prev) => ({
               ...prev,
@@ -945,6 +942,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 errorMessage: '생성된 기능리스트 정보를 확인하지 못했습니다.',
               },
             }))
+            taskHandle.fail('기능리스트 정보를 확인하지 못했습니다.')
             return
           }
 
@@ -970,16 +968,17 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           }
 
           const query = nextParams.toString()
-          navigate(
-            `/projects/${encodeURIComponent(projectId)}/feature-list/edit${query ? `?${query}` : ''}`,
-          )
+          const targetUrl = `/projects/${encodeURIComponent(projectId)}/feature-list/edit${
+            query ? `?${query}` : ''
+          }`
+          taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '기능리스트 생성 완료')
+          if (isMountedRef.current) {
+            navigate(targetUrl)
+          }
           return
         }
 
         const blob = await response.blob()
-        if (controller.signal.aborted) {
-          return
-        }
 
         const disposition = response.headers.get('content-disposition')
         const parsedName = parseFileNameFromDisposition(disposition)
@@ -1036,11 +1035,13 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           }
         })
         downloadUrlsRef.current[id] = objectUrl
-      } catch (error) {
-        if (controller.signal.aborted) {
-          return
-        }
 
+        const successMessage = warnings.length > 0 ? '생성 완료 (주의 사항 있음)' : '생성 완료'
+        taskHandle.complete(
+          { type: 'download', blob, filename: safeName, contentType, warnings },
+          successMessage,
+        )
+      } catch (error) {
         const fallback =
           error instanceof Error
             ? error.message
@@ -1057,13 +1058,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             downloadName: null,
           },
         }))
-      } finally {
-        if (controllersRef.current[id] === controller) {
-          controllersRef.current[id] = null
-        }
+        taskHandle.fail(fallback)
       }
     },
-    [backendUrl, itemStates, menuById, projectId, projectName, releaseDownloadUrl],
+    [
+      backendUrl,
+      itemStates,
+      menuById,
+      projectId,
+      projectName,
+      releaseDownloadUrl,
+      startTask,
+    ],
   )
 
   const handlePerformanceModalClose = useCallback(() => {
@@ -1111,8 +1117,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const handleReset = useCallback(
     (id: MenuItemId) => {
-      controllersRef.current[id]?.abort()
-      controllersRef.current[id] = null
       if (id === 'performance-report') {
         performanceOverridesRef.current = null
         setPerformanceModalState(null)
@@ -1136,10 +1140,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   useEffect(() => {
     return () => {
       MENU_ITEM_IDS.forEach((id) => {
-        const controller = controllersRef.current[id as MenuItemId]
-        controller?.abort()
-        controllersRef.current[id as MenuItemId] = null
-
         const downloadUrl = downloadUrlsRef.current[id as MenuItemId]
         if (downloadUrl) {
           URL.revokeObjectURL(downloadUrl)
