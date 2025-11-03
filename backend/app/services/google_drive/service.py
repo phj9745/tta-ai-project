@@ -851,6 +851,7 @@ class GoogleDriveService:
         google_id: Optional[str],
         content: bytes,
         file_id: Optional[str] = None,
+        file_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         resolved = await self._resolve_menu_spreadsheet(
             project_id=project_id,
@@ -860,17 +861,19 @@ class GoogleDriveService:
             file_id=file_id,
         )
 
+        target_name = file_name or resolved.file_name
+
         update_info, _ = await self._client.update_file_content(
             resolved.tokens,
             file_id=resolved.file_id,
-            file_name=resolved.file_name,
+            file_name=target_name,
             content=content,
             content_type=XLSX_MIME_TYPE,
         )
 
         return {
             "fileId": resolved.file_id,
-            "fileName": resolved.file_name,
+            "fileName": target_name,
             "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
         }
 

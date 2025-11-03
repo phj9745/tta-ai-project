@@ -23,6 +23,8 @@ WINDOWS_BASE_SHEET = "Windows #1"
 LINUX_BASE_SHEET = "Linux #1"
 WINDOWS_PREFIX = "Windows"
 LINUX_PREFIX = "Linux"
+MAX_SHEET_TITLE_LENGTH = 31
+INVALID_SHEET_CHARS = re.compile(r"[:\\/?*\[\]]")
 START_ROW = 4
 
 WINDOWS_RANGE_COLUMNS = {"A", "B", "C", "G", "H"}
@@ -41,6 +43,50 @@ class PerformanceWorkbookPayload:
     template_bytes: bytes
     windows_datasets: Sequence[PerformanceDataset]
     linux_datasets: Sequence[PerformanceDataset]
+
+
+def _sanitize_device_name(name: str) -> str:
+    sanitized = INVALID_SHEET_CHARS.sub(" ", name)
+    sanitized = sanitized.replace("'", "’")
+    sanitized = re.sub(r"\s+", " ", sanitized).strip()
+    if not sanitized:
+        return ""
+    return sanitized[:MAX_SHEET_TITLE_LENGTH]
+
+
+def _ensure_unique_sheet_title(base: str, used: Set[str]) -> str:
+    normalized = base.casefold()
+    if normalized not in used:
+        return base
+
+    counter = 2
+    while True:
+        suffix = f" ({counter})"
+        available = MAX_SHEET_TITLE_LENGTH - len(suffix)
+        truncated = base[:available].rstrip()
+        if not truncated:
+            truncated = base[:available]
+        candidate = f"{truncated}{suffix}"
+        normalized_candidate = candidate.casefold()
+        if normalized_candidate not in used:
+            return candidate
+        counter += 1
+
+
+def _build_sheet_titles(prefix: str, datasets: Sequence[PerformanceDataset]) -> List[str]:
+    used: Set[str] = set()
+    titles: List[str] = []
+
+    for index, dataset in enumerate(datasets, start=1):
+        raw_name = str(dataset.metadata.get("device_name") or "").strip()
+        base_title = _sanitize_device_name(raw_name)
+        if not base_title:
+            base_title = f"{prefix} #{index}"
+        unique_title = _ensure_unique_sheet_title(base_title, used)
+        used.add(unique_title.casefold())
+        titles.append(unique_title)
+
+    return titles
 
 
 def build_performance_workbook(payload: PerformanceWorkbookPayload) -> bytes:
@@ -134,8 +180,10 @@ class _PerformanceWorkbookManager:
                 pass
             workbook._sheets.insert(template_index + offset, sheet)  # type: ignore[attr-defined]
 
-        for index, worksheet in enumerate(new_sheets, start=1):
-            worksheet.title = f"{prefix} #{index}"
+        sheet_titles = _build_sheet_titles(prefix, datasets)
+
+        for worksheet, title in zip(new_sheets, sheet_titles):
+            worksheet.title = title
             worksheet._charts = []  # type: ignore[attr-defined]
             for chart in template_charts:
                 new_chart = deepcopy(chart)
