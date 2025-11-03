@@ -8,6 +8,7 @@ from .services.prompt_request_log import PromptRequestLogService
 from .services.google_drive import GoogleDriveService
 from .services.oauth import GoogleOAuthService
 from .services.security_report import SecurityReportService
+from .services.performance_report.service import PerformanceReportService
 from .token_store import TokenStorage
 from openai import OpenAI
 
@@ -38,6 +39,7 @@ class Container:
             openai_client=openai_client,
         )
         self._configuration_image_service = ConfigurationImageService(self._drive_service)
+        self._performance_report_service = PerformanceReportService(drive_service=self._drive_service)
 
     @property
     def settings(self) -> Settings:
@@ -74,3 +76,7 @@ class Container:
     @property
     def configuration_image_service(self) -> ConfigurationImageService:
         return self._configuration_image_service
+
+    @property
+    def performance_report_service(self) -> PerformanceReportService:
+        return self._performance_report_service

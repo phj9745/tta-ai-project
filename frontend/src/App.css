@@ -1610,6 +1610,93 @@
   background: rgba(37, 99, 235, 0.08);
 }
 
+.project-management-content__warnings {
+  width: 100%;
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  border: 1px dashed rgba(37, 99, 235, 0.35);
+}
+
+.project-management-content__warnings ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.project-management-performance {
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(248, 250, 252, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.project-management-performance__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.project-management-performance__helper {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #475569;
+}
+
+.project-management-performance__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.project-management-performance__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 230px));
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+}
+
+.project-management-performance__file {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.project-management-performance__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.project-management-performance__field input {
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  font-size: 0.95rem;
+}
+
+.project-management-performance__field input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+}
+
+@media (max-width: 900px) {
+  .project-management-performance__item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .project-management-content__download {
   text-decoration: none;
 }

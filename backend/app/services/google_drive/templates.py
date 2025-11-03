@@ -87,6 +87,11 @@ SPREADSHEET_RULES: Dict[str, Mapping[str, object]] = {
         "file_suffix": "결함리포트 v1.0.xlsx",
         "populate": security_report.populate_security_report,
     },
+    "performance-report": {
+        "folder_path": ("다.수행", "성능시험"),
+        "file_suffix": "성능시험 v1.0.xlsx",
+        "populate": None,
+    },
 }
 
 
