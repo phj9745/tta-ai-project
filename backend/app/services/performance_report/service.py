@@ -123,14 +123,18 @@ class PerformanceReportService:
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+        project_number = await self._drive_service.get_project_exam_number(
+            project_id=project_id,
+            google_id=google_id,
+        )
+        filename = f"{project_number} 성능시험 v1.0.xlsx"
+
         drive_update_info = await self._drive_service.update_performance_workbook(
             project_id=project_id,
             google_id=google_id,
             content=workbook_bytes,
+            file_name=filename,
         )
-
-        project_number = await self._drive_service.get_project_exam_number(project_id=project_id, google_id=google_id)
-        filename = f"{project_number} 성능시험 v1.0.xlsx"
 
         return PerformanceWorkbookResult(
             filename=filename,
