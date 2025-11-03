@@ -278,6 +278,26 @@ def _adjust_chart_and_formula_ranges(workbook_bytes: bytes, sheet_stats: Sequenc
     return output.getvalue()
 
 
+def _resolve_relationship_target(base_path: str, target: str) -> str:
+    import posixpath
+
+    if not target:
+        return ""
+
+    # Absolute targets are rooted at the package root, so strip the leading slash
+    if target.startswith("/"):
+        return target.lstrip("/")
+
+    base_dir = posixpath.dirname(base_path)
+    resolved = posixpath.normpath(posixpath.join(base_dir, target))
+
+    while resolved.startswith("../"):
+        resolved = resolved[3:]
+        resolved = resolved.lstrip("/")
+
+    return resolved
+
+
 def _build_sheet_path_map(entries: Mapping[str, bytes]) -> Dict[str, str]:
     workbook_xml = entries.get("xl/workbook.xml")
     rels_xml = entries.get("xl/_rels/workbook.xml.rels")
@@ -299,12 +319,10 @@ def _build_sheet_path_map(entries: Mapping[str, bytes]) -> Dict[str, str]:
         rel_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         if not name or not rel_id:
             continue
-        target = rel_map.get(rel_id)
-        if not target:
+        target = _resolve_relationship_target("xl/workbook.xml", rel_map.get(rel_id, ""))
+        if not target or not target.startswith("xl/worksheets/"):
             continue
-        if not target.startswith("worksheets/"):
-            continue
-        sheet_map[name] = f"xl/{target}"
+        sheet_map[name] = target
     return sheet_map
 
 
@@ -334,11 +352,13 @@ def _build_sheet_chart_map(entries: Mapping[str, bytes], sheet_map: Mapping[str,
         for rel in rels_tree.findall("rel:Relationship", ns):
             rel_type = rel.attrib.get("Type", "")
             if rel_type.endswith("/drawing"):
-                target = rel.attrib.get("Target")
                 rel_id = rel.attrib.get("Id")
-                if not target or not rel_id:
+                if not rel_id:
                     continue
-                drawing_targets[rel_id] = posixpath.normpath(posixpath.join(sheet_dir, target))
+                target = _resolve_relationship_target(sheet_path, rel.attrib.get("Target", ""))
+                if not target:
+                    continue
+                drawing_targets[rel_id] = target
 
         if not drawing_targets:
             continue
@@ -359,9 +379,11 @@ def _build_sheet_chart_map(entries: Mapping[str, bytes], sheet_map: Mapping[str,
                 continue
             drawing_rels_tree = ET.fromstring(drawing_rels)
             chart_targets = {
-                rel.attrib.get("Id"): posixpath.normpath(posixpath.join(posixpath.dirname(drawing_path), rel.attrib.get("Target", "")))
+                rel.attrib.get("Id"): _resolve_relationship_target(
+                    drawing_path, rel.attrib.get("Target", "")
+                )
                 for rel in drawing_rels_tree.findall("rel:Relationship", ns)
-                if rel.attrib.get("Type", "").endswith("/chart") and rel.attrib.get("Target")
+                if rel.attrib.get("Type", "").endswith("/chart") and rel.attrib.get("Id")
             }
 
             for chart_rel in drawing_tree.findall(
