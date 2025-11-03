@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FileUploader } from './FileUploader'
 import type { FileType } from './fileUploaderTypes'
 import { navigate } from '../navigation'
+import { useBackgroundTasks } from '../app/background/BackgroundTaskContext'
 import {
   SECURITY_COLUMNS,
   type SecurityColumn,
@@ -27,6 +28,7 @@ export function SecurityReportWorkflow({
   projectId,
   projectName,
 }: SecurityReportWorkflowProps) {
+  const { startTask } = useBackgroundTasks()
   const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [previewStatus, setPreviewStatus] = useState<AsyncStatus>('idle')
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -66,6 +68,7 @@ export function SecurityReportWorkflow({
 
     setPreviewStatus('loading')
     setPreviewError(null)
+    const taskHandle = startTask('security-report', '보안성 리포트 미리보기')
 
     try {
       const response = await fetch(
@@ -84,6 +87,7 @@ export function SecurityReportWorkflow({
             : '보안성 리포트 초안을 생성하는 중 오류가 발생했습니다.'
         setPreviewStatus('error')
         setPreviewError(detail)
+        taskHandle.fail(detail)
         return
       }
 
@@ -101,6 +105,7 @@ export function SecurityReportWorkflow({
         setPreviewStatus('error')
         setPreviewError('생성된 보안성 결함 데이터를 찾지 못했습니다.')
         setRows([])
+        taskHandle.fail('생성된 보안성 결함 데이터를 찾지 못했습니다.')
         return
       }
 
@@ -109,12 +114,14 @@ export function SecurityReportWorkflow({
       setPreviewError(null)
       setSaveStatus('idle')
       setSaveError(null)
+      taskHandle.complete({ type: 'data', payload: normalizedRows }, '미리보기 준비 완료')
     } catch (error) {
       console.error('Failed to preview security report', error)
       setPreviewStatus('error')
       setPreviewError('보안성 리포트 초안을 생성하는 중 예기치 않은 오류가 발생했습니다.')
+      taskHandle.fail('미리보기 중 오류가 발생했습니다.')
     }
-  }, [backendUrl, projectId, sourceFiles])
+  }, [backendUrl, projectId, sourceFiles, startTask])
 
   const handleCellChange = useCallback((rowId: string, key: SecurityRowKey, value: string) => {
     setRows((prev) =>
@@ -144,6 +151,7 @@ export function SecurityReportWorkflow({
 
     setSaveStatus('loading')
     setSaveError(null)
+    const taskHandle = startTask('security-report', '보안성 리포트 저장')
 
     try {
       const response = await fetch(
@@ -162,6 +170,7 @@ export function SecurityReportWorkflow({
             : '보안성 리포트를 저장하는 중 오류가 발생했습니다.'
         setSaveStatus('error')
         setSaveError(detail)
+        taskHandle.fail(detail)
         return
       }
 
@@ -172,6 +181,7 @@ export function SecurityReportWorkflow({
       }
 
       setSaveStatus('success')
+      taskHandle.complete({ type: 'data', payload }, '보안성 리포트 저장 완료')
 
       if (typeof window !== 'undefined') {
         const nextParams = new URLSearchParams(window.location.search)
@@ -210,8 +220,9 @@ export function SecurityReportWorkflow({
       console.error('Failed to save security report', error)
       setSaveStatus('error')
       setSaveError('보안성 리포트를 저장하는 중 예기치 않은 오류가 발생했습니다.')
+      taskHandle.fail('저장 중 오류가 발생했습니다.')
     }
-  }, [backendUrl, projectId, projectName, rows])
+  }, [backendUrl, projectId, projectName, rows, startTask])
 
   const openFullscreen = useCallback(() => {
     setIsFullscreenPreview(true)

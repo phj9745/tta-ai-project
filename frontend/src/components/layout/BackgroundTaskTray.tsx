@@ -1,0 +1,121 @@
+import { useMemo, useState } from 'react'
+
+import { navigate } from '../../navigation'
+import { useBackgroundTasks } from '../../app/background/BackgroundTaskContext'
+
+function formatStatus(status: 'running' | 'succeeded' | 'failed'): string {
+  switch (status) {
+    case 'running':
+      return '진행 중'
+    case 'succeeded':
+      return '완료'
+    case 'failed':
+      return '실패'
+    default:
+      return status
+  }
+}
+
+export function BackgroundTaskTray() {
+  const { tasks, dismissTask, getDownloadUrl } = useBackgroundTasks()
+  const [isOpen, setIsOpen] = useState(false)
+
+  const sortedTasks = useMemo(
+    () => [...tasks].sort((a, b) => b.createdAt - a.createdAt),
+    [tasks],
+  )
+
+  const runningCount = sortedTasks.filter((task) => task.status === 'running').length
+
+  if (sortedTasks.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="app-shell__tasks">
+      <button
+        type="button"
+        className={`app-shell__tasks-toggle${isOpen ? ' app-shell__tasks-toggle--open' : ''}`}
+        onClick={() => setIsOpen((prev) => !prev)}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+      >
+        작업 현황
+        {runningCount > 0 ? <span className="app-shell__tasks-count">{runningCount}</span> : null}
+      </button>
+      {isOpen && (
+        <div className="app-shell__tasks-panel" role="dialog" aria-label="백그라운드 작업 현황">
+          <ul className="app-shell__tasks-list">
+            {sortedTasks.map((task) => {
+              const statusLabel = formatStatus(task.status)
+              const isDownloadResult = task.result?.type === 'download'
+              const warningsCount = isDownloadResult ? task.result.warnings?.length ?? 0 : 0
+              const hasWarnings = isDownloadResult && warningsCount > 0
+
+              const handlePrimaryAction = () => {
+                if (task.result?.type === 'download') {
+                  const url = getDownloadUrl(task.id)
+                  if (!url) {
+                    return
+                  }
+                  const link = document.createElement('a')
+                  link.href = url
+                  link.download = task.result.filename
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                } else if (task.result?.type === 'navigate') {
+                  navigate(task.result.url)
+                }
+              }
+
+              const primaryLabel = (() => {
+                if (task.result?.type === 'download') {
+                  return '다운로드'
+                }
+                if (task.result?.type === 'navigate') {
+                  return task.result.label ?? '열기'
+                }
+                return null
+              })()
+
+              return (
+                <li key={task.id} className={`app-shell__task app-shell__task--${task.status}`}>
+                  <div className="app-shell__task-main">
+                    <div className="app-shell__task-title">{task.label}</div>
+                    <div className="app-shell__task-status">
+                      <span className={`app-shell__task-status-badge app-shell__task-status-badge--${task.status}`}>
+                        {statusLabel}
+                      </span>
+                      {task.message ? <span className="app-shell__task-message">{task.message}</span> : null}
+                      {task.status === 'failed' && task.errorMessage ? (
+                        <span className="app-shell__task-error">{task.errorMessage}</span>
+                      ) : null}
+                      {hasWarnings ? (
+                        <span className="app-shell__task-warning">주의 사항 {warningsCount}건</span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="app-shell__task-actions">
+                    {primaryLabel && task.status === 'succeeded' ? (
+                      <button type="button" className="app-shell__task-button" onClick={handlePrimaryAction}>
+                        {primaryLabel}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="app-shell__task-button app-shell__task-button--dismiss"
+                      onClick={() => dismissTask(task.id)}
+                    >
+                      닫기
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}

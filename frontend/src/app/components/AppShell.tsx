@@ -1,5 +1,7 @@
 import type { PropsWithChildren } from 'react'
 
+import { BackgroundTaskTray } from '../../components/layout/BackgroundTaskTray'
+
 interface AppShellProps {
   isAuthenticated: boolean
   currentPath: string
@@ -30,6 +32,7 @@ export function AppShell({
     <div className="app-shell">
       <header className="app-shell__header">
         <div className="app-shell__brand">TTA AI 프로젝트 허브</div>
+        <BackgroundTaskTray />
         {isAuthenticated && (
           <nav aria-label="계정 메뉴" className="app-shell__nav">
             <button type="button" className="app-shell__drive" onClick={onOpenDrive}>
