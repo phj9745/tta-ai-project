@@ -21,6 +21,7 @@ from ..dependencies import (
     get_configuration_image_service,
     get_drive_service,
     get_security_report_service,
+    get_performance_report_service,
 )
 from ..services.ai_generation import AIGenerationService
 from ..services.configuration_images import ConfigurationImageService
@@ -29,11 +30,17 @@ from ..services.google_drive import defect_reports as drive_defect_reports
 from ..services.google_drive import feature_lists as drive_feature_lists
 from ..services.google_drive.naming import looks_like_header_row
 from ..services.security_report import SecurityReportService
+from ..services.performance_report.service import (
+    PerformanceReportService,
+    PerformanceOSResolutionRequired,
+    PerformanceFileMetadata,
+)
 from ..services.excel_templates import defect_report, testcases
 from ..services.excel_templates import feature_list as feature_list_templates
 from ..services.excel_templates.utils import AI_CSV_DELIMITER
 from ..services.excel_templates.models import (
     DEFECT_REPORT_EXPECTED_HEADERS,
+    SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
     DefectReportImage,
 )
@@ -303,6 +310,16 @@ def _build_inline_header(filename: str, *, default_filename: str = "capture.png"
         ascii_fallback = default_filename
     quoted = quote(filename)
     return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{quoted}'
+
+
+def _safe_header_value(value: Optional[str], *, fallback: str = "") -> str:
+    if not value:
+        return fallback
+    try:
+        value.encode("latin-1")
+        return value
+    except UnicodeEncodeError:
+        return quote(value)
 
 
 def _coerce_positive_int(value: Any) -> Optional[int]:
@@ -605,6 +622,32 @@ async def formalize_defect_report(
     }
 
 
+@router.post("/drive/projects/{project_id}/security-report/preview")
+async def preview_security_report(
+    project_id: str,
+    invicti_report: UploadFile = File(..., alias="invictiReport", description="Invicti HTML 보고서"),
+    google_id: Optional[str] = Query(
+        None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"
+    ),
+    security_report_service: SecurityReportService = Depends(get_security_report_service),
+) -> Dict[str, Any]:
+    filename = (invicti_report.filename or "invicti-report").lower()
+    if not filename.endswith(".html") and not filename.endswith(".htm"):
+        await invicti_report.close()
+        raise HTTPException(status_code=422, detail="Invicti HTML 결과 파일만 업로드할 수 있습니다.")
+
+    rows = await security_report_service.generate_preview_rows(
+        invicti_upload=invicti_report,
+        project_id=project_id,
+        google_id=google_id,
+    )
+
+    return {
+        "headers": list(SECURITY_REPORT_EXPECTED_HEADERS),
+        "rows": rows,
+    }
+
+
 @router.post("/drive/projects/{project_id}/generate")
 async def generate_project_asset(
     project_id: str,
@@ -627,6 +670,16 @@ async def generate_project_asset(
         alias="attachment_names_json",
         description="결함 첨부 파일명(JSON)",
     ),
+    performance_os_overrides: Optional[str] = Form(
+        None,
+        alias="performance_os_overrides",
+        description="성능 리포트 OS 매핑(JSON 객체)",
+    ),
+    performance_metadata_payload: Optional[str] = Form(
+        None,
+        alias="performance_metadata",
+        description="성능 리포트 메모리/장비 정보(JSON 배열)",
+    ),
     google_id: Optional[str] = Query(None, description="Drive 작업에 사용할 Google 사용자 식별자 (sub)"),
     ai_generation_service: AIGenerationService = Depends(get_ai_generation_service),
     configuration_image_service: ConfigurationImageService = Depends(
@@ -634,6 +687,7 @@ async def generate_project_asset(
     ),
     drive_service: GoogleDriveService = Depends(get_drive_service),
     security_report_service: SecurityReportService = Depends(get_security_report_service),
+    performance_report_service: PerformanceReportService = Depends(get_performance_report_service),
 ) -> Response:
     uploads = files or []
     metadata_entries: List[Dict[str, Any]] = []
@@ -653,6 +707,157 @@ async def generate_project_asset(
 
     if metadata_entries and len(metadata_entries) != len(uploads):
         raise HTTPException(status_code=422, detail="파일 메타데이터와 업로드된 파일 수가 일치하지 않습니다.")
+
+    if menu_id == "performance-report":
+        if metadata_entries:
+            raise HTTPException(status_code=422, detail="성능 리포트 생성에는 추가 파일 정보를 입력할 수 없습니다.")
+        if not uploads:
+            raise HTTPException(status_code=422, detail="성능 리포트 생성을 위해 rawdata 파일을 업로드해 주세요.")
+
+        try:
+            overrides_payload = json.loads(performance_os_overrides) if performance_os_overrides else {}
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.") from exc
+
+        if overrides_payload and not isinstance(overrides_payload, Mapping):
+            raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.")
+
+        overrides: Dict[str, str] = {}
+        for key, value in overrides_payload.items() if isinstance(overrides_payload, Mapping) else []:
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise HTTPException(status_code=422, detail="OS 선택 정보 형식이 올바르지 않습니다.")
+            overrides[key] = value
+
+        try:
+            metadata_payload = json.loads(performance_metadata_payload) if performance_metadata_payload else None
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="메모리·장비 정보 형식이 올바르지 않습니다.") from exc
+
+        if not isinstance(metadata_payload, list) or len(metadata_payload) != len(uploads):
+            raise HTTPException(status_code=422, detail="메모리(GB)와 장비명을 모두 입력해 주세요.")
+
+        metadata_entries: List[PerformanceFileMetadata] = []
+        for index, (entry, upload) in enumerate(zip(metadata_payload, uploads)):
+            if not isinstance(entry, Mapping):
+                raise HTTPException(status_code=422, detail="메모리·장비 정보 형식이 올바르지 않습니다.")
+
+            raw_memory = entry.get("memoryGb")
+            device_name = entry.get("deviceName")
+            if not isinstance(device_name, str) or not device_name.strip():
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 장비명을 입력해 주세요.")
+
+            try:
+                memory_value = float(raw_memory)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 메모리(GB)를 숫자로 입력해 주세요.") from None
+
+            if memory_value <= 0:
+                raise HTTPException(status_code=422, detail=f"{(upload.filename or f'파일 {index + 1}')}의 메모리(GB)는 0보다 커야 합니다.")
+
+            metadata_entries.append(
+                PerformanceFileMetadata(memory_gb=memory_value, device_name=device_name.strip())
+            )
+
+        try:
+            result = await performance_report_service.generate_workbook(
+                project_id=project_id,
+                google_id=google_id,
+                uploads=uploads,
+                overrides=overrides,
+                metadata=metadata_entries,
+            )
+        except PerformanceOSResolutionRequired as exc:
+            unresolved_payload = [
+                {"name": item.name, "index": item.index} for item in exc.files
+            ]
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "performance.os_required",
+                    "files": unresolved_payload,
+                },
+            ) from exc
+
+        update_info_mapping = result.drive_update if isinstance(result.drive_update, Mapping) else None
+        update_info = dict(update_info_mapping) if update_info_mapping is not None else {}
+
+        file_id = update_info.get("fileId")
+        if not file_id:
+            raise HTTPException(status_code=500, detail="성능시험 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
+
+        headers = {
+            "Content-Disposition": _build_attachment_header(result.filename, default_filename="performance-report.xlsx"),
+            "Cache-Control": "no-store",
+        }
+        if result.warnings:
+            headers["X-Performance-Warnings"] = json.dumps(result.warnings, ensure_ascii=True)
+
+        response = StreamingResponse(
+            io.BytesIO(result.content),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
+        response.headers["X-Drive-File-Id"] = _safe_header_value(file_id)
+        if isinstance(update_info.get("modifiedTime"), str):
+            response.headers["X-Drive-Modified-Time"] = _safe_header_value(update_info["modifiedTime"])
+        if isinstance(update_info.get("fileName"), str):
+            response.headers["X-Drive-File-Name"] = _safe_header_value(update_info["fileName"])
+        return response
+
+    if menu_id == "security-report" and defect_rows_json is not None:
+        if uploads:
+            await _close_uploads(uploads)
+            raise HTTPException(status_code=422, detail="보안성 리포트 저장에는 추가 파일을 업로드할 수 없습니다.")
+        if metadata_entries:
+            raise HTTPException(status_code=422, detail="보안성 리포트 저장에는 추가 파일 정보를 입력할 수 없습니다.")
+
+        try:
+            parsed_rows = json.loads(defect_rows_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail="보안성 리포트 행 데이터 형식이 올바르지 않습니다.") from exc
+
+        if not isinstance(parsed_rows, list):
+            raise HTTPException(status_code=422, detail="보안성 리포트 행 데이터 형식이 올바르지 않습니다.")
+
+        normalized_rows: List[Dict[str, str]] = []
+        for index, entry in enumerate(parsed_rows, start=1):
+            if not isinstance(entry, Mapping):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"{index}번째 보안성 리포트 행 데이터 형식이 올바르지 않습니다.",
+                )
+            normalized_entry: Dict[str, str] = {}
+            for header in SECURITY_REPORT_EXPECTED_HEADERS:
+                value = entry.get(header)
+                if value is None:
+                    normalized_entry[header] = ""
+                else:
+                    normalized_entry[header] = str(value)
+            normalized_rows.append(normalized_entry)
+
+        if not normalized_rows:
+            raise HTTPException(status_code=422, detail="최소 한 개의 보안성 결함 행이 필요합니다.")
+
+        csv_text = security_report_service.build_csv_text_from_rows(normalized_rows)
+
+        update_info = await drive_service.apply_csv_to_spreadsheet(
+            project_id=project_id,
+            menu_id=menu_id,
+            csv_text=csv_text,
+            google_id=google_id,
+        )
+
+        payload: Dict[str, Any] = {
+            "status": "updated",
+            "projectId": project_id,
+            "fileId": update_info.get("fileId") if isinstance(update_info, dict) else None,
+            "fileName": update_info.get("fileName") if isinstance(update_info, dict) else None,
+            "modifiedTime": update_info.get("modifiedTime") if isinstance(update_info, dict) else None,
+            "headers": list(SECURITY_REPORT_EXPECTED_HEADERS),
+            "rows": normalized_rows,
+        }
+
+        return JSONResponse(payload)
 
     if menu_id == "configuration-images":
         if len(uploads) != 1:
@@ -724,6 +929,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=None,
             attachment_notes=attachment_notes if attachment_notes else None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")
@@ -743,34 +949,14 @@ async def generate_project_asset(
         return JSONResponse(payload)
 
     if menu_id == "security-report":
+        if uploads:
+            await _close_uploads(uploads)
         if metadata_entries:
             raise HTTPException(status_code=422, detail="보안성 리포트에는 추가 파일 정보를 입력할 수 없습니다.")
-        if len(uploads) != 1:
-            raise HTTPException(status_code=422, detail="Invicti HTML 결과 파일을 1개 업로드해 주세요.")
-        upload = uploads[0]
-        filename = (upload.filename or "invicti-report").lower()
-        if not filename.endswith(".html") and not filename.endswith(".htm"):
-            raise HTTPException(status_code=422, detail="Invicti HTML 결과 파일만 업로드할 수 있습니다.")
-
-        result = await security_report_service.generate_csv_report(
-            invicti_upload=upload,
-            project_id=project_id,
-            google_id=google_id,
+        raise HTTPException(
+            status_code=422,
+            detail="보안성 리포트 행 데이터를 먼저 생성해 주세요.",
         )
-
-        await drive_service.apply_csv_to_spreadsheet(
-            project_id=project_id,
-            menu_id=menu_id,
-            csv_text=result.csv_text,
-            google_id=google_id,
-        )
-
-        headers = {
-            "Content-Disposition": _build_attachment_header(result.filename),
-            "Cache-Control": "no-store",
-        }
-
-        return StreamingResponse(io.BytesIO(result.content), media_type="text/csv", headers=headers)
 
     required_docs = _REQUIRED_MENU_DOCUMENTS.get(menu_id, [])
     if required_docs:
@@ -890,6 +1076,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=image_map or None,
             attachment_notes=attachment_notes or None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")
@@ -1035,6 +1222,7 @@ async def generate_project_asset(
             google_id=google_id,
             images=image_map if image_map else None,
             attachment_notes=attachment_notes if attachment_notes else None,
+            append=True,
         )
 
         file_id = update_info.get("fileId")

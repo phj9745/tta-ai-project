@@ -63,17 +63,18 @@ def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
         )
 
     for record in records:
-        order_value = str(record.get("순번", "")).strip()
-        if not order_value:
+        raw_order = str(record.get("순번", "")).strip()
+        try:
+            numeric_order = int(raw_order) if raw_order else None
+        except ValueError:
+            numeric_order = None
+
+        if numeric_order is None or numeric_order < next_order:
             order_value = str(next_order)
             next_order += 1
         else:
-            try:
-                numeric_order = int(order_value)
-            except ValueError:
-                numeric_order = None
-            if numeric_order is not None and numeric_order >= next_order:
-                next_order = numeric_order + 1
+            order_value = str(numeric_order)
+            next_order = numeric_order + 1
 
         environment = record.get("시험환경 OS", "").strip() or "시험환경 모든 OS"
 

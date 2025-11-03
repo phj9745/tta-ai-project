@@ -3,6 +3,7 @@ import './TestcaseWorkflow.css'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { navigate } from '../../navigation'
+import { useBackgroundTasks } from '../../app/background/BackgroundTaskContext'
 import { FileUploader } from '../FileUploader'
 import type { FileType } from '../fileUploaderTypes'
 
@@ -48,7 +49,6 @@ interface TestcaseWorkflowProps {
 type Step = 'feature' | 'scenarios'
 
 const FEATURE_FILE_TYPES: FileType[] = ['xlsx', 'xls', 'csv']
-const ATTACHMENT_FILE_TYPES: FileType[] = ['jpg', 'png']
 const SCENARIO_COUNT_OPTIONS = [3, 4, 5] as const
 
 interface FinalizeResponseRow {
@@ -72,6 +72,7 @@ interface FinalizeResponsePayload {
 }
 
 export function TestcaseWorkflow({ projectId, backendUrl, projectName }: TestcaseWorkflowProps) {
+  const { startTask } = useBackgroundTasks()
   const [step, setStep] = useState<Step>('feature')
   const [projectOverview, setProjectOverview] = useState<string>('')
   const [featureStatus, setFeatureStatus] = useState<'idle' | 'loading' | 'error'>('idle')
@@ -556,6 +557,11 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
   const handleFinalize = useCallback(async () => {
     setFinalStatus('loading')
     setFinalError(null)
+    const taskHandle = startTask('testcase-generation', '테스트케이스 생성')
+    taskHandle.onCancel(() => {
+      setFinalStatus('idle')
+      setFinalError(null)
+    })
 
     const payload = {
       projectOverview,
@@ -581,16 +587,28 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
+          signal: taskHandle.signal,
         },
       )
 
+      if (taskHandle.signal.aborted) {
+        return
+      }
+
       if (!response.ok) {
         const body = await response.json().catch(() => null)
+        if (taskHandle.signal.aborted) {
+          return
+        }
         const detail = typeof body?.detail === 'string' ? body.detail : '테스트케이스를 완성하지 못했습니다.'
         throw new Error(detail)
       }
 
       const body = (await response.json()) as FinalizeResponsePayload
+
+      if (taskHandle.signal.aborted) {
+        return
+      }
 
       const rows = Array.isArray(body.rows) ? body.rows : []
       if (rows.length === 0) {
@@ -619,15 +637,23 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       }
 
       const query = nextParams.toString()
-      navigate(
-        `/projects/${encodeURIComponent(projectId)}/testcases/edit${query ? `?${query}` : ''}`,
-      )
+      const targetUrl = `/projects/${encodeURIComponent(projectId)}/testcases/edit${
+        query ? `?${query}` : ''
+      }`
+      if (!taskHandle.signal.aborted) {
+        taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '테스트케이스 생성 완료')
+        navigate(targetUrl)
+      }
     } catch (error) {
+      if (taskHandle.signal.aborted) {
+        return
+      }
       const message = error instanceof Error ? error.message : '테스트케이스를 완성하지 못했습니다.'
       setFinalStatus('error')
       setFinalError(message)
+      taskHandle.fail(message)
     }
-  }, [backendUrl, groups, projectId, projectOverview, projectName])
+  }, [backendUrl, groups, projectId, projectOverview, projectName, startTask])
 
   return (
     <div className="testcase-workflow">

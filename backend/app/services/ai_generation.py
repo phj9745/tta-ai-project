@@ -2031,6 +2031,9 @@ class AIGenerationService:
 
             response_text = self._extract_response_text(response) or ""
 
+            ## AI 모델이 생성한 원문 출력해서 확인(디버깅용)
+            print("\n" + "=" * 80 + "\n[AI RAW OUTPUT]\n" + (response_text or "<empty>") + "\n" + "=" * 80 + "\n")
+
             if self._request_log_service is not None:
                 try:
                     self._request_log_service.record_request(

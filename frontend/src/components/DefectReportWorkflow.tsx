@@ -11,11 +11,7 @@ import {
   type DefectWorkItem,
   type FinalizedDefectRow,
 } from './defect-report-workflow/types'
-import {
-  useDefectFinalize,
-  useFormalizeDefects,
-  type DefectFinalizeRow,
-} from './defect-report-workflow/hooks'
+import { useDefectFinalize, useFormalizeDefects } from './defect-report-workflow/hooks'
 import {
   buildAttachmentFileName,
   buildRowsFromJsonTable,

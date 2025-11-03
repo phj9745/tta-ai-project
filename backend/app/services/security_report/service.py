@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Protocol
+from typing import Dict, Mapping, Protocol, Sequence
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -80,6 +80,23 @@ class SecurityReportService:
         filename = f"{project_number} 보안성 결함리포트 v1.0.csv"
 
         return GeneratedCsv(filename=filename, content=encoded, csv_text=csv_text)
+
+    async def generate_preview_rows(
+        self,
+        *,
+        invicti_upload: UploadFile,
+        project_id: str,
+        google_id: str | None,
+    ) -> list[dict[str, str]]:
+        dataframe = await self.process_invicti_report(
+            invicti_upload=invicti_upload,
+            project_id=project_id,
+            google_id=google_id,
+        )
+        return exporter.build_preview_records(dataframe)
+
+    def build_csv_text_from_rows(self, rows: Sequence[Mapping[str, object]]) -> str:
+        return exporter.build_csv_from_records(rows)
 
     async def process_invicti_report(
         self,
