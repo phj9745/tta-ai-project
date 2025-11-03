@@ -5,7 +5,7 @@ import re
 import zipfile
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from fastapi import HTTPException
 
@@ -247,6 +247,7 @@ def _adjust_chart_and_formula_ranges(workbook_bytes: bytes, sheet_stats: Sequenc
         entries = {info.filename: source.read(info.filename) for info in source.infolist()}
 
     sheet_map = _build_sheet_path_map(entries)
+    sheet_chart_map = _build_sheet_chart_map(entries, sheet_map)
 
     for stats in sheet_stats:
         sheet_path = sheet_map.get(stats.sheet_name)
@@ -258,14 +259,17 @@ def _adjust_chart_and_formula_ranges(workbook_bytes: bytes, sheet_stats: Sequenc
             entries[sheet_path], columns, stats.end_row, stats.sheet_name, base_name
         )
 
-    chart_paths = [name for name in entries if name.startswith("xl/charts/")]
-    for path in chart_paths:
-        content = entries[path]
-        for stats in sheet_stats:
-            columns = WINDOWS_RANGE_COLUMNS if stats.os_type == PerformanceOSType.WINDOWS else LINUX_RANGE_COLUMNS
-            base_name = WINDOWS_BASE_SHEET if stats.os_type == PerformanceOSType.WINDOWS else LINUX_BASE_SHEET
-            content = _rewrite_chart_ranges(content, stats.sheet_name, base_name, columns, stats.end_row)
-        entries[path] = content
+    for stats in sheet_stats:
+        chart_paths = sheet_chart_map.get(stats.sheet_name, set())
+        if not chart_paths:
+            continue
+        columns = WINDOWS_RANGE_COLUMNS if stats.os_type == PerformanceOSType.WINDOWS else LINUX_RANGE_COLUMNS
+        base_name = WINDOWS_BASE_SHEET if stats.os_type == PerformanceOSType.WINDOWS else LINUX_BASE_SHEET
+        for path in chart_paths:
+            content = entries.get(path)
+            if content is None:
+                continue
+            entries[path] = _rewrite_chart_ranges(content, stats.sheet_name, base_name, columns, stats.end_row)
 
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as target:
@@ -302,6 +306,75 @@ def _build_sheet_path_map(entries: Mapping[str, bytes]) -> Dict[str, str]:
             continue
         sheet_map[name] = f"xl/{target}"
     return sheet_map
+
+
+def _build_sheet_chart_map(entries: Mapping[str, bytes], sheet_map: Mapping[str, str]) -> Mapping[str, Set[str]]:
+    import xml.etree.ElementTree as ET
+    import posixpath
+
+    ns = {
+        "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
+        "drawing": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+    }
+
+    chart_map: Dict[str, Set[str]] = {}
+
+    for sheet_name, sheet_path in sheet_map.items():
+        sheet_dir = posixpath.dirname(sheet_path)
+        rels_name = posixpath.join(sheet_dir, "_rels", f"{posixpath.basename(sheet_path)}.rels")
+        rels_content = entries.get(rels_name)
+        if not rels_content:
+            continue
+
+        rels_tree = ET.fromstring(rels_content)
+        drawing_targets = {}
+        for rel in rels_tree.findall("rel:Relationship", ns):
+            rel_type = rel.attrib.get("Type", "")
+            if rel_type.endswith("/drawing"):
+                target = rel.attrib.get("Target")
+                rel_id = rel.attrib.get("Id")
+                if not target or not rel_id:
+                    continue
+                drawing_targets[rel_id] = posixpath.normpath(posixpath.join(sheet_dir, target))
+
+        if not drawing_targets:
+            continue
+
+        sheet_charts: Set[str] = set()
+
+        for rel_id, drawing_path in drawing_targets.items():
+            drawing_content = entries.get(drawing_path)
+            if not drawing_content:
+                continue
+
+            drawing_tree = ET.fromstring(drawing_content)
+            drawing_rels_path = posixpath.join(
+                posixpath.dirname(drawing_path), "_rels", f"{posixpath.basename(drawing_path)}.rels"
+            )
+            drawing_rels = entries.get(drawing_rels_path)
+            if not drawing_rels:
+                continue
+            drawing_rels_tree = ET.fromstring(drawing_rels)
+            chart_targets = {
+                rel.attrib.get("Id"): posixpath.normpath(posixpath.join(posixpath.dirname(drawing_path), rel.attrib.get("Target", "")))
+                for rel in drawing_rels_tree.findall("rel:Relationship", ns)
+                if rel.attrib.get("Type", "").endswith("/chart") and rel.attrib.get("Target")
+            }
+
+            for chart_rel in drawing_tree.findall(".//drawing:graphicFrame/drawing:graphic/drawing:chart", ns):
+                chart_id = chart_rel.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
+                if not chart_id:
+                    continue
+                chart_path = chart_targets.get(chart_id)
+                if not chart_path:
+                    continue
+                sheet_charts.add(chart_path)
+
+        if sheet_charts:
+            chart_map[sheet_name] = sheet_charts
+
+    return chart_map
 
 
 def _rewrite_sheet_ranges(
