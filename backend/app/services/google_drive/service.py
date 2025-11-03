@@ -146,22 +146,40 @@ class GoogleDriveService:
 
         active_tokens = await self._get_active_tokens(google_id)
 
-        folder, active_tokens = await self._client.find_child_folder_by_name(
-            active_tokens,
-            parent_id=project_id,
-            name=rule["folder_name"],
-            matcher=drive_name_variants,
-        )
-        if folder is None or not folder.get("id"):
-            raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['folder_name']}' 폴더를 찾을 수 없습니다.")
+        # --- NEW: folder_path(다단계) 우선, 없으면 folder_name(단일) 사용
+        current_parent = project_id
+        if isinstance(rule.get("folder_path"), (list, tuple)):
+            for segment in rule["folder_path"]:
+                folder, active_tokens = await self._client.find_child_folder_by_name(
+                    active_tokens,
+                    parent_id=current_parent,
+                    name=str(segment),
+                    matcher=drive_name_variants,
+                )
+                if folder is None or not folder.get("id"):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"프로젝트에 '{'/'.join(map(str, rule['folder_path']))}' 폴더를 찾을 수 없습니다.",
+                    )
+                current_parent = str(folder["id"])
+            folder_id = current_parent
+        else:
+            folder, active_tokens = await self._client.find_child_folder_by_name(
+                active_tokens,
+                parent_id=project_id,
+                name=str(rule["folder_name"]),
+                matcher=drive_name_variants,
+            )
+            if folder is None or not folder.get("id"):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"프로젝트에 '{rule['folder_name']}' 폴더를 찾을 수 없습니다.",
+                )
+            folder_id = str(folder["id"])
 
-        folder_id = str(folder["id"])
         file_entry: Optional[Dict[str, Any]] = None
         if file_id:
-            file_entry, active_tokens = await self._client.get_file_metadata(
-                active_tokens,
-                file_id=file_id,
-            )
+            file_entry, active_tokens = await self._client.get_file_metadata(active_tokens, file_id=file_id)
             if file_entry is None or not file_entry.get("id"):
                 raise HTTPException(status_code=404, detail=f"프로젝트에 '{rule['file_suffix']}' 파일을 찾을 수 없습니다.")
 
@@ -186,8 +204,8 @@ class GoogleDriveService:
         else:
             file_entry, active_tokens = await self._client.find_file_by_suffix(
                 active_tokens,
-                parent_id=folder_id,
-                suffix=rule["file_suffix"],
+                parent_id=folder_id,  # ← 중첩 폴더의 id로 검색
+                suffix=str(rule["file_suffix"]),
                 matcher=drive_suffix_matches,
                 mime_type=XLSX_MIME_TYPE,
             )
@@ -198,11 +216,7 @@ class GoogleDriveService:
         file_name = str(file_entry.get("name", rule["file_suffix"]))
         mime_type = file_entry.get("mimeType")
         normalized_mime = mime_type if isinstance(mime_type, str) else None
-        modified_time = (
-            str(file_entry.get("modifiedTime"))
-            if isinstance(file_entry.get("modifiedTime"), str)
-            else None
-        )
+        modified_time = str(file_entry.get("modifiedTime")) if isinstance(file_entry.get("modifiedTime"), str) else None
 
         content: Optional[bytes] = None
         if include_content:
@@ -863,6 +877,56 @@ class GoogleDriveService:
 
         target_name = file_name or resolved.file_name
 
+        # --- 방어선 1: 폴더 ID 방지
+        if resolved.mime_type == DRIVE_FOLDER_MIME_TYPE:
+            raise HTTPException(
+                status_code=400,
+                detail="폴더 ID가 전달되었습니다. 성능시험 XLSX(또는 시트) 파일의 ID를 사용해 주세요.",
+            )
+
+        GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet"
+
+        # 원본 파일의 부모 폴더를 정확히 얻어서 동일 위치에 치환/업데이트
+        meta, _ = await self._client.get_file_metadata(resolved.tokens, file_id=resolved.file_id)
+        parent_ids: List[str] = []
+        parents = meta.get("parents") if isinstance(meta, dict) else None
+        if isinstance(parents, Sequence):
+            for p in parents:
+                if isinstance(p, bytes):
+                    parent_ids.append(p.decode("utf-8", errors="ignore"))
+                elif isinstance(p, str):
+                    parent_ids.append(p)
+        # 부모가 비어있으면 fallback으로 메뉴 폴더 사용
+        parent_id_for_upload = parent_ids[0] if parent_ids else resolved.folder_id
+
+        # --- Google Sheet(네이티브 스프레드시트) → 바이너리 XLSX로 "치환 업로드"
+        if resolved.mime_type == GOOGLE_SHEET_MIME:
+            new_info, _ = await self._client.upload_file_to_folder(
+                resolved.tokens,
+                file_name=target_name,
+                parent_id=parent_id_for_upload,
+                content=content,
+                content_type=XLSX_MIME_TYPE,
+            )
+            new_file_id = str(new_info.get("id"))
+
+            # 원래 Google Sheet는 휴지통 이동
+            try:
+                await self._client.delete_file(resolved.tokens, file_id=resolved.file_id)
+            except Exception:
+                # 삭제 실패해도 치명적이진 않으니 로그만 남기고 진행
+                logger.warning(
+                    "Failed to delete original Google Sheet after replacement",
+                    extra={"file_id": resolved.file_id, "project_id": project_id},
+                )
+
+            return {
+                "fileId": new_file_id,
+                "fileName": target_name,
+                "modifiedTime": new_info.get("modifiedTime") if isinstance(new_info, dict) else None,
+            }
+
+        # --- 바이너리 XLSX면: 제자리 덮어쓰기
         update_info, _ = await self._client.update_file_content(
             resolved.tokens,
             file_id=resolved.file_id,
@@ -870,7 +934,6 @@ class GoogleDriveService:
             content=content,
             content_type=XLSX_MIME_TYPE,
         )
-
         return {
             "fileId": resolved.file_id,
             "fileName": target_name,
