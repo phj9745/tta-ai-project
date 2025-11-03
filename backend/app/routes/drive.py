@@ -778,13 +778,10 @@ async def generate_project_asset(
                 },
             ) from exc
 
-        update_info = await drive_service.update_performance_workbook(
-            project_id=project_id,
-            google_id=google_id,
-            content=result.content,
-        )
+        update_info_mapping = result.drive_update if isinstance(result.drive_update, Mapping) else None
+        update_info = dict(update_info_mapping) if update_info_mapping is not None else {}
 
-        file_id = update_info.get("fileId") if isinstance(update_info, dict) else None
+        file_id = update_info.get("fileId")
         if not file_id:
             raise HTTPException(status_code=500, detail="성능시험 파일을 업데이트하지 못했습니다. 다시 시도해 주세요.")
 

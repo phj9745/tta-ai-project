@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, UploadFile
 
@@ -24,6 +24,7 @@ class PerformanceWorkbookResult:
     content: bytes
     datasets_by_os: Mapping[PerformanceOSType, Sequence[PerformanceDataset]]
     warnings: Sequence[str]
+    drive_update: Optional[Mapping[str, Any]] = None
 
 
 @dataclass
@@ -122,6 +123,12 @@ class PerformanceReportService:
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+        drive_update_info = await self._drive_service.update_performance_workbook(
+            project_id=project_id,
+            google_id=google_id,
+            content=workbook_bytes,
+        )
+
         project_number = await self._drive_service.get_project_exam_number(project_id=project_id, google_id=google_id)
         filename = f"{project_number} 성능시험 v1.0.xlsx"
 
@@ -130,6 +137,7 @@ class PerformanceReportService:
             content=workbook_bytes,
             datasets_by_os=datasets_by_os,
             warnings=warnings,
+            drive_update=drive_update_info,
         )
 
     async def _collect_uploads(self, uploads: Sequence[UploadFile]) -> List[Tuple[UploadFile, bytes]]:
