@@ -1324,6 +1324,7 @@
   align-items: stretch;
   background: #f8fafc;
   padding: 2.5rem;
+  min-width: 0;
 }
 
 .project-management-content--preview {
@@ -1340,6 +1341,9 @@
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
   padding: 2.25rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .project-management-content__inner--preview {
@@ -1606,6 +1610,93 @@
   background: rgba(37, 99, 235, 0.08);
 }
 
+.project-management-content__warnings {
+  width: 100%;
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  border: 1px dashed rgba(37, 99, 235, 0.35);
+}
+
+.project-management-content__warnings ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.project-management-performance {
+  margin-top: 1.5rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(248, 250, 252, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.project-management-performance__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.project-management-performance__helper {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #475569;
+}
+
+.project-management-performance__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.project-management-performance__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(2, minmax(0, 230px));
+  gap: 0.75rem 1.25rem;
+  align-items: center;
+}
+
+.project-management-performance__file {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #1f2937;
+  word-break: break-all;
+}
+
+.project-management-performance__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.project-management-performance__field input {
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  font-size: 0.95rem;
+}
+
+.project-management-performance__field input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22);
+}
+
+@media (max-width: 900px) {
+  .project-management-performance__item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .project-management-content__download {
   text-decoration: none;
 }
@@ -1720,6 +1811,7 @@
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+  min-width: 0;
 }
 
 .defect-workflow__section-heading {
@@ -1824,6 +1916,131 @@
 
 .defect-workflow__status--success {
   color: #0f9d58;
+}
+
+.security-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.68);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  z-index: 1200;
+}
+
+.security-preview-overlay__content {
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.32);
+  width: min(1400px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.security-preview-overlay__header {
+  padding: 24px 28px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.1), transparent);
+}
+
+.security-preview-overlay__eyebrow {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #2563eb;
+  margin-bottom: 4px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.security-preview-overlay__title {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.security-preview-overlay__close {
+  border: none;
+  background: transparent;
+  color: #475569;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.security-preview-overlay__close:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: #0f172a;
+}
+
+.security-preview-overlay__body {
+  padding: 0 28px;
+  flex: 1;
+}
+
+.security-preview-overlay__table-wrapper {
+  margin: 0;
+  padding: 0 0 28px;
+  overflow: auto;
+  max-height: calc(100vh - 240px);
+}
+
+.security-preview-overlay__footer {
+  padding: 18px 28px 24px;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.security-preview-overlay__primary,
+.security-preview-overlay__secondary {
+  border-radius: 999px;
+  padding: 11px 24px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+  border: none;
+}
+
+.security-preview-overlay__primary {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  color: #ffffff;
+  box-shadow: 0 14px 26px rgba(37, 99, 235, 0.32);
+}
+
+.security-preview-overlay__primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.security-preview-overlay__primary:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 20px 36px rgba(37, 99, 235, 0.34);
+}
+
+.security-preview-overlay__secondary {
+  background: transparent;
+  color: #1f2937;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+}
+
+.security-preview-overlay__secondary:hover {
+  background: rgba(148, 163, 184, 0.14);
 }
 
 .defect-workflow__list {
@@ -2153,12 +2370,17 @@
   gap: 24px;
   align-items: flex-start;
   width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .defect-workflow__table-wrapper {
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
   max-height: 460px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: auto;
   border: 1px solid #e4e7ef;
   border-radius: 12px;
   background: #ffffff;
@@ -2166,8 +2388,8 @@
 }
 
 .defect-workflow__table {
-  width: 100%;
-  min-width: 640px;
+  width: max(1200px, 100%);
+  min-width: 900px;
   border-collapse: collapse;
 }
 
@@ -2179,6 +2401,7 @@
   font-size: 13px;
   color: #1f2937;
   vertical-align: top;
+  word-break: break-word;
 }
 
 .defect-workflow__loading {

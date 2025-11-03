@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from typing import Sequence
+import csv
+import io
+from typing import Mapping, Sequence
 
 import pandas as pd
 
 from .models import StandardizedFinding
+from ..excel_templates.models import SECURITY_REPORT_EXPECTED_HEADERS
+from ..excel_templates.utils import AI_CSV_DELIMITER
 
 
 def build_dataframe(findings: Sequence[StandardizedFinding]) -> pd.DataFrame:
@@ -109,3 +113,34 @@ def build_csv_view(dataframe: pd.DataFrame) -> pd.DataFrame:
         "매핑 유형",
     ]
     return output.reindex(columns=columns)
+
+
+def build_preview_records(dataframe: pd.DataFrame) -> list[dict[str, str]]:
+    csv_view = build_csv_view(dataframe)
+    records: list[dict[str, str]] = []
+    for _, row in csv_view.iterrows():
+        record: dict[str, str] = {}
+        for column in csv_view.columns:
+            value = row[column]
+            if pd.isna(value):
+                record[column] = ""
+            else:
+                record[column] = str(value)
+        records.append(record)
+    return records
+
+
+def build_csv_from_records(records: Sequence[Mapping[str, object]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=AI_CSV_DELIMITER)
+    writer.writerow(SECURITY_REPORT_EXPECTED_HEADERS)
+
+    for record in records:
+        writer.writerow(
+            [
+                "" if record.get(header) is None else str(record.get(header, ""))
+                for header in SECURITY_REPORT_EXPECTED_HEADERS
+            ],
+        )
+
+    return buffer.getvalue()

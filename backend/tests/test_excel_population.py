@@ -202,7 +202,7 @@ def test_populate_security_report_appends_existing_rows() -> None:
             "시험환경 모든 OS",
             "기존 결함 요약",
             "M",
-            "R",
+            "I",
             "보안성",
             "기존 결함 설명",
             "",
@@ -273,7 +273,7 @@ def test_populate_defect_report_accepts_spaced_headers() -> None:
             "시험환경 모든 OS",
             "요약 텍스트",
             "M",
-            "R",
+            "I",
             "보안성",
             "상세 설명",
             "",
@@ -290,7 +290,7 @@ def test_populate_defect_report_accepts_spaced_headers() -> None:
     assert _cell_text(root, "B6") == "시험환경 모든 OS"
     assert _cell_text(root, "C6") == "요약 텍스트"
     assert _cell_text(root, "D6") == "M"
-    assert _cell_text(root, "E6") == "R"
+    assert _cell_text(root, "E6") == "I"
     assert _cell_text(root, "F6") == "보안성"
     assert _cell_text(root, "G6") == "상세 설명"
     assert _cell_text(root, "J6") == "비고 메모"

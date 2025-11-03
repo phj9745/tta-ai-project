@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FileUploader } from '../components/FileUploader'
 import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
 import { DefectReportWorkflow } from '../components/DefectReportWorkflow'
+import { SecurityReportWorkflow } from '../components/SecurityReportWorkflow'
 import { TestcaseWorkflow } from '../components/testcase-workflow/TestcaseWorkflow'
+import { Modal } from '../components/Modal'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
 
@@ -78,6 +80,25 @@ interface ConfigurationCaptureResponse {
 type ConfigurationCaptureFile = NonNullable<ConfigurationCaptureResponse['files']>[number]
 
 const IMAGE_FILE_TYPES = new Set<FileType>(['jpg', 'png'])
+const PERFORMANCE_OS_OPTIONS = [
+  { value: 'windows', label: 'Windows' },
+  { value: 'linux', label: 'Linux' },
+]
+
+interface PerformanceInputState {
+  memoryGb: string
+  deviceName: string
+}
+
+interface PerformanceOSModalState {
+  menuId: MenuItemId
+  files: Array<{ name: string; index: number }>
+  selections: Record<number, string>
+  error: string | null
+}
+
+const getPerformanceFileKey = (file: File): string =>
+  `${file.name}::${file.size}::${file.lastModified}`
 
 interface ItemState {
   files: File[]
@@ -87,6 +108,8 @@ interface ItemState {
   errorMessage: string | null
   downloadUrl: string | null
   downloadName: string | null
+  warnings: string[]
+  performanceInputs: Record<string, PerformanceInputState>
 }
 
 function createItemState(item?: MenuItemContent): ItemState {
@@ -105,6 +128,8 @@ function createItemState(item?: MenuItemContent): ItemState {
     errorMessage: null,
     downloadUrl: null,
     downloadName: null,
+    warnings: [],
+    performanceInputs: {},
   }
 }
 
@@ -256,13 +281,14 @@ const MENU_ITEMS: MenuItemContent[] = [
     label: '성능 평가 리포트',
     eyebrow: '성능 평가',
     title: '성능 평가 리포트 완성하기',
-    description:
+  description:
       '벤치마크 결과나 모니터링 데이터를 업로드하면 성능 분석 리포트를 구조화해 드립니다.',
-    helper: '성능 측정 결과 표, CSV 데이터, 스크린샷 등을 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
+    helper:
+      'Windows Perfmon CSV 또는 Linux vmstat TXT 등 성능 측정 rawdata를 여러 개 업로드할 수 있습니다. 두 OS를 혼합해도 됩니다.',
     buttonLabel: '성능평가 리포트 생성하기',
-    allowedTypes: ['pdf', 'csv', 'txt'],
-    maxFiles: 1,
-    hideDropzoneWhenFilled: true,
+    allowedTypes: ['csv', 'txt'],
+    maxFiles: 12,
+    hideDropzoneWhenFilled: false,
   },
 ]
 
@@ -290,6 +316,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const downloadUrlsRef = useRef<Record<MenuItemId, string | null>>(
     Object.fromEntries(MENU_ITEM_IDS.map((id) => [id, null])) as Record<MenuItemId, string | null>,
   )
+  const performanceOverridesRef = useRef<Record<string, string> | null>(null)
+  const [performanceModalState, setPerformanceModalState] = useState<PerformanceOSModalState | null>(null)
 
   const menuById = useMemo(() => {
     return MENU_ITEMS.reduce((acc, item) => {
@@ -308,6 +336,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   const activeContent = MENU_ITEMS.find((item) => item.id === activeItem) ?? MENU_ITEMS[0]
   const isDefectReport = activeContent.id === 'defect-report'
+  const isSecurityReport = activeContent.id === 'security-report'
   const isTestcaseWorkflow = activeContent.id === 'testcase-generation'
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
@@ -337,6 +366,15 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             errorMessage: null,
             downloadUrl: null,
             downloadName: null,
+            warnings: [],
+            performanceInputs:
+              id === 'performance-report'
+                ? nextFiles.reduce<Record<string, PerformanceInputState>>((acc, file) => {
+                    const key = getPerformanceFileKey(file)
+                    acc[key] = current.performanceInputs[key] ?? { memoryGb: '', deviceName: '' }
+                    return acc
+                  }, {})
+                : current.performanceInputs,
           },
         }
       })
@@ -413,6 +451,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             errorMessage: null,
             downloadUrl: null,
             downloadName: null,
+            warnings: [],
           },
         }
       })
@@ -470,12 +509,64 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             errorMessage: null,
             downloadUrl: null,
             downloadName: null,
+            warnings: [],
           },
         }
       })
     },
     [releaseDownloadUrl],
   )
+
+  const handleUpdatePerformanceInput = useCallback(
+    (itemId: MenuItemId, file: File, field: keyof PerformanceInputState, value: string) => {
+      if (itemId !== 'performance-report') {
+        return
+      }
+      const key = getPerformanceFileKey(file)
+      setItemStates((prev) => {
+        const current = prev[itemId]
+        if (!current || current.status === 'loading') {
+          return prev
+        }
+
+        const nextInputs: Record<string, PerformanceInputState> = {
+          ...current.performanceInputs,
+          [key]: {
+            ...(current.performanceInputs[key] ?? { memoryGb: '', deviceName: '' }),
+            [field]: value,
+          },
+        }
+
+        return {
+          ...prev,
+          [itemId]: {
+            ...current,
+            performanceInputs: nextInputs,
+            status: current.status === 'success' ? 'idle' : current.status,
+            errorMessage: null,
+            warnings: current.status === 'success' ? [] : current.warnings,
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const handlePerformanceSelectionChange = useCallback((index: number, value: string) => {
+    setPerformanceModalState((prev) => {
+      if (!prev) {
+        return prev
+      }
+      return {
+        ...prev,
+        selections: {
+          ...prev.selections,
+          [index]: value,
+        },
+        error: null,
+      }
+    })
+  }, [])
 
   const handleGenerate = useCallback(
     async (id: MenuItemId) => {
@@ -502,6 +593,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               errorMessage: `다음 필수 문서를 업로드해 주세요: ${missingDocs
                 .map((doc) => doc.label)
                 .join(', ')}`,
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
             },
           }))
           return
@@ -517,6 +611,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               ...prev[id],
               status: 'error',
               errorMessage: '추가로 업로드한 문서의 종류를 입력해 주세요.',
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
             },
           }))
           return
@@ -545,9 +642,57 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             ...prev[id],
             status: 'error',
             errorMessage: '업로드된 파일이 없습니다. 파일을 추가해 주세요.',
+            warnings: [],
+            downloadUrl: null,
+            downloadName: null,
           },
         }))
         return
+      }
+
+      let performanceMetadataPayload: Array<{ fileName: string; memoryGb: number; deviceName: string }> = []
+      if (id === 'performance-report') {
+        const missingInfo = uploads.some((file) => {
+          const key = getPerformanceFileKey(file)
+          const meta = current.performanceInputs[key]
+          if (!meta) {
+            return true
+          }
+          if (!meta.deviceName.trim()) {
+            return true
+          }
+          const value = Number(meta.memoryGb)
+          if (!Number.isFinite(value) || value <= 0) {
+            return true
+          }
+          return false
+        })
+
+        if (missingInfo) {
+          setItemStates((prev) => ({
+            ...prev,
+            [id]: {
+              ...prev[id],
+              status: 'error',
+              errorMessage: '각 rawdata의 메모리(GB)와 장비명을 모두 입력해 주세요.',
+              warnings: [],
+              downloadUrl: null,
+              downloadName: null,
+            },
+          }))
+          return
+        }
+
+        performanceMetadataPayload = uploads.map((file) => {
+          const key = getPerformanceFileKey(file)
+          const meta = current.performanceInputs[key]
+          const value = Number(meta?.memoryGb ?? 0)
+          return {
+            fileName: file.name,
+            memoryGb: Number.isFinite(value) ? Number(value.toFixed(4)) : 0,
+            deviceName: meta?.deviceName.trim() ?? '',
+          }
+        })
       }
 
       setItemStates((prev) => ({
@@ -556,8 +701,15 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           ...prev[id],
           status: 'loading',
           errorMessage: null,
+          warnings: [],
+          downloadUrl: null,
+          downloadName: null,
         },
       }))
+
+      if (current.downloadUrl) {
+        releaseDownloadUrl(id, current.downloadUrl)
+      }
 
       controllersRef.current[id]?.abort()
       const controller = new AbortController()
@@ -571,6 +723,16 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
       if (metadataEntries.length > 0) {
         formData.append('file_metadata', JSON.stringify(metadataEntries))
       }
+      if (id === 'performance-report' && performanceOverridesRef.current) {
+        const overrides = performanceOverridesRef.current
+        performanceOverridesRef.current = null
+        if (overrides && Object.keys(overrides).length > 0) {
+          formData.append('performance_os_overrides', JSON.stringify(overrides))
+        }
+      }
+      if (id === 'performance-report' && performanceMetadataPayload.length > 0) {
+        formData.append('performance_metadata', JSON.stringify(performanceMetadataPayload))
+      }
 
       try {
         const response = await fetch(
@@ -583,6 +745,90 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         )
 
         if (!response.ok) {
+          if (response.status === 409 && id === 'performance-report') {
+            let detailPayload: unknown = null
+            try {
+              detailPayload = await response.json()
+            } catch {
+              detailPayload = null
+            }
+
+            let modalFiles: Array<{ name: string; index: number }> = []
+            if (
+              detailPayload &&
+              typeof detailPayload === 'object' &&
+              detailPayload !== null &&
+              'detail' in detailPayload
+            ) {
+              const detail = (detailPayload as { detail?: unknown }).detail
+              if (
+                detail &&
+                typeof detail === 'object' &&
+                detail !== null &&
+                (detail as { code?: string }).code === 'performance.os_required'
+              ) {
+                const files = (detail as { files?: unknown }).files
+                if (Array.isArray(files)) {
+                  modalFiles = files
+                    .map((file) => {
+                      if (
+                        file &&
+                        typeof file === 'object' &&
+                        'index' in file &&
+                        typeof (file as { index: unknown }).index === 'number'
+                      ) {
+                        return {
+                          name:
+                            typeof (file as { name?: unknown }).name === 'string'
+                              ? ((file as { name?: unknown }).name as string)
+                              : `파일 ${((file as { index: number }).index ?? 0) + 1}`,
+                          index: (file as { index: number }).index,
+                        }
+                      }
+                      return null
+                    })
+                    .filter((entry): entry is { name: string; index: number } => entry !== null)
+                }
+              }
+            }
+
+            if (!controller.signal.aborted) {
+            setItemStates((prev) => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                status: 'idle',
+                errorMessage: null,
+                warnings: [],
+                downloadUrl: null,
+                downloadName: null,
+              },
+            }))
+          }
+
+            if (modalFiles.length > 0) {
+              setPerformanceModalState({
+                menuId: id,
+                files: modalFiles,
+                selections: Object.fromEntries(modalFiles.map((file) => [file.index, ''])),
+                error: null,
+              })
+            } else if (!controller.signal.aborted) {
+            setItemStates((prev) => ({
+              ...prev,
+              [id]: {
+                ...prev[id],
+                status: 'error',
+                errorMessage: '업로드된 파일의 OS 유형을 판별하지 못했습니다. 다시 시도해 주세요.',
+                warnings: [],
+                downloadUrl: null,
+                downloadName: null,
+              },
+            }))
+          }
+            return
+          }
+
           let detail = '자료를 생성하는 중 오류가 발생했습니다.'
           try {
             const payload = (await response.json()) as { detail?: unknown }
@@ -603,6 +849,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                 ...prev[id],
                 status: 'error',
                 errorMessage: detail,
+                warnings: [],
+                downloadUrl: null,
+                downloadName: null,
               },
             }))
           }
@@ -754,6 +1003,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
         const safeName = sanitizeFileName(effectiveName)
         const objectUrl = URL.createObjectURL(blob)
+        const warningsHeader = response.headers.get('x-performance-warnings')
+        let warnings: string[] = []
+        if (id === 'performance-report' && warningsHeader) {
+          try {
+            const parsed = JSON.parse(warningsHeader) as unknown
+            if (Array.isArray(parsed)) {
+              warnings = parsed.filter((entry): entry is string => typeof entry === 'string')
+            }
+          } catch {
+            warnings = [warningsHeader]
+          }
+        }
 
         setItemStates((prev) => {
           const previous = prev[id]
@@ -770,6 +1031,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               status: 'success',
               downloadUrl: objectUrl,
               downloadName: safeName,
+              warnings,
             },
           }
         })
@@ -790,6 +1052,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             ...prev[id],
             status: 'error',
             errorMessage: fallback,
+            warnings: [],
+            downloadUrl: null,
+            downloadName: null,
           },
         }))
       } finally {
@@ -801,10 +1066,57 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     [backendUrl, itemStates, menuById, projectId, projectName, releaseDownloadUrl],
   )
 
+  const handlePerformanceModalClose = useCallback(() => {
+    setPerformanceModalState(null)
+    performanceOverridesRef.current = null
+  }, [])
+
+  const handlePerformanceModalSubmit = useCallback(() => {
+    if (!performanceModalState) {
+      return
+    }
+
+    const missing = performanceModalState.files.filter(
+      (file) => !performanceModalState.selections[file.index],
+    )
+    if (missing.length > 0) {
+      setPerformanceModalState((prev) =>
+        prev
+          ? {
+              ...prev,
+              error: '모든 파일의 OS 종류를 선택해 주세요.',
+            }
+          : prev,
+      )
+      return
+    }
+
+    const overrides: Record<string, string> = {}
+    performanceModalState.files.forEach((file) => {
+      const choice = performanceModalState.selections[file.index]
+      if (!choice) {
+        return
+      }
+      if (file.name) {
+        overrides[file.name] = choice
+      }
+      overrides[`index:${file.index}`] = choice
+      overrides[`file:${file.index + 1}`] = choice
+    })
+
+    performanceOverridesRef.current = overrides
+    setPerformanceModalState(null)
+    void handleGenerate(performanceModalState.menuId)
+  }, [handleGenerate, performanceModalState])
+
   const handleReset = useCallback(
     (id: MenuItemId) => {
       controllersRef.current[id]?.abort()
       controllersRef.current[id] = null
+      if (id === 'performance-report') {
+        performanceOverridesRef.current = null
+        setPerformanceModalState(null)
+      }
 
       setItemStates((prev) => {
         const current = prev[id]
@@ -905,6 +1217,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     projectId={projectId}
                     projectName={projectName}
                   />
+                ) : isSecurityReport ? (
+                  <SecurityReportWorkflow
+                    backendUrl={backendUrl}
+                    projectId={projectId}
+                    projectName={projectName}
+                  />
                 ) : hasRequiredDocuments ? (
                   <>
                     <section
@@ -1000,11 +1318,57 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                       hideDropzoneWhenFilled={activeContent.hideDropzoneWhenFilled}
                       variant={activeContent.uploaderVariant}
                     />
+                    {activeContent.id === 'performance-report' && activeState.files.length > 0 && (
+                      <div className="project-management-performance">
+                        <h3 className="project-management-performance__title">메모리(GB)·장비명 입력</h3>
+                        <p className="project-management-performance__helper">
+                          각 rawdata별 메모리 용량(GB)과 장비명을 입력해 주세요. 정확한 차트 생성을 위해 필수입니다.
+                        </p>
+                        <ul className="project-management-performance__list">
+                          {activeState.files.map((file) => {
+                            const key = getPerformanceFileKey(file)
+                            const meta = activeState.performanceInputs[key] ?? { memoryGb: '', deviceName: '' }
+                            return (
+                              <li key={key} className="project-management-performance__item">
+                                <div className="project-management-performance__file">{file.name}</div>
+                                <label className="project-management-performance__field">
+                                  <span>메모리(GB)</span>
+                                  <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    min="0"
+                                    step="0.01"
+                                    value={meta.memoryGb}
+                                    onChange={(event) =>
+                                      handleUpdatePerformanceInput(activeContent.id, file, 'memoryGb', event.target.value)
+                                    }
+                                    placeholder="예: 16"
+                                    disabled={activeState.status === 'loading'}
+                                  />
+                                </label>
+                                <label className="project-management-performance__field">
+                                  <span>장비명</span>
+                                  <input
+                                    type="text"
+                                    value={meta.deviceName}
+                                    onChange={(event) =>
+                                      handleUpdatePerformanceInput(activeContent.id, file, 'deviceName', event.target.value)
+                                    }
+                                    placeholder="예: Windows 11 Desktop"
+                                    disabled={activeState.status === 'loading'}
+                                  />
+                                </label>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      </div>
+                    )}
                   </section>
                 )
               )}
 
-              {!isDefectReport && (
+              {!isDefectReport && !isSecurityReport && (
                 <div className="project-management-content__actions">
                   {activeState.status !== 'success' && (
                     <>
@@ -1044,7 +1408,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                         className="project-management-content__button project-management-content__download"
                         download={activeState.downloadName ?? undefined}
                       >
-                        CSV 다운로드
+                        {activeState.downloadName?.toLowerCase().endsWith('.xlsx') ? '엑셀 다운로드' : 'CSV 다운로드'}
                       </a>
                       <button
                         type="button"
@@ -1056,6 +1420,16 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                       <p className="project-management-content__footnote">
                         생성된 결과는 프로젝트 드라이브에도 저장되며 필요 시 언제든지 다시 다운로드할 수 있습니다.
                       </p>
+                      {activeState.warnings.length > 0 && (
+                        <div className="project-management-content__warnings" role="status">
+                          <p className="project-management-content__footnote">주의 사항</p>
+                          <ul className="project-management-content__footnote">
+                            {activeState.warnings.map((warning, index) => (
+                              <li key={`${warning}-${index}`}>{warning}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1064,6 +1438,61 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           )}
         </div>
       </main>
+
+      {performanceModalState && (
+        <Modal
+          open
+          onClose={handlePerformanceModalClose}
+          title="OS 종류 선택"
+          description="자동 감지에 실패한 rawdata 파일의 운영체제를 선택해 주세요."
+        >
+          <div className="modal__body">
+            <p className="modal__helper-text">
+              Windows에서 수집한 Perfmon CSV는 Windows, Linux vmstat TXT 파일은 Linux를 선택해 주세요.
+            </p>
+            {performanceModalState.files.map((file) => {
+              const fieldId = `performance-os-${file.index}`
+              return (
+                <div key={fieldId} className="modal__field">
+                  <label className="modal__label" htmlFor={fieldId}>
+                    {file.name}
+                  </label>
+                  <select
+                    id={fieldId}
+                    className="modal__input"
+                    value={performanceModalState.selections[file.index] ?? ''}
+                    onChange={(event) => handlePerformanceSelectionChange(file.index, event.target.value)}
+                  >
+                    <option value="">OS 선택</option>
+                    {PERFORMANCE_OS_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
+            {performanceModalState.error && (
+              <p className="modal__error" role="alert">
+                {performanceModalState.error}
+              </p>
+            )}
+          </div>
+          <footer className="modal__footer">
+            <button type="button" className="modal__button" onClick={handlePerformanceModalClose}>
+              취소
+            </button>
+            <button
+              type="button"
+              className="modal__button modal__button--primary"
+              onClick={handlePerformanceModalSubmit}
+            >
+              확인
+            </button>
+          </footer>
+        </Modal>
+      )}
     </div>
   )
 }

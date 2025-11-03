@@ -181,14 +181,14 @@ def _detect_frequency(value: str) -> str:
     if not normalized:
         return ""
     upper = normalized.upper()
-    if upper in {"A", "R"}:
+    if upper in {"A", "I"}:
         return upper
 
     compact = upper.replace(" ", "")
     if any(token in compact for token in ["ALWAYS", "항상", "항시", "상시", "지속", "매번", "항구"]):
         return "A"
     if any(token in compact for token in ["INTERMITTENT", "SOMETIMES", "OCCASIONAL", "RARE", "간헐", "가끔", "드물", "재현", "비정기", "때때로", "조건부"]):
-        return "R"
+        return "I"
     return normalized
 
 
@@ -402,8 +402,19 @@ def parse_defect_report_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[
     return sheet_title, start_row, list(headers), normalized_rows
 
 
-def build_defect_report_rows_csv(rows: Sequence[Mapping[str, Any]]) -> str:
-    normalized_rows, _ = normalize_defect_report_rows(rows)
+def build_defect_report_rows_csv(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    preserve_order: bool = False,
+) -> str:
+    if preserve_order:
+        normalized_rows: List[Dict[str, str]] = []
+        for entry in rows:
+            if not isinstance(entry, Mapping):
+                continue
+            normalized_rows.append(normalize_defect_record(entry))
+    else:
+        normalized_rows, _ = normalize_defect_report_rows(rows)
 
     output = io.StringIO()
     writer = csv.DictWriter(
