@@ -550,7 +550,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
   }, [])
 
   const canProceedToReview = useMemo(
-    () => groups.length > 0 && groups.every((group) => group.scenarios.length >= 3),
+    () => groups.length > 0 && groups.every((group) => group.scenarios.length >= 1),
     [groups],
   )
 

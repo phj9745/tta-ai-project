@@ -1,9 +1,10 @@
 import './TestcaseEditPage.css'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
+import { computeCategoryGrouping } from './utils/categoryGrouping'
 
 interface TestcaseRow {
   majorCategory: string
@@ -190,6 +191,7 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
   }, [projectId])
 
   const formattedModified = useMemo(() => formatTimestamp(modifiedTime), [modifiedTime])
+  const groupingMeta = useMemo(() => computeCategoryGrouping(rows), [rows])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -326,14 +328,35 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
     navigate(`/projects/${encodeURIComponent(projectId)}${query ? `?${query}` : ''}`)
   }, [projectId])
 
-  const handleChangeField = useCallback((rowId: string, key: keyof TestcaseRow, value: string) => {
-    setRows((prev) =>
-      prev.map((row) => (row.id === rowId ? { ...row, [key]: value } : row)),
-    )
-    setIsDirty(true)
-    setSaveState('idle')
-    setSaveError(null)
-  }, [])
+  const handleChangeField = useCallback(
+    (rowIndex: number, key: keyof TestcaseRow, value: string) => {
+      setRows((prev) => {
+        if (key === 'majorCategory') {
+          const indices = groupingMeta.major[rowIndex]?.indices ?? [rowIndex]
+          const target = new Set(indices)
+          return prev.map((row, currentIndex) =>
+            target.has(currentIndex) ? { ...row, [key]: value } : row,
+          )
+        }
+
+        if (key === 'middleCategory') {
+          const indices = groupingMeta.middle[rowIndex]?.indices ?? [rowIndex]
+          const target = new Set(indices)
+          return prev.map((row, currentIndex) =>
+            target.has(currentIndex) ? { ...row, [key]: value } : row,
+          )
+        }
+
+        return prev.map((row, currentIndex) =>
+          currentIndex === rowIndex ? { ...row, [key]: value } : row,
+        )
+      })
+      setIsDirty(true)
+      setSaveState('idle')
+      setSaveError(null)
+    },
+    [groupingMeta],
+  )
 
   const handleAddRow = useCallback(() => {
     idRef.current += 1
@@ -591,11 +614,35 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
+              {rows.map((row, rowIndex) => (
                 <tr key={row.id}>
                   {COLUMN_CONFIG.map((column) => {
                     const value = row[column.key]
                     const label = column.key
+
+                    if (column.key === 'majorCategory' || column.key === 'middleCategory') {
+                      const meta =
+                        column.key === 'majorCategory'
+                          ? groupingMeta.major[rowIndex]
+                          : groupingMeta.middle[rowIndex]
+
+                      if (!meta?.isFirst) {
+                        return <Fragment key={`${label}-${row.id}`} />
+                      }
+
+                      return (
+                        <td key={`${label}-${row.id}`} rowSpan={meta.rowSpan}>
+                          <input
+                            className="testcase-edit__input"
+                            value={value}
+                            onChange={(event) =>
+                              handleChangeField(rowIndex, column.key, event.target.value)
+                            }
+                          />
+                        </td>
+                      )
+                    }
+
                     if (column.input === 'textarea') {
                       return (
                         <td key={label}>
@@ -603,19 +650,20 @@ export function TestcaseEditPage({ projectId }: TestcaseEditPageProps) {
                             className="testcase-edit__textarea"
                             value={value}
                             onChange={(event) =>
-                              handleChangeField(row.id, column.key, event.target.value)
+                              handleChangeField(rowIndex, column.key, event.target.value)
                             }
                           />
                         </td>
                       )
                     }
+
                     return (
                       <td key={label}>
                         <input
                           className="testcase-edit__input"
                           value={value}
                           onChange={(event) =>
-                            handleChangeField(row.id, column.key, event.target.value)
+                            handleChangeField(rowIndex, column.key, event.target.value)
                           }
                         />
                       </td>

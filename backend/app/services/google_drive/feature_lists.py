@@ -38,6 +38,9 @@ def parse_feature_list_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[s
     start_row = FEATURE_LIST_START_ROW
     header_row_values: Optional[Sequence[Any]] = None
     column_map: Dict[str, int] = {}
+    last_major: str = ""
+    last_middle: str = ""
+
     try:
         sheet = workbook.active
         selected_title = sheet.title
@@ -111,14 +114,28 @@ def parse_feature_list_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[s
             if not has_values:
                 continue
 
+            major = row_data.get("대분류", "").strip()
+            if major:
+                last_major = major
+            else:
+                row_data["대분류"] = last_major
+                major = last_major
+
+            middle = row_data.get("중분류", "").strip()
+            if middle:
+                last_middle = middle
+            else:
+                row_data["중분류"] = last_middle
+                middle = last_middle
+
             description = row_data.get("기능 설명", "")
             if not description:
                 description = row_data.get("기능 개요", "")
 
             extracted_rows.append(
                 {
-                    "majorCategory": row_data.get("대분류", ""),
-                    "middleCategory": row_data.get("중분류", ""),
+                    "majorCategory": major,
+                    "middleCategory": middle,
                     "minorCategory": row_data.get("소분류", ""),
                     "featureDescription": description,
                 }

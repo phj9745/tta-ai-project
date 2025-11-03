@@ -163,6 +163,14 @@
   min-width: 960px;
 }
 
+.testcase-edit__table td[rowspan] {
+  vertical-align: middle;
+}
+
+.testcase-edit__table td[rowspan] .testcase-edit__input {
+  height: 100%;
+}
+
 .testcase-edit__table th,
 .testcase-edit__table td {
   padding: 0.75rem;

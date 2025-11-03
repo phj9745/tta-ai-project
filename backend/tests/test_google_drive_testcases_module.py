@@ -55,9 +55,23 @@ def sample_workbook_bytes() -> bytes:
     )
     sheet.append(
         [
-            "로그인",
-            "인증",
-            "OTP",
+            None,
+            None,
+            None,
+            "TC-001A",
+            "OTP 입력 지연",
+            "지연된 OTP 입력",
+            "인증 실패",
+            "F",
+            "지연 경고 메시지가 표시되어야 함",
+            "--",
+        ]
+    )
+    sheet.append(
+        [
+            None,
+            None,
+            "OTP 재시도",
             "TC-002",
             "만료된 OTP 입력",
             "만료된 OTP 입력",
@@ -65,6 +79,20 @@ def sample_workbook_bytes() -> bytes:
             "F",
             "만료 안내 메시지가 표시되어야 함",
             "재발급 가능",
+        ]
+    )
+    sheet.append(
+        [
+            "결제",
+            "거래",
+            "환불",
+            "TC-003",
+            "환불 시나리오",
+            "환불 요청",
+            "환불 성공",
+            "P",
+            "승인 내역 확인",
+            "--",
         ]
     )
     buffer = io.BytesIO()
@@ -79,9 +107,13 @@ def test_parse_testcase_workbook_extracts_rows(sample_workbook_bytes: bytes) -> 
     assert sheet_name == "테스트케이스"
     assert start_row >= 3
     assert headers[:3] == ["대분류", "중분류", "소분류"]
-    assert len(rows) == 2
+    assert len(rows) == 4
     assert rows[0]["testcaseId"] == "TC-001"
+    assert rows[1]["majorCategory"] == "로그인"
+    assert rows[1]["middleCategory"] == "인증"
+    assert rows[1]["minorCategory"] == "OTP"
     assert rows[1]["expected"] == "인증 실패"
+    assert rows[2]["minorCategory"] == "OTP 재시도"
 
 
 def test_build_testcase_rows_csv_roundtrip(sample_workbook_bytes: bytes) -> None:
@@ -90,4 +122,5 @@ def test_build_testcase_rows_csv_roundtrip(sample_workbook_bytes: bytes) -> None
 
     # When we repopulate the template with the csv, it should contain our headers
     assert "테스트 케이스 ID" in csv_text
+    assert "TC-001A" in csv_text
     assert "TC-002" in csv_text

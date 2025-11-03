@@ -1,9 +1,10 @@
 import './FeatureListEditPage.css'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
+import { computeCategoryGrouping } from './utils/categoryGrouping'
 
 interface FeatureListRow {
   majorCategory: string
@@ -200,6 +201,8 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     [columnLabels],
   )
 
+  const groupingMeta = useMemo(() => computeCategoryGrouping(rows), [rows])
+
   useEffect(() => {
     const controller = new AbortController()
     setLoadState('loading')
@@ -329,15 +332,34 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
     navigate(`/projects/${encodeURIComponent(projectId)}${query ? `?${query}` : ''}`)
   }, [projectId])
 
-  const handleChange = useCallback((index: number, key: keyof FeatureListRow, value: string) => {
-    setRows((prev) => {
-      const next = [...prev]
-      next[index] = { ...next[index], [key]: value }
-      return next
-    })
-    setIsDirty(true)
-    setSuccessMessage(null)
-  }, [])
+  const handleChange = useCallback(
+    (index: number, key: keyof FeatureListRow, value: string) => {
+      setRows((prev) => {
+        if (key === 'majorCategory') {
+          const indices = groupingMeta.major[index]?.indices ?? [index]
+          const target = new Set(indices)
+          return prev.map((row, rowIndex) =>
+            target.has(rowIndex) ? { ...row, [key]: value } : row,
+          )
+        }
+
+        if (key === 'middleCategory') {
+          const indices = groupingMeta.middle[index]?.indices ?? [index]
+          const target = new Set(indices)
+          return prev.map((row, rowIndex) =>
+            target.has(rowIndex) ? { ...row, [key]: value } : row,
+          )
+        }
+
+        return prev.map((row, rowIndex) =>
+          rowIndex === index ? { ...row, [key]: value } : row,
+        )
+      })
+      setIsDirty(true)
+      setSuccessMessage(null)
+    },
+    [groupingMeta],
+  )
 
   const handleProjectOverviewChange = useCallback((value: string) => {
     setProjectOverview(value)
@@ -583,27 +605,58 @@ export function FeatureListEditPage({ projectId }: FeatureListEditPageProps) {
                 <tbody>
                   {rows.map((row, index) => (
                     <tr key={`feature-row-${index}`}>
-                      {tableColumns.map((column) => (
-                        <td key={`${column.key}-${index}`}>
-                          {column.multiline ? (
-                            <textarea
-                              value={row[column.key]}
-                              onChange={(event) => handleChange(index, column.key, event.target.value)}
-                              className="feature-list-editor__textarea"
-                              placeholder={column.placeholder}
-                              rows={3}
-                            />
-                          ) : (
-                            <input
-                              type="text"
-                              value={row[column.key]}
-                              onChange={(event) => handleChange(index, column.key, event.target.value)}
-                              className="feature-list-editor__table-input"
-                              placeholder={column.placeholder}
-                            />
-                          )}
-                        </td>
-                      ))}
+                      {tableColumns.map((column) => {
+                        if (column.key === 'majorCategory' || column.key === 'middleCategory') {
+                          const meta =
+                            column.key === 'majorCategory'
+                              ? groupingMeta.major[index]
+                              : groupingMeta.middle[index]
+
+                          if (!meta?.isFirst) {
+                            return <Fragment key={`${column.key}-${index}`} />
+                          }
+
+                          return (
+                            <td key={`${column.key}-${index}`} rowSpan={meta.rowSpan}>
+                              <input
+                                type="text"
+                                value={row[column.key]}
+                                onChange={(event) =>
+                                  handleChange(index, column.key, event.target.value)
+                                }
+                                className="feature-list-editor__table-input"
+                                placeholder={column.placeholder}
+                              />
+                            </td>
+                          )
+                        }
+
+                        return (
+                          <td key={`${column.key}-${index}`}>
+                            {column.multiline ? (
+                              <textarea
+                                value={row[column.key]}
+                                onChange={(event) =>
+                                  handleChange(index, column.key, event.target.value)
+                                }
+                                className="feature-list-editor__textarea"
+                                placeholder={column.placeholder}
+                                rows={3}
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={row[column.key]}
+                                onChange={(event) =>
+                                  handleChange(index, column.key, event.target.value)
+                                }
+                                className="feature-list-editor__table-input"
+                                placeholder={column.placeholder}
+                              />
+                            )}
+                          </td>
+                        )
+                      })}
                       <td className="feature-list-editor__table-actions">
                         <button
                           type="button"

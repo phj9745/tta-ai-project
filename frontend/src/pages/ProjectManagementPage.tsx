@@ -22,6 +22,7 @@ interface RequiredDocument {
   id: string
   label: string
   allowedTypes?: FileType[]
+  required?: boolean
 }
 
 interface AdditionalFileEntry {
@@ -213,6 +214,7 @@ const MENU_ITEMS: MenuItemContent[] = [
         id: 'configuration',
         label: '형상 이미지',
         allowedTypes: ['png', 'jpg'],
+        required: false,
       },
       {
         id: 'vendor-feature-list',
@@ -340,7 +342,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const isTestcaseWorkflow = activeContent.id === 'testcase-generation'
 
   const activeState = itemStates[activeContent.id] ?? createItemState(activeContent)
-  const hasRequiredDocuments = (activeContent.requiredDocuments?.length ?? 0) > 0
+  const activeRequiredDocuments = activeContent.requiredDocuments ?? []
+  const hasRequiredDocuments = activeRequiredDocuments.length > 0
+  const hasMandatoryDocuments = activeRequiredDocuments.some((doc) => doc.required !== false)
+  const requiredSectionTitle = hasMandatoryDocuments ? '필수 문서 업로드' : '문서 업로드 (선택)'
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -588,7 +593,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
       if (requiredDocs.length > 0) {
         const missingDocs = requiredDocs.filter(
-          (doc) => (current.requiredFiles[doc.id]?.length ?? 0) === 0,
+          (doc) => doc.required !== false && (current.requiredFiles[doc.id]?.length ?? 0) === 0,
         )
         if (missingDocs.length > 0) {
           setItemStates((prev) => ({
@@ -1320,17 +1325,18 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                         id="required-upload-section"
                         className="project-management-content__section-title"
                       >
-                        필수 문서 업로드
+                        {requiredSectionTitle}
                       </h2>
                       <div className="project-management-required__list">
                         {(activeContent.requiredDocuments ?? []).map((doc) => {
                           const fileList = activeState.requiredFiles[doc.id] ?? []
                           const resolvedTypes = doc.allowedTypes ?? activeContent.allowedTypes
                           const allowMultiple = resolvedTypes.every((type) => IMAGE_FILE_TYPES.has(type))
+                          const label = doc.required === false ? `${doc.label} (선택)` : doc.label
 
                           return (
                             <div key={doc.id} className="project-management-required__item">
-                              <span className="project-management-required__label">{doc.label}</span>
+                              <span className="project-management-required__label">{label}</span>
                               <FileUploader
                                 allowedTypes={doc.allowedTypes ?? activeContent.allowedTypes}
                                 files={fileList}

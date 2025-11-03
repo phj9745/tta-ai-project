@@ -193,6 +193,9 @@ class WorksheetPopulator:
         self._column_specs = list(columns)
         if not self._column_specs:
             raise ValueError("채울 열 정보가 없습니다.")
+        self._column_map: Dict[str, ColumnSpec] = {
+            spec.letter: spec for spec in self._column_specs if spec.letter
+        }
 
         self._dimension = self._root.find("s:dimension", self._ns)
         ref = ""
@@ -386,6 +389,127 @@ class WorksheetPopulator:
         self._dimension.set(
             "ref",
             f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
+        )
+
+    def _merge_tag(self, name: str) -> str:
+        return f"{{{SPREADSHEET_NS}}}{name}"
+
+    def _remove_merges_for_columns(self, columns: Sequence[str]) -> None:
+        if not columns:
+            return
+
+        merge_container = self._root.find("s:mergeCells", self._ns)
+        if merge_container is None:
+            return
+
+        removed = False
+        for merge in list(merge_container.findall("s:mergeCell", self._ns)):
+            ref = (merge.get("ref") or "").strip()
+            if not ref:
+                continue
+            try:
+                start_col, start_row, end_col, end_row = parse_dimension(ref)
+            except ValueError:
+                continue
+
+            if start_col not in columns and end_col not in columns:
+                continue
+
+            if start_row < self._start_row and end_row < self._start_row:
+                continue
+
+            merge_container.remove(merge)
+            removed = True
+
+        if not list(merge_container):
+            self._root.remove(merge_container)
+            return
+
+        if removed:
+            merge_container.set(
+                "count",
+                str(len(merge_container.findall("s:mergeCell", self._ns))),
+            )
+
+    def _ensure_merge_container(self) -> ET.Element:
+        merge_container = self._root.find("s:mergeCells", self._ns)
+        if merge_container is not None:
+            return merge_container
+
+        merge_container = ET.Element(self._merge_tag("mergeCells"))
+        inserted = False
+        for idx, child in enumerate(list(self._root)):
+            if child.tag == self._tag("sheetData"):
+                self._root.insert(idx + 1, merge_container)
+                inserted = True
+                break
+        if not inserted:
+            self._root.append(merge_container)
+        return merge_container
+
+    def merge_repeated_cells(
+        self,
+        records: Sequence[Dict[str, str]],
+        *,
+        columns: Sequence[str],
+    ) -> None:
+        if not columns:
+            return
+
+        self._remove_merges_for_columns(columns)
+
+        if not records:
+            return
+
+        merge_refs: List[str] = []
+        start_row = self._start_row
+
+        for column in columns:
+            spec = self._column_map.get(column)
+            if spec is None:
+                continue
+
+            values = [
+                (record.get(spec.key, "") or "").strip()
+                for record in records
+            ]
+
+            value_index = 0
+            while value_index < len(values):
+                value = values[value_index]
+                if not value:
+                    value_index += 1
+                    continue
+
+                run_end_index = value_index
+                while (
+                    run_end_index + 1 < len(values)
+                    and values[run_end_index + 1] == value
+                ):
+                    run_end_index += 1
+
+                run_start_row = start_row + value_index
+                run_end_row = start_row + run_end_index
+
+                if run_end_row > run_start_row:
+                    merge_refs.append(f"{column}{run_start_row}:{column}{run_end_row}")
+                    for clear_row in range(run_start_row + 1, run_end_row + 1):
+                        row_elem = self._ensure_row(clear_row)
+                        cell = self._ensure_cell(row_elem, spec)
+                        _clear_cell(cell)
+
+                value_index = run_end_index + 1
+
+        if not merge_refs:
+            return
+
+        merge_container = self._ensure_merge_container()
+        for ref in merge_refs:
+            merge_container.append(ET.Element(self._merge_tag("mergeCell"), {"ref": ref}))
+
+        merge_container.set(
+            "count",
+            str(len(merge_container.findall("s:mergeCell", self._ns))),
         )
 
     def to_bytes(self) -> bytes:

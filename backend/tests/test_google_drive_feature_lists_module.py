@@ -26,6 +26,7 @@ def _build_workbook() -> bytes:
     sheet.title = "기능 리스트"
     sheet.append([" 대분류 ", "중 분류", "소분류", "기능 설명"])
     sheet.append(["인증", "로그인", "아이디", "사용자 인증 처리"])
+    sheet.append([None, None, "비밀번호", "비밀번호 초기화"])
     buffer = io.BytesIO()
     workbook.save(buffer)
     workbook.close()
@@ -43,7 +44,13 @@ def test_parse_feature_list_workbook_extracts_rows() -> None:
             "middleCategory": "로그인",
             "minorCategory": "아이디",
             "featureDescription": "사용자 인증 처리",
-        }
+        },
+        {
+            "majorCategory": "인증",
+            "middleCategory": "로그인",
+            "minorCategory": "비밀번호",
+            "featureDescription": "비밀번호 초기화",
+        },
     ]
 
 

@@ -606,6 +606,11 @@
   color: #166534;
 }
 
+.drive-card__banner--error {
+  background: rgba(248, 113, 113, 0.18);
+  color: #991b1b;
+}
+
 .drive-card__title {
   margin: 0;
   font-size: 1.45rem;
@@ -1298,14 +1303,12 @@
 .drive-projects__item {
   width: 100%;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.75rem;
   padding: 0.9rem 1rem;
   border-radius: 16px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: white;
-  cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
 }
@@ -1313,6 +1316,27 @@
 .drive-projects__item:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+
+.drive-projects__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.drive-projects__main:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 10px;
 }
 
 .drive-projects__name {
@@ -1324,6 +1348,35 @@
 .drive-projects__meta {
   font-size: 0.85rem;
   color: #64748b;
+}
+
+.drive-projects__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.drive-projects__delete-button {
+  border: none;
+  padding: 0.45rem 0.8rem;
+  border-radius: 12px;
+  background: rgba(248, 113, 113, 0.16);
+  color: #b91c1c;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.drive-projects__delete-button:hover {
+  background: rgba(248, 113, 113, 0.25);
+  color: #991b1b;
+}
+
+.drive-projects__delete-button:disabled {
+  cursor: not-allowed;
+  background: rgba(248, 113, 113, 0.12);
+  color: rgba(185, 28, 28, 0.6);
 }
 
 .drive-empty {

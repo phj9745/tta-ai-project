@@ -385,6 +385,7 @@ def populate_feature_list(
 
     populator = WorksheetPopulator(sheet_bytes, start_row=FEATURE_LIST_START_ROW, columns=FEATURE_LIST_COLUMNS)
     populator.populate(records)
+    populator.merge_repeated_cells(records, columns=("A", "B"))
 
     updated_sheet = populator.to_bytes()
     if overview_ref and project_overview is not None:

@@ -37,6 +37,15 @@
   min-width: 960px;
 }
 
+.feature-list-editor .defect-workflow__table td[rowspan] {
+  vertical-align: middle;
+}
+
+.feature-list-editor .defect-workflow__table td[rowspan] .feature-list-editor__table-input {
+  height: 100%;
+  display: block;
+}
+
 .feature-list-editor__meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

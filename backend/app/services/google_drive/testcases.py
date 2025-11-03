@@ -143,6 +143,9 @@ def parse_testcase_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[str],
     sheet_title = ""
     start_row = 1
     column_map: Dict[str, int] = {}
+    last_major: str = ""
+    last_middle: str = ""
+    last_minor: str = ""
 
     try:
         sheet = workbook.active
@@ -244,6 +247,35 @@ def parse_testcase_workbook(workbook_bytes: bytes) -> Tuple[str, int, List[str],
 
             if not has_values:
                 continue
+
+            prev_major = last_major
+            prev_middle = last_middle
+
+            major = row_data.get("majorCategory", "").strip()
+            if major:
+                last_major = major
+            else:
+                row_data["majorCategory"] = last_major
+                major = last_major
+
+            middle = row_data.get("middleCategory", "").strip()
+            if middle:
+                last_middle = middle
+            else:
+                row_data["middleCategory"] = last_middle
+                middle = last_middle
+
+            if major != prev_major:
+                last_minor = ""
+
+            if middle != prev_middle:
+                last_minor = ""
+
+            minor = row_data.get("minorCategory", "").strip()
+            if minor:
+                last_minor = minor
+            elif last_minor:
+                row_data["minorCategory"] = last_minor
 
             extracted_rows.append(row_data)
 

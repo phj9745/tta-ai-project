@@ -20,4 +20,5 @@ def populate_testcase_list(workbook_bytes: bytes, csv_text: str) -> bytes:
         sheet_bytes = source.read(XLSX_SHEET_PATH)
     populator = WorksheetPopulator(sheet_bytes, start_row=TESTCASE_START_ROW, columns=TESTCASE_COLUMNS)
     populator.populate(records)
+    populator.merge_repeated_cells(records, columns=("A", "B", "C"))
     return replace_sheet_bytes(workbook_bytes, populator.to_bytes())
