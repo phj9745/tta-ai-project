@@ -1628,7 +1628,7 @@ async def finalize_testcases(
                     scenario=_strip_label_prefix(scenario_text, "테스트 시나리오"),
                     input=_strip_label_prefix(input_text, "입력(사전조건 포함)"),
                     expected=_strip_label_prefix(expected_text, "기대 출력(사후조건 포함)"),
-                    result="P",
+                    result="",
                     detail="",
                     note="",
                 )
