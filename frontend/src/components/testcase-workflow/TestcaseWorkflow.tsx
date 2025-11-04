@@ -1,6 +1,6 @@
 import './TestcaseWorkflow.css'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { navigate } from '../../navigation'
 import { useBackgroundTasks } from '../../app/background/BackgroundTaskContext'
@@ -46,6 +46,22 @@ interface TestcaseWorkflowProps {
   projectName?: string
 }
 
+interface TestcaseWorkflowDraft {
+  version: 1
+  savedAt: string
+  step: Step
+  projectOverview: string
+  groups: Array<{
+    feature: FeatureRow
+    scenarioCount: number
+    scenarios: ScenarioEntry[]
+    rewriteMessages: ConversationMessage[]
+    rewriteInput: string
+    isCollapsed: boolean
+  }>
+  nextId: number
+}
+
 type Step = 'feature' | 'scenarios'
 
 const FEATURE_FILE_TYPES: FileType[] = ['xlsx', 'xls', 'csv']
@@ -81,7 +97,119 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
   const [groups, setGroups] = useState<ScenarioGroupState[]>([])
   const [finalStatus, setFinalStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [finalError, setFinalError] = useState<string | null>(null)
+  const [draftFeedback, setDraftFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
+    null,
+  )
   const idRef = useRef(0)
+  const storageKey = useMemo(() => `tta:testcase-workflow:${projectId}`, [projectId])
+
+  const clearDraft = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    window.localStorage.removeItem(storageKey)
+  }, [storageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const raw = window.localStorage.getItem(storageKey)
+    if (!raw) {
+      return
+    }
+
+    try {
+      const draft = JSON.parse(raw) as TestcaseWorkflowDraft
+      if (!draft || draft.version !== 1) {
+        return
+      }
+
+      const shouldRestore = window.confirm('이전에 저장된 테스트케이스 작성 중간 내역이 있습니다. 불러올까요?')
+      if (!shouldRestore) {
+        return
+      }
+
+      setProjectOverview(draft.projectOverview ?? '')
+
+      const normalizedGroups: ScenarioGroupState[] = []
+      let nextIdCounter = typeof draft.nextId === 'number' && Number.isFinite(draft.nextId) ? draft.nextId : 0
+
+      for (const group of draft.groups ?? []) {
+        if (!group || !group.feature) {
+          continue
+        }
+
+        const normalizedScenarios: ScenarioEntry[] = []
+        for (const scenario of group.scenarios ?? []) {
+          if (!scenario) {
+            continue
+          }
+          let scenarioId = typeof scenario.id === 'string' && scenario.id.trim().length > 0 ? scenario.id : ''
+          if (!scenarioId) {
+            nextIdCounter += 1
+            scenarioId = `scenario-${nextIdCounter}`
+          } else {
+            const match = scenarioId.match(/(\d+)$/)
+            if (match) {
+              const parsed = Number.parseInt(match[1] ?? '0', 10)
+              if (!Number.isNaN(parsed)) {
+                nextIdCounter = Math.max(nextIdCounter, parsed)
+              }
+            }
+          }
+          normalizedScenarios.push({
+            id: scenarioId,
+            scenario: scenario.scenario ?? '',
+            input: scenario.input ?? '',
+            expected: scenario.expected ?? '',
+          })
+        }
+
+        normalizedGroups.push({
+          feature: group.feature,
+          scenarios: normalizedScenarios,
+          files: [],
+          scenarioCount: Math.max(3, Math.min(5, group.scenarioCount ?? 3)),
+          status: 'idle',
+          error: null,
+          rewriteMessages: group.rewriteMessages ?? [],
+          rewriteInput: group.rewriteInput ?? '',
+          rewriteStatus: 'idle',
+          rewriteError: null,
+          isCollapsed: Boolean(group.isCollapsed),
+        })
+      }
+
+      idRef.current = nextIdCounter
+      setGroups(normalizedGroups)
+      setFeatureStatus('idle')
+      setFeatureError(null)
+      setFeatureFiles([])
+      setStep(normalizedGroups.length > 0 ? 'scenarios' : draft.step ?? 'feature')
+      setDraftFeedback({ type: 'success', message: '중간 저장된 내용을 불러왔습니다.' })
+    } catch (error) {
+      console.error('Failed to restore testcase workflow draft', error)
+      window.localStorage.removeItem(storageKey)
+      setDraftFeedback({ type: 'error', message: '저장된 내용을 불러오지 못했습니다. 다시 저장해 주세요.' })
+    }
+  }, [storageKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    if (!draftFeedback) {
+      return
+    }
+    const timer = window.setTimeout(() => {
+      setDraftFeedback(null)
+    }, 5000)
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [draftFeedback])
 
   const handleUploadFeatureList = useCallback(
     async (file: File | null) => {
@@ -641,6 +769,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
         query ? `?${query}` : ''
       }`
       if (!taskHandle.signal.aborted) {
+        clearDraft()
         taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '테스트케이스 생성 완료')
         navigate(targetUrl)
       }
@@ -653,7 +782,45 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       setFinalError(message)
       taskHandle.fail(message)
     }
-  }, [backendUrl, groups, projectId, projectOverview, projectName, startTask])
+  }, [backendUrl, clearDraft, groups, projectId, projectOverview, projectName, startTask])
+
+  const handleSaveDraft = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    try {
+      const draft: TestcaseWorkflowDraft = {
+        version: 1,
+        savedAt: new Date().toISOString(),
+        step,
+        projectOverview,
+        groups: groups.map((group) => ({
+          feature: group.feature,
+          scenarioCount: group.scenarioCount,
+          scenarios: group.scenarios.map((scenario) => ({ ...scenario })),
+          rewriteMessages: group.rewriteMessages.map((message) => ({ ...message })),
+          rewriteInput: group.rewriteInput,
+          isCollapsed: group.isCollapsed,
+        })),
+        nextId: idRef.current,
+      }
+
+      window.localStorage.setItem(storageKey, JSON.stringify(draft))
+      setDraftFeedback({
+        type: 'success',
+        message: '중간 저장했습니다. 같은 브라우저에서 다시 열면 이어서 작업할 수 있습니다.',
+      })
+    } catch (error) {
+      console.error('Failed to save testcase workflow draft', error)
+      setDraftFeedback({ type: 'error', message: '중간 저장에 실패했습니다. 다시 시도해 주세요.' })
+    }
+  }, [groups, idRef, projectOverview, step, storageKey])
+
+  const canSaveDraft = useMemo(
+    () => projectOverview.trim().length > 0 || groups.some((group) => group.scenarios.length > 0),
+    [groups, projectOverview],
+  )
 
   return (
     <div className="testcase-workflow">
@@ -940,6 +1107,14 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             </button>
             <button
               type="button"
+              className="testcase-workflow__secondary testcase-workflow__button"
+              onClick={handleSaveDraft}
+              disabled={!canSaveDraft}
+            >
+              중간 저장
+            </button>
+            <button
+              type="button"
               className="testcase-workflow__button"
               onClick={handleFinalize}
               disabled={!canProceedToReview || finalStatus === 'loading'}
@@ -947,6 +1122,17 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
               {finalStatus === 'loading' ? '완료 중…' : '완료하고 테스트케이스 생성'}
             </button>
           </div>
+
+          {draftFeedback && (
+            <div
+              className={`testcase-workflow__status testcase-workflow__status--${
+                draftFeedback.type === 'success' ? 'success' : 'error'
+              }`}
+              role={draftFeedback.type === 'error' ? 'alert' : 'status'}
+            >
+              {draftFeedback.message}
+            </div>
+          )}
 
           {finalStatus === 'error' && finalError && (
             <div className="testcase-workflow__status testcase-workflow__status--error">{finalError}</div>
