@@ -22,20 +22,20 @@ def prompt_storage(tmp_path):
 def test_update_config_overrides_are_used_at_runtime(prompt_storage):
     service = PromptConfigService(prompt_storage)
 
-    default_prompt = service.get_runtime_prompt("testcase-generation")
-    assert default_prompt.label == "테스트케이스 생성"
+    default_prompt = service.get_runtime_prompt("testcase-workflow-scenarios")
+    assert default_prompt.label == "테스트케이스 워크플로 - 시나리오 도출"
 
     updated_text = "테스트 시나리오만 출력하세요."
-    service.update_config("testcase-generation", {"userPrompt": updated_text})
+    service.update_config("testcase-workflow-scenarios", {"userPrompt": updated_text})
 
-    runtime_prompt = service.get_runtime_prompt("testcase-generation")
+    runtime_prompt = service.get_runtime_prompt("testcase-workflow-scenarios")
     assert runtime_prompt.user_prompt == updated_text
 
     stored_payload = json.loads(prompt_storage.read_text(encoding="utf-8"))
-    assert stored_payload["testcase-generation"]["userPrompt"] == updated_text
+    assert stored_payload["testcase-workflow-scenarios"]["userPrompt"] == updated_text
 
     reloaded_service = PromptConfigService(prompt_storage)
-    reloaded_prompt = reloaded_service.get_runtime_prompt("testcase-generation")
+    reloaded_prompt = reloaded_service.get_runtime_prompt("testcase-workflow-scenarios")
     assert reloaded_prompt.user_prompt == updated_text
 
 

@@ -203,63 +203,126 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
             )
         ],
     ),
-    "testcase-generation": PromptConfig(
-        label="테스트케이스 생성",
-        summary="요구사항을 바탕으로 테스트 케이스 초안을 작성합니다.",
-        request_description="핵심 시나리오를 도출하고 CSV 포맷(열은 파이프(|)로 구분)으로 정리합니다.",
-        system_prompt="당신은 소프트웨어 QA 테스터입니다. 업로드된 요구사항을 읽고 테스트 케이스 초안을 설계합니다.",
+    "testcase-workflow-scenarios": PromptConfig(
+        label="테스트케이스 워크플로 - 시나리오 도출",
+        summary="기능 설명을 분석하여 테스트 시나리오 후보를 JSON으로 도출합니다.",
+        request_description="기능별 테스트 시나리오 후보를 JSON({\"scenarios\": [...]}) 형식으로 정리합니다.",
+        system_prompt=(
+            "당신은 소프트웨어 QA 테스터입니다. 제공된 기능 설명과 참고 이미지를 바탕으로 "
+            "실행 가능한 테스트 시나리오 후보를 정리합니다."
+        ),
         user_prompt=(
-            "요구사항을 분석하여 테스트 케이스를 CSV로 작성하세요. "
-            "다음 열을 포함합니다: 대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고. "
-            "모든 열은 파이프(|) 기호로 구분하고 테스트 케이스 ID는 TC-001부터 순차적으로 부여하며 테스트 결과는 기본값으로 '미실행'을 사용하세요."
+            "다음 기능에 대해 {{scenario_count}}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.\n"
+            "프로젝트 개요:\n{{project_overview}}\n\n"
+            "기능 분류:\n{{feature_classification}}\n\n"
+            "기능 설명:\n{{feature_description}}"
         ),
         user_prompt_sections=[
             PromptSection(
-                id="testcase-analysis",
-                label="분석 요청",
-                content=(
-                    "1. 첨부 자료에서 사용자 흐름, 예외 상황, 비기능 요구사항을 식별하고\n"
-                    "2. 기능리스트 항목과 매핑되는 테스트 케이스를 구성하며\n"
-                    "3. 커버리지 공백이 있으면 비고에 보완이 필요한 근거를 기록하세요."
-                ),
-            ),
-            PromptSection(
-                id="testcase-quality",
-                label="품질 기준",
-                content=(
-                    "- 테스트 시나리오는 'Given-When-Then' 구조 또는 동등한 단계로 간결히 작성합니다.\n"
-                    "- 입력(사전조건 포함)과 기대 출력(사후조건 포함)에는 화면 ID, API, 데이터 범위 등 구체적 근거를 포함하세요."
-                ),
-            ),
-            PromptSection(
-                id="testcase-format",
+                id="testcase-workflow-scenarios-guidelines",
                 label="작성 지침",
                 content=(
-                    "CSV 열 순서는 ‘대분류, 중분류, 소분류, 테스트 케이스 ID, 테스트 시나리오, 입력(사전조건 포함), 기대 출력(사후조건 포함), 테스트 결과, 상세 테스트 결과, 비고’로 고정합니다.\n"
-                    "모든 열은 파이프(|) 기호로 구분하고, 테스트 케이스 ID는 TC-001부터 증가시키며 테스트 결과는 기본값으로 ‘미실행’을 입력하세요."
+                    "- 각 시나리오는 '테스트 시나리오', '입력(사전조건 포함)', '기대 출력(사후조건 포함)' 키를 포함한 객체여야 합니다.\n"
+                    "- 전체 응답은 {\"scenarios\": [...]} 형태의 JSON 한 개만 반환하고 JSON 외 텍스트는 추가하지 마세요.\n"
+                    "- '테스트 시나리오' 값은 테스트 목적을 한 문장으로 명확하게 설명해야 합니다.\n"
+                    "- '입력(사전조건 포함)' 값은 실제 예시 데이터를 포함한 단계 번호 목록을 '1. ...' 형식으로 작성하고 줄바꿈으로 구분하세요.\n"
+                    "- '기대 출력(사후조건 포함)' 값은 기대되는 시스템 반응을 한 문장으로 요약하세요.\n"
+                    "- 중복되거나 의미가 겹치는 시나리오는 피하세요."
                 ),
             ),
         ],
         scaffolding=PromptScaffolding(
-            attachments_heading="첨부 파일 목록",
-            attachments_intro=(
-                "다음 첨부 파일을 참고하여 요구사항을 분석한 뒤 지침에 맞는 테스트 케이스를 작성하세요.\n"
-                "CSV는 파이프(|)로 열을 구분해야 하며, 각 파일은 업로드된 순서대로 첨부되어 있습니다."
-            ),
-            closing_note="위 자료는 {{context_summary}}입니다. 이 자료를 바탕으로 테스트케이스를 작성해 주세요.",
-            format_warning="CSV 이외의 다른 형식이나 설명 문장은 포함하지 마세요.",
+            attachments_heading="",
+            attachments_intro="",
+            closing_note="",
+            format_warning="응답은 JSON 한 개만 반환하세요.",
         ),
-        builtin_contexts=[
-            PromptBuiltinContext(
-                id="testcase-template",
-                label="테스트케이스 예제 양식",
-                description="내장된 테스트케이스 예제 XLSX를 PDF로 변환한 자료. 열 구성 및 작성 예시 참고용.",
-                source_path="template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx",
-                render_mode="xlsx-to-pdf",
-                include_in_prompt=True,
-                show_in_attachment_list=True,
-            )
+        model_parameters=PromptModelParameters(
+            temperature=0.2,
+            top_p=0.9,
+            max_output_tokens=800,
+        ),
+    ),
+    "testcase-workflow-rewrite": PromptConfig(
+        label="테스트케이스 워크플로 - 시나리오 다듬기",
+        summary="생성된 테스트 시나리오를 대화형으로 보완하고 재작성합니다.",
+        request_description="기존 테스트 시나리오와 사용자 요청을 반영하여 JSON 형식으로 수정안을 반환합니다.",
+        system_prompt=(
+            "당신은 소프트웨어 테스트 전문가입니다. 사용자의 테스트케이스를 개선하고 명확하게 다듬어 주세요."
+        ),
+        user_prompt=(
+            "프로젝트 개요:\n{{project_overview}}\n\n"
+            "기능 분류:\n{{feature_classification}}\n\n"
+            "기능 설명:\n{{feature_description}}\n\n"
+            "현재 테스트케이스:\n{{current_scenarios}}\n\n"
+            "사용자 요청:\n{{user_request}}"
+        ),
+        user_prompt_sections=[
+            PromptSection(
+                id="testcase-workflow-rewrite-guidelines",
+                label="응답 형식 지침",
+                content=(
+                    "- 아래 JSON 형식으로만 응답하세요.\n"
+                    "  {\"reply\": \"요약 또는 변경 이유\", \"scenarios\": [{\"테스트 시나리오\": \"...\", \"입력(사전조건 포함)\": \"...\", \"기대 출력(사후조건 포함)\": \"...\"}, ...]}\n"
+                    "- scenarios 배열 길이는 최소 1개 이상이어야 하며 가능하면 현재 개수와 동일하게 유지하세요.\n"
+                    "- 각 항목은 한글 레이블을 그대로 사용하고 줄바꿈은 그대로 유지하세요.\n"
+                    "- reply는 1~3문장으로 변경 사항을 요약하세요."
+                ),
+            ),
         ],
+        scaffolding=PromptScaffolding(
+            attachments_heading="",
+            attachments_intro="",
+            closing_note="",
+            format_warning="응답은 JSON 객체 한 개만 반환하세요.",
+        ),
+        model_parameters=PromptModelParameters(
+            temperature=0.2,
+            top_p=0.9,
+            max_output_tokens=900,
+        ),
+    ),
+    "testcase-workflow-finalize": PromptConfig(
+        label="테스트케이스 워크플로 - CSV 완성",
+        summary="시나리오 요약을 기반으로 테스트케이스 표를 완성합니다.",
+        request_description="소분류별 시나리오 요약을 CSV(열은 파이프(|)로 구분) 형식으로 정리합니다.",
+        system_prompt=(
+            "당신은 소프트웨어 QA 테스터입니다. 기능별로 정리된 시나리오 요약을 바탕으로 "
+            "테스트케이스 표를 완성합니다."
+        ),
+        user_prompt=(
+            "프로젝트 개요:\n{{project_overview}}\n\n"
+            "기능별 시나리오 요약:\n{{scenario_summary}}\n\n"
+            "CSV 열은 {{csv_headers}} 순서를 따릅니다. 지침을 모두 준수해 테스트케이스를 작성하세요."
+        ),
+        user_prompt_sections=[
+            PromptSection(
+                id="testcase-workflow-finalize-guidelines",
+                label="작성 지침",
+                content=(
+                    "- 위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.\n"
+                    "- 각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고 XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.\n"
+                    "- '테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼 간결하고 자연스러운 한 문장으로 작성하세요.\n"
+                    "- '입력(사전조건 포함)' 열은 실제 예시값을 포함한 단계 번호 목록을 작성하고 각 단계는 '1. ...' 형식으로 시작하며 줄바꿈으로 구분하세요.\n"
+                    "- '기대 출력(사후조건 포함)' 열은 기대 결과를 한 문장으로 요약하고 안내 문구나 불필요한 설명을 추가하지 마세요.\n"
+                    "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.\n"
+                    "- 여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.\n"
+                    "- 아래 예시 형식을 참고하세요. 각 열은 파이프(|)로 구분됩니다.\n"
+                    "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | "
+                ),
+            ),
+        ],
+        scaffolding=PromptScaffolding(
+            attachments_heading="",
+            attachments_intro="",
+            closing_note="",
+            format_warning="CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
+        ),
+        model_parameters=PromptModelParameters(
+            temperature=0.2,
+            top_p=0.9,
+            max_output_tokens=1800,
+        ),
     ),
     "defect-report": PromptConfig(
         label="결함 리포트",
