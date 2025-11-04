@@ -100,6 +100,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
   const [draftFeedback, setDraftFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
     null,
   )
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const idRef = useRef(0)
   const storageKey = useMemo(() => `tta:testcase-workflow:${projectId}`, [projectId])
 
@@ -822,6 +823,29 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     [groups, projectOverview],
   )
 
+  const handleRequestReset = useCallback(() => {
+    setShowResetConfirm(true)
+  }, [])
+
+  const handleCancelReset = useCallback(() => {
+    setShowResetConfirm(false)
+  }, [])
+
+  const handleConfirmReset = useCallback(() => {
+    setShowResetConfirm(false)
+    setStep('feature')
+    setProjectOverview('')
+    setFeatureStatus('idle')
+    setFeatureError(null)
+    setFeatureFiles([])
+    setGroups([])
+    setFinalStatus('idle')
+    setFinalError(null)
+    setDraftFeedback(null)
+    idRef.current = 0
+    clearDraft()
+  }, [clearDraft])
+
   return (
     <div className="testcase-workflow">
       {step === 'feature' && (
@@ -1102,25 +1126,31 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
           </div>
 
           <div className="testcase-workflow__step-actions">
-            <button type="button" className="testcase-workflow__secondary testcase-workflow__button" onClick={() => setStep('feature')}>
-              기능리스트 단계로 돌아가기
-            </button>
             <button
               type="button"
               className="testcase-workflow__secondary testcase-workflow__button"
-              onClick={handleSaveDraft}
-              disabled={!canSaveDraft}
+              onClick={handleRequestReset}
             >
-              중간 저장
+              처음 단계로 돌아가기
             </button>
-            <button
-              type="button"
-              className="testcase-workflow__button"
-              onClick={handleFinalize}
-              disabled={!canProceedToReview || finalStatus === 'loading'}
-            >
-              {finalStatus === 'loading' ? '완료 중…' : '완료하고 테스트케이스 생성'}
-            </button>
+            <div className="testcase-workflow__step-actions-group">
+              <button
+                type="button"
+                className="testcase-workflow__secondary testcase-workflow__button"
+                onClick={handleSaveDraft}
+                disabled={!canSaveDraft}
+              >
+                중간 저장
+              </button>
+              <button
+                type="button"
+                className="testcase-workflow__button"
+                onClick={handleFinalize}
+                disabled={!canProceedToReview || finalStatus === 'loading'}
+              >
+                {finalStatus === 'loading' ? '완료 중…' : '완료하고 테스트케이스 생성'}
+              </button>
+            </div>
           </div>
 
           {draftFeedback && (
@@ -1141,6 +1171,37 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
       )}
 
 
+      {showResetConfirm && (
+        <div className="testcase-workflow__modal-overlay" role="presentation">
+          <div className="testcase-workflow__modal-backdrop" onClick={handleCancelReset} />
+          <div
+            className="testcase-workflow__modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="testcase-workflow-reset-title"
+            aria-describedby="testcase-workflow-reset-description"
+          >
+            <h3 id="testcase-workflow-reset-title" className="testcase-workflow__modal-title">
+              저장한 내용을 삭제하고 처음 단계로 돌아갈까요?
+            </h3>
+            <p id="testcase-workflow-reset-description" className="testcase-workflow__modal-description">
+              돌아가기를 선택하면 중간 저장된 내용과 현재 작성 중인 정보가 모두 삭제됩니다. 계속하시겠어요?
+            </p>
+            <div className="testcase-workflow__modal-actions">
+              <button
+                type="button"
+                className="testcase-workflow__secondary testcase-workflow__button"
+                onClick={handleCancelReset}
+              >
+                취소
+              </button>
+              <button type="button" className="testcase-workflow__button" onClick={handleConfirmReset}>
+                저장 안 하고 돌아가기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
