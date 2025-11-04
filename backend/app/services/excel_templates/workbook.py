@@ -13,6 +13,36 @@ from .models import (
     XML_NS,
     XLSX_SHEET_PATH,
 )
+
+
+def _register_sheet_namespaces(sheet_bytes: bytes) -> None:
+    """Preserve namespace prefixes from the original sheet XML.
+
+    ElementTree serialises namespaces using generic prefixes (ns0, ns1, ...)
+    unless the desired prefix is registered ahead of time. The templates
+    contain attributes such as ``mc:Ignorable="x14ac"`` which rely on the
+    original prefix names. When the prefix is replaced but the attribute value
+    remains untouched, Excel reports the file as corrupted. By iterating over
+    the namespace declarations we can re-register the exact prefixes so the
+    output XML stays consistent with the template.
+    """
+
+    if not sheet_bytes:
+        return
+
+    try:
+        seen: set[tuple[str, str]] = set()
+        for event, elem in ET.iterparse(io.BytesIO(sheet_bytes), events=("start-ns",)):
+            prefix, uri = elem
+            prefix = prefix or ""
+            key = (prefix, uri)
+            if key in seen:
+                continue
+            seen.add(key)
+            ET.register_namespace(prefix, uri)
+    except ET.ParseError:
+        # Fall back to default prefixes if the sheet XML is malformed.
+        pass
 from .utils import safe_int
 
 __all__ = [
@@ -183,6 +213,8 @@ class WorksheetPopulator:
         start_row: int,
         columns: Sequence[ColumnSpec],
     ) -> None:
+        _register_sheet_namespaces(sheet_bytes)
+
         self._ns = {"s": SPREADSHEET_NS}
         self._root = ET.fromstring(sheet_bytes)
         self._sheet_data = self._root.find("s:sheetData", self._ns)
