@@ -42,8 +42,6 @@ type PromptBuiltinContext = {
 }
 
 type PromptModelParameters = {
-  temperature: number
-  topP: number
   maxOutputTokens: number
   presencePenalty: number
   frequencyPenalty: number
@@ -1050,24 +1048,6 @@ export function AdminPromptsPage() {
                 <section className="admin-prompts__group">
                   <h3 className="admin-prompts__group-title">모델 파라미터</h3>
                   <div className="admin-prompts__model-grid">
-                    <label className="admin-prompts__model-field">
-                      <span>Temperature</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={activeConfig.modelParameters.temperature}
-                        onChange={(event) => handleModelParameterChange('temperature', Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="admin-prompts__model-field">
-                      <span>Top-p</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={activeConfig.modelParameters.topP}
-                        onChange={(event) => handleModelParameterChange('topP', Number(event.target.value))}
-                      />
-                    </label>
                     <label className="admin-prompts__model-field">
                       <span>Max Output Tokens</span>
                       <input

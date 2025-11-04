@@ -557,9 +557,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=600,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -720,9 +718,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=400,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -908,9 +904,7 @@ class AIGenerationService:
                     client.responses.create,
                     model=self._settings.openai_model,
                     input=normalized_messages,
-                    temperature=0.2,
-                    top_p=0.9,
-                    max_output_tokens=800,
+                    max_output_tokens=10000,
                 )
             except RateLimitError as exc:
                 detail = self._format_openai_error(exc)
@@ -1129,9 +1123,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=900,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -1338,9 +1330,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=normalized_messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=1800,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -1960,11 +1950,7 @@ class AIGenerationService:
                     "model": self._settings.openai_model,
                     "input": normalized_messages,
                 }
-
-                if params.temperature is not None:
-                    response_kwargs["temperature"] = params.temperature
-                if params.top_p is not None:
-                    response_kwargs["top_p"] = params.top_p
+                
                 if params.max_output_tokens is not None:
                     response_kwargs["max_output_tokens"] = (
                         params.max_output_tokens
