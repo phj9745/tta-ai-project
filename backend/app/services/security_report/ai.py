@@ -151,7 +151,7 @@ class SecurityReportAI:
         try:
             response = await asyncio.to_thread(
                 self._openai_client.responses.create,
-                model="gpt-4.1-mini",
+                model="gpt-5-mini",
                 input=prompts,
             )
         except Exception as exc:  # pragma: no cover - OpenAI client failure

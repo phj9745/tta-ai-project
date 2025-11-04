@@ -66,9 +66,7 @@ class PromptModelParameters(BaseModel):
         extra="ignore", alias_generator=_to_camel, populate_by_name=True
     )
 
-    temperature: float = 0.2
-    top_p: float = 0.9
-    max_output_tokens: int = 1500
+    max_output_tokens: int = 10000
     presence_penalty: float = 0.0
     frequency_penalty: float = 0.0
 

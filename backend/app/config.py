@@ -50,6 +50,6 @@ def load_settings() -> Settings:
         frontend_redirect_url=os.getenv("FRONTEND_REDIRECT_URL", "http://localhost:5173/"),
         tokens_path=Path(tokens_env) if tokens_env else default_tokens_path,
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
         builtin_template_root=template_root,
     )
