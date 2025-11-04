@@ -57,6 +57,7 @@ class RequiredDocument(TypedDict, total=False):
     id: str
     label: str
     allowed_extensions: List[str]
+    required: bool
 
 
 class DefectCellRewriteRequest(BaseModel):
@@ -224,11 +225,13 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
             "id": "configuration",
             "label": "형상 이미지",
             "allowed_extensions": ["png", "jpg", "jpeg"],
+            "required": False,
         },
         {
             "id": "vendor-feature-list",
             "label": "업체 기능리스트",
             "allowed_extensions": ["pdf", "docx", "xlsx"],
+            "required": False,
         },
     ],
     "testcase-generation": [
@@ -241,11 +244,13 @@ _REQUIRED_MENU_DOCUMENTS: Dict[str, List[RequiredDocument]] = {
             "id": "configuration",
             "label": "형상 이미지",
             "allowed_extensions": ["png", "jpg", "jpeg"],
+            "required": False,
         },
         {
             "id": "vendor-feature-list",
             "label": "기능리스트",
             "allowed_extensions": ["pdf", "docx", "xlsx"],
+            "required": False,
         },
     ],
 }
@@ -964,6 +969,12 @@ async def generate_project_asset(
             raise HTTPException(status_code=422, detail="필수 문서 정보가 누락되었습니다.")
 
         doc_counts = {doc["id"]: 0 for doc in required_docs}
+        mandatory_doc_ids = {
+            doc["id"]
+            for doc in required_docs
+            if doc.get("required", True)
+        }
+
         for entry in metadata_entries:
             role = entry.get("role")
             if role == "required":
@@ -978,7 +989,11 @@ async def generate_project_asset(
             else:
                 raise HTTPException(status_code=422, detail="파일 메타데이터 형식이 올바르지 않습니다.")
 
-        missing = [doc["label"] for doc in required_docs if doc_counts.get(doc["id"], 0) == 0]
+        missing = [
+            doc["label"]
+            for doc in required_docs
+            if doc["id"] in mandatory_doc_ids and doc_counts.get(doc["id"], 0) == 0
+        ]
         if missing:
             raise HTTPException(
                 status_code=422,
