@@ -10,7 +10,9 @@ import './AdminPromptsPage.css'
 
 type PromptCategory =
   | 'feature-list'
-  | 'testcase-generation'
+  | 'testcase-workflow-scenarios'
+  | 'testcase-workflow-rewrite'
+  | 'testcase-workflow-finalize'
   | 'defect-report'
   | 'security-report'
   | 'performance-report'
@@ -103,7 +105,9 @@ type PromptRequestLogResponse = {
 function isPromptCategory(value: string): value is PromptCategory {
   return (
     value === 'feature-list' ||
-    value === 'testcase-generation' ||
+    value === 'testcase-workflow-scenarios' ||
+    value === 'testcase-workflow-rewrite' ||
+    value === 'testcase-workflow-finalize' ||
     value === 'defect-report' ||
     value === 'security-report' ||
     value === 'performance-report'

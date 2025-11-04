@@ -73,6 +73,37 @@ TESTCASE_FINALIZE_SYSTEM_PROMPT = (
     "테스트케이스 표를 완성합니다."
 )
 
+TESTCASE_SCENARIO_INSTRUCTION_LINES = [
+    "각 시나리오는 '테스트 시나리오', '입력(사전조건 포함)', '기대 출력(사후조건 포함)' 키를 포함한 객체여야 합니다.",
+    '전체 응답은 {"scenarios": [...]} 형태의 JSON 한 개만 반환하고 JSON 외 텍스트는 추가하지 마세요.',
+    "'테스트 시나리오' 값은 테스트 목적을 한 문장으로 명확하게 설명해야 합니다.",
+    "'입력(사전조건 포함)' 값은 실제 예시 데이터를 포함한 단계 번호 목록을 '1. ...' 형식으로 작성하고 줄바꿈으로 구분하세요.",
+    "'기대 출력(사후조건 포함)' 값은 기대되는 시스템 반응을 한 문장으로 요약하세요.",
+    "중복되거나 의미가 겹치는 시나리오는 피하세요.",
+]
+
+TESTCASE_REWRITE_INSTRUCTION_LINES = [
+    "아래 JSON 형식으로만 응답하세요.",
+    '{"reply": "요약 또는 변경 이유", "scenarios": [{"테스트 시나리오": "...", "입력(사전조건 포함)": "...", "기대 출력(사후조건 포함)": "..."}, ...]}',
+    "scenarios 배열 길이는 최소 1개 이상이어야 하며 가능하면 현재 개수와 동일하게 유지하세요.",
+    "각 항목은 한글 레이블을 그대로 사용하고 줄바꿈은 그대로 유지하세요.",
+    "reply는 1~3문장으로 변경 사항을 요약하세요.",
+]
+
+TESTCASE_FINALIZE_INSTRUCTION_LINES = [
+    "위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
+    "각 열은 파이프(|) 기호로 구분합니다.",
+    "각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고 XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
+    "'테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼 간결하고 자연스러운 한 문장으로 작성하세요.",
+    "'입력(사전조건 포함)' 열은 실제 예시값을 포함한 단계 번호 목록을 작성하고 각 단계는 '1. ...' 형식으로 시작하며 줄바꿈으로 구분하세요.",
+    "'기대 출력(사후조건 포함)' 열은 기대 결과를 한 문장으로 요약하고 안내 문구나 불필요한 설명을 추가하지 마세요.",
+    "테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
+    "여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
+    "아래 예시 형식을 참고하세요. 각 열은 파이프(|)로 구분됩니다.",
+    "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | ",
+    "CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
+]
+
 
 @dataclass
 class UploadContext:
@@ -220,6 +251,15 @@ class AIGenerationService:
             return "image"
 
         return "file"
+
+    @staticmethod
+    def _render_prompt_template(
+        template: str, replacements: Mapping[str, str]
+    ) -> str:
+        result = template or ""
+        for key, value in replacements.items():
+            result = result.replace(f"{{{{{key}}}}}", value)
+        return result
 
     @classmethod
     def _normalize_upload_for_openai(cls, upload: BufferedUpload) -> BufferedUpload:
@@ -866,34 +906,74 @@ class AIGenerationService:
             description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
             overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
 
-            instructions = [
-                f"다음 기능에 대해 {normalized_count}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.",
-                "각 시나리오는 '테스트 시나리오', '입력(사전조건 포함)', '기대 출력(사후조건 포함)' 키를 포함한 객체여야 합니다.",
-                "전체 응답은 {\"scenarios\": [...]} 형태의 JSON 한 개만 반환하고 JSON 외 텍스트는 추가하지 마세요.",
-                "'테스트 시나리오' 값은 테스트 목적을 한 문장으로 명확하게 설명해야 합니다.",
-                "'입력(사전조건 포함)' 값은 실제 예시 데이터를 포함한 단계 번호 목록을 '1. ...' 형식으로 작성하고 줄바꿈으로 구분하세요.",
-                "'기대 출력(사후조건 포함)' 값은 기대되는 시스템 반응을 한 문장으로 요약하세요.",
-                "중복되거나 의미가 겹치는 시나리오는 피하세요.",
-            ]
+            try:
+                prompt_config = self._prompt_config_service.get_runtime_prompt(
+                    "testcase-workflow-scenarios"
+                )
+            except KeyError:
+                prompt_config = None
 
-            user_prompt_parts = [
-                "프로젝트 개요:",
-                overview_text,
-                "",
-                "기능 분류:",
-                "\n".join(feature_lines),
-                "",
-                "기능 설명:",
-                description_text,
-                "",
-                "지시사항:",
-                "\n".join(f"- {line}" for line in instructions),
-            ]
+            system_prompt = (
+                prompt_config.system_prompt.strip()
+                if prompt_config and prompt_config.system_prompt.strip()
+                else TESTCASE_SCENARIO_SYSTEM_PROMPT
+            )
 
-            user_prompt = "\n".join(part for part in user_prompt_parts if part is not None)
+            template = (
+                prompt_config.user_prompt.strip()
+                if prompt_config and prompt_config.user_prompt.strip()
+                else (
+                    "다음 기능에 대해 {{scenario_count}}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.\n"
+                    "프로젝트 개요:\n{{project_overview}}\n\n"
+                    "기능 분류:\n{{feature_classification}}\n\n"
+                    "기능 설명:\n{{feature_description}}"
+                )
+            )
+
+            section_blocks: List[str] = []
+            if prompt_config:
+                for section in prompt_config.user_prompt_sections:
+                    if not section.enabled:
+                        continue
+                    label = section.label.strip()
+                    content = section.content.strip()
+                    if label and content:
+                        section_blocks.append(f"{label}\n{content}")
+                    elif label or content:
+                        section_blocks.append(label or content)
+            if not section_blocks:
+                fallback_instructions = "\n".join(
+                    f"- {line}" for line in TESTCASE_SCENARIO_INSTRUCTION_LINES
+                )
+                section_blocks.append(f"지시사항:\n{fallback_instructions}")
+
+            instruction_block = "\n\n".join(
+                part for part in section_blocks if part.strip()
+            ).strip()
+
+            replacements = {
+                "project_overview": overview_text,
+                "feature_classification": "\n".join(feature_lines),
+                "feature_description": description_text,
+                "scenario_count": str(normalized_count),
+                "instruction_block": instruction_block,
+            }
+
+            rendered_prompt = self._render_prompt_template(template, replacements).strip()
+            if instruction_block and "{{instruction_block}}" not in template:
+                user_prompt = "\n\n".join(
+                    part for part in [rendered_prompt, instruction_block] if part
+                ).strip()
+            else:
+                user_prompt = rendered_prompt
+
+            model_params = prompt_config.model_parameters if prompt_config else None
+            temperature = getattr(model_params, "temperature", 0.2)
+            top_p = getattr(model_params, "top_p", 0.9)
+            max_output_tokens = getattr(model_params, "max_output_tokens", 800)
 
             messages = [
-                OpenAIMessageBuilder.text_message("system", TESTCASE_SCENARIO_SYSTEM_PROMPT),
+                OpenAIMessageBuilder.text_message("system", system_prompt),
                 OpenAIMessageBuilder.text_message(
                     "user",
                     user_prompt,
@@ -908,9 +988,9 @@ class AIGenerationService:
                     client.responses.create,
                     model=self._settings.openai_model,
                     input=normalized_messages,
-                    temperature=0.2,
-                    top_p=0.9,
-                    max_output_tokens=800,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_output_tokens=max_output_tokens,
                 )
             except RateLimitError as exc:
                 detail = self._format_openai_error(exc)
@@ -1069,44 +1149,76 @@ class AIGenerationService:
         ]
         description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
 
-        response_instructions = [
-            "아래 JSON 형식으로만 응답하세요.",
-            (
-                '{"reply": "요약 또는 변경 이유", "scenarios": '
-                '[{"테스트 시나리오": "...", "입력(사전조건 포함)": "...", '
-                '"기대 출력(사후조건 포함)": "..."}, ...]}'
-            ),
-            "scenarios 배열 길이는 최소 1개 이상이어야 하며 가능하면 현재 개수와 동일하게 유지하세요.",
-            "각 항목은 한글 레이블을 그대로 사용하고 줄바꿈은 그대로 유지하세요.",
-            "reply는 1~3문장으로 변경 사항을 요약하세요.",
-        ]
-
-        user_parts = [
-            "프로젝트 개요:",
-            overview_text,
-            "",
-            "기능 분류:",
-            "\n".join(feature_lines),
-            "",
-            "기능 설명:",
-            description_text,
-            "",
-            "현재 테스트케이스:",
-            "\n".join(scenario_lines),
-            "",
-            "사용자 요청:",
-            normalized_instructions,
-            "",
-            "응답 형식 지침:",
-            "\n".join(f"- {line}" for line in response_instructions),
-        ]
-
-        user_prompt = "\n".join(part for part in user_parts if part is not None)
+        try:
+            prompt_config = self._prompt_config_service.get_runtime_prompt(
+                "testcase-workflow-rewrite"
+            )
+        except KeyError:
+            prompt_config = None
 
         system_prompt = (
-            "당신은 소프트웨어 테스트 전문가입니다. "
-            "사용자의 테스트케이스를 개선하고 명확하게 다듬어 주세요."
+            prompt_config.system_prompt.strip()
+            if prompt_config and prompt_config.system_prompt.strip()
+            else (
+                "당신은 소프트웨어 테스트 전문가입니다. "
+                "사용자의 테스트케이스를 개선하고 명확하게 다듬어 주세요."
+            )
         )
+
+        template = (
+            prompt_config.user_prompt.strip()
+            if prompt_config and prompt_config.user_prompt.strip()
+            else (
+                "프로젝트 개요:\n{{project_overview}}\n\n"
+                "기능 분류:\n{{feature_classification}}\n\n"
+                "기능 설명:\n{{feature_description}}\n\n"
+                "현재 테스트케이스:\n{{current_scenarios}}\n\n"
+                "사용자 요청:\n{{user_request}}"
+            )
+        )
+
+        section_blocks: List[str] = []
+        if prompt_config:
+            for section in prompt_config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label = section.label.strip()
+                content = section.content.strip()
+                if label and content:
+                    section_blocks.append(f"{label}\n{content}")
+                elif label or content:
+                    section_blocks.append(label or content)
+        if not section_blocks:
+            fallback_instructions = "\n".join(
+                f"- {line}" for line in TESTCASE_REWRITE_INSTRUCTION_LINES
+            )
+            section_blocks.append(f"응답 형식 지침:\n{fallback_instructions}")
+
+        instruction_block = "\n\n".join(
+            part for part in section_blocks if part.strip()
+        ).strip()
+
+        replacements = {
+            "project_overview": overview_text,
+            "feature_classification": "\n".join(feature_lines),
+            "feature_description": description_text,
+            "current_scenarios": "\n".join(scenario_lines),
+            "user_request": normalized_instructions,
+            "instruction_block": instruction_block,
+        }
+
+        rendered_prompt = self._render_prompt_template(template, replacements).strip()
+        if instruction_block and "{{instruction_block}}" not in template:
+            user_prompt = "\n\n".join(
+                part for part in [rendered_prompt, instruction_block] if part
+            ).strip()
+        else:
+            user_prompt = rendered_prompt
+
+        model_params = prompt_config.model_parameters if prompt_config else None
+        temperature = getattr(model_params, "temperature", 0.2)
+        top_p = getattr(model_params, "top_p", 0.9)
+        max_output_tokens = getattr(model_params, "max_output_tokens", 900)
 
         messages = [OpenAIMessageBuilder.text_message("system", system_prompt)]
 
@@ -1129,9 +1241,9 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=900,
+                temperature=temperature,
+                top_p=top_p,
+                max_output_tokens=max_output_tokens,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -1154,7 +1266,7 @@ class AIGenerationService:
                 "Unexpected error while requesting testcase rewrite",
                 extra={
                     "project_id": project_id,
-                    "menu_id": "testcase-generation",
+                    "menu_id": "testcase-workflow-rewrite",
                 },
             )
             raise HTTPException(
@@ -1297,37 +1409,73 @@ class AIGenerationService:
         overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
         headers_text = ", ".join(TESTCASE_EXPECTED_HEADERS)
 
-        user_prompt_parts = [
-            "프로젝트 개요:",
-            overview_text,
-            "",
-            "기능별 시나리오 요약:",
-            summary_text,
-            "",
-            "작성 지침:",
-            "- 위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
-            f"- CSV 열은 {headers_text} 순서를 따릅니다.",
-            "- 각 열은 파이프(|) 기호로 구분합니다.",
-            "- 각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고",
-            "  XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
-            "- '테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼",
-            "  간결하고 자연스러운 한 문장으로 작성하세요.",
-            "- '입력(사전조건 포함)' 열은 실제 예시값을 포함한 단계 번호 목록을 작성하고 각 단계는",
-            "  '1. ...' 형식으로 시작하며 줄바꿈으로 구분하세요.",
-            "- '기대 출력(사후조건 포함)' 열은 기대 결과를 한 문장으로 요약하고 안내 문구나 불필요한 설명을",
-            "  추가하지 마세요.",
-            "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
-            "- 여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
-            "- 출력 예시는 아래와 같이 작성합니다 (각 열은 파이프(|)로 구분됩니다):",
-            "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | ",
-            "- CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
-        ]
+        try:
+            prompt_config = self._prompt_config_service.get_runtime_prompt(
+                "testcase-workflow-finalize"
+            )
+        except KeyError:
+            prompt_config = None
 
-        user_prompt = "\n".join(user_prompt_parts)
+        system_prompt = (
+            prompt_config.system_prompt.strip()
+            if prompt_config and prompt_config.system_prompt.strip()
+            else TESTCASE_FINALIZE_SYSTEM_PROMPT
+        )
+
+        template = (
+            prompt_config.user_prompt.strip()
+            if prompt_config and prompt_config.user_prompt.strip()
+            else (
+                "프로젝트 개요:\n{{project_overview}}\n\n"
+                "기능별 시나리오 요약:\n{{scenario_summary}}\n\n"
+                "CSV 열은 {{csv_headers}} 순서를 따릅니다."
+            )
+        )
+
+        section_blocks: List[str] = []
+        if prompt_config:
+            for section in prompt_config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label = section.label.strip()
+                content = section.content.strip()
+                if label and content:
+                    section_blocks.append(f"{label}\n{content}")
+                elif label or content:
+                    section_blocks.append(label or content)
+        if not section_blocks:
+            fallback_instructions = "\n".join(
+                f"- {line}" for line in TESTCASE_FINALIZE_INSTRUCTION_LINES
+            )
+            section_blocks.append(f"작성 지침:\n- CSV 열은 {headers_text} 순서를 따릅니다.\n{fallback_instructions}")
+
+        instruction_block = "\n\n".join(
+            part for part in section_blocks if part.strip()
+        ).strip()
+
+        replacements = {
+            "project_overview": overview_text,
+            "scenario_summary": summary_text,
+            "csv_headers": headers_text,
+            "instruction_block": instruction_block,
+        }
+
+        rendered_prompt = self._render_prompt_template(template, replacements).strip()
+        if instruction_block and "{{instruction_block}}" not in template:
+            user_prompt = "\n\n".join(
+                part for part in [rendered_prompt, instruction_block] if part
+            ).strip()
+        else:
+            user_prompt = rendered_prompt
+
+        model_params = prompt_config.model_parameters if prompt_config else None
+        temperature = getattr(model_params, "temperature", 0.2)
+        top_p = getattr(model_params, "top_p", 0.9)
+        max_output_tokens = getattr(model_params, "max_output_tokens", 1800)
 
         client = self._get_client()
         messages = [
-            OpenAIMessageBuilder.text_message("system", TESTCASE_FINALIZE_SYSTEM_PROMPT),
+            OpenAIMessageBuilder.text_message("system", system_prompt),
             OpenAIMessageBuilder.text_message("user", user_prompt),
         ]
 
@@ -1338,9 +1486,9 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=normalized_messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=1800,
+                temperature=temperature,
+                top_p=top_p,
+                max_output_tokens=max_output_tokens,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -1361,7 +1509,10 @@ class AIGenerationService:
         except Exception as exc:  # pragma: no cover - 안전망
             logger.exception(
                 "Unexpected error while finalising testcases",
-                extra={"project_id": project_id},
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "testcase-workflow-finalize",
+                },
             )
             raise HTTPException(
                 status_code=502,
