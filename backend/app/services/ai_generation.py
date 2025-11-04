@@ -1020,6 +1020,34 @@ class AIGenerationService:
 
             response_text = self._extract_response_text(response) or ""
             cleaned = self._sanitize_json(response_text)
+
+            if self._request_log_service is not None:
+                summary_lines = [
+                    f"대분류: {major_category or '-'}",
+                    f"중분류: {middle_category or '-'}",
+                    f"소분류: {minor_category or '-'}",
+                    f"요청 시나리오 수: {normalized_count}",
+                ]
+                if attachments_payload:
+                    summary_lines.append(f"첨부 자료: {len(attachments_payload)}개")
+
+                try:
+                    self._request_log_service.record_request(
+                        project_id=project_id,
+                        menu_id="testcase-workflow-scenarios",
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        context_summary="\n".join(summary_lines),
+                        response_text=cleaned or response_text,
+                    )
+                except Exception:  # pragma: no cover - logging must not fail request
+                    logger.exception(
+                        "Failed to record prompt request log",
+                        extra={
+                            "project_id": project_id,
+                            "menu_id": "testcase-workflow-scenarios",
+                        },
+                    )
             try:
                 payload = json.loads(cleaned)
             except json.JSONDecodeError as exc:
@@ -1277,6 +1305,38 @@ class AIGenerationService:
         response_text = self._extract_response_text(response) or ""
         cleaned = self._sanitize_json(response_text)
 
+        if self._request_log_service is not None:
+            summary_lines = [
+                f"대분류: {major_category or '-'}",
+                f"중분류: {middle_category or '-'}",
+                f"소분류: {minor_category or '-'}",
+                f"테스트케이스 수: {len(normalized_scenarios)}",
+            ]
+
+            request_snippet = normalized_instructions
+            if len(request_snippet) > 120:
+                request_snippet = request_snippet[:117].rstrip() + "..."
+            if request_snippet:
+                summary_lines.append(f"사용자 요청: {request_snippet}")
+
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="testcase-workflow-rewrite",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary="\n".join(summary_lines),
+                    response_text=cleaned or response_text,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={
+                        "project_id": project_id,
+                        "menu_id": "testcase-workflow-rewrite",
+                    },
+                )
+
         try:
             payload = json.loads(cleaned)
         except json.JSONDecodeError as exc:
@@ -1523,6 +1583,31 @@ class AIGenerationService:
         sanitized = self._sanitize_csv(response_text)
         if not sanitized:
             raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+
+        if self._request_log_service is not None:
+            summary_lines = [
+                f"프로젝트 개요 길이: {len(overview_text)}자",
+                f"요약 블록 수: {len(summary_blocks)}",
+                f"총 시나리오 수: {total_scenarios}",
+            ]
+
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="testcase-workflow-finalize",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary="\n".join(summary_lines),
+                    response_text=sanitized,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={
+                        "project_id": project_id,
+                        "menu_id": "testcase-workflow-finalize",
+                    },
+                )
 
         encoded = sanitized.encode("utf-8-sig")
         timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
