@@ -1,160 +1,187 @@
-물론이죠. 아래는 IH King님의 원본 README 내용을 **리드미다운 자연스러운 서술과 구조**로 정리한 버전입니다.
-경로나 코드 라인 정보 없이, 프로젝트의 목적과 주요 기능을 명확히 전달하는 형태로 다듬었습니다 👇
+# 🧪 TestMate
+
+TestMate는 Google Drive 기반 프로젝트 자료를 활용해 기능 정의서, 테스트케이스, 결함·보안·성능 리포트까지 한 번에 만들어 주는 AI 업무 자동화 허브입니다. 반복적인 문서화 작업을 줄이고, 운영자가 직접 프롬프트와 템플릿을 다듬어 조직 맞춤형 산출물을 얻을 수 있도록 설계되었습니다.
 
 ---
 
-# 🧠 TTA AI Project Hub (tta-ai-project)
-
-**TTA AI Project Hub**는 *AI-ON 업무혁신 공모전*을 위해 제작된 **AI 업무 자동화 및 문서 생성 플랫폼**입니다.
-Google Drive와 연동하여 프로젝트 자료를 관리하고, AI를 활용해 기능 리스트·테스트케이스·리포트 등을 자동 생성할 수 있으며, 관리자 전용 **프롬프트 관리 기능**도 제공합니다.
-
----
-
-## 🌐 주요 기능 개요
-
-### 🏠 공통 상단 (AppShell)
-
-로그인 후 모든 화면의 상단에는 세 가지 주요 버튼이 고정 노출됩니다:
-
-* **Google Drive** → 프로젝트 전용 Google Drive 워크스페이스를 새 창으로 열기
-* **프롬프트 관리자** → 관리자 전용 프롬프트 설정 페이지(`/admin/prompts`)로 이동
-* **로그아웃** → 저장된 인증 정보를 삭제하고 로그인 페이지로 복귀
+## 📚 목차
+- [핵심 가치](#핵심-가치)
+- [주요 기능](#주요-기능)
+- [시스템 구성](#시스템-구성)
+- [시작하기](#시작하기)
+  - [사전 준비](#사전-준비)
+  - [환경 변수 설정](#환경-변수-설정)
+  - [실행 방법](#실행-방법)
+- [테스트](#테스트)
+- [프로젝트 구조](#프로젝트-구조)
+- [프롬프트 및 템플릿 관리 팁](#프롬프트-및-템플릿-관리-팁)
 
 ---
 
-### 🔐 로그인 페이지
-
-* Google OAuth를 통해 로그인하며, 인증 성공 시 `/projects` 페이지로 이동합니다.
-* 실패 시 오류 메시지를 표시하고 인증 정보를 초기화합니다.
-* 로그인되지 않은 사용자는 항상 로그인 화면으로 리디렉션됩니다.
-
----
-
-### 📁 Drive 프로젝트 페이지
-
-Google Drive와 연동된 프로젝트를 생성·선택·관리할 수 있습니다.
-
-**주요 기능**
-
-* **Drive 상태 확인**: Drive 루트 폴더를 자동 생성 또는 조회
-* **다시 시도**: 오류 발생 시 상태 재확인
-* **프로젝트 선택 리스트**: 기존 프로젝트 폴더 클릭 시 상세 관리 화면으로 이동
-* **새 프로젝트 만들기**:
-
-  * 필수 파일 검증
-  * 업로드 진행 중 로딩 오버레이 표시
-  * 오류 발생 시 상세 메시지 표시
+<a id="핵심-가치"></a>
+## 💡 핵심 가치
+- **현업 친화성**: 기존 Google Drive 워크플로를 그대로 사용하면서 AI 생성 기능만 덧붙여, 추가 도구 학습 없이 빠르게 도입할 수 있습니다.
+- **품질 통제력**: 관리자 페이지에서 프롬프트, 첨부 설명 템플릿, 내장 컨텍스트를 직접 조정해 조직별 산출물 품질을 통제할 수 있습니다.
+- **확장 가능성**: React + FastAPI + OpenAI Responses API로 구성된 모듈형 아키텍처를 사용해 새로운 문서 유형과 외부 연동을 쉽게 추가할 수 있습니다.
 
 ---
 
-### ⚙️ 프로젝트 관리 페이지
+<a id="주요-기능"></a>
+## 🚀 주요 기능
+### 1. Google Drive 프로젝트 허브
+- 로그인 후 Drive 루트 폴더 상태를 점검하고, 필요한 경우 자동으로 생성합니다.
+- 기존 프로젝트 폴더를 한눈에 확인하고, 새 프로젝트를 생성하거나 삭제할 수 있습니다.
+- 오류 발생 시 다시 시도, 상세 메시지 확인, 성공 알림 등을 제공해 운영자가 즉시 대응할 수 있습니다.
 
-선택한 프로젝트의 문서를 기반으로 AI 생성 업무를 수행하는 핵심 화면입니다.
-좌측 메뉴에서 다섯 가지 생성 유형을 전환할 수 있습니다:
+### 2. 문서 생성 & 편집 워크플로
+프로젝트 관리 페이지에서 아래 메뉴를 전환하며 모든 문서 작업을 수행합니다.
 
-| 업무 구분     | 설명                   |
-| --------- | -------------------- |
-| 기능 리스트    | 기능 문서 자동 생성          |
-| 테스트케이스    | 요구사항 기반 테스트케이스 생성    |
-| 결함 리포트    | 결함 요약 및 분석 리포트 생성    |
-| 보안성 리포트   | 보안 항목 점검 결과 보고서 생성   |
-| 성능 평가 리포트 | 성능 측정 및 평가 요약 리포트 생성 |
+| 메뉴 | 설명 |
+| --- | --- |
+| **형상 이미지 추출** | 시연 동영상을 업로드하면 장면 전환을 감지해 주요 화면 이미지를 자동 추출합니다. |
+| **기능리스트 생성** | 요구사항 문서를 분석해 기능 대·중·소 분류와 근거 자료가 포함된 CSV를 생성합니다. |
+| **테스트케이스 생성/보정** | 기능리스트 기반 테스트 시나리오를 생성하고, 행별 수정, 최종 확정, XLSX 내보내기까지 한 화면에서 지원합니다. |
+| **결함 리포트** | 결함 요약을 CSV로 생성하고, 확정된 행을 Google 스프레드시트에 직접 반영할 수 있습니다. |
+| **보안성 리포트** | 사전 정의된 보안 점검 항목과 첨부 자료를 활용해 자동으로 리포트를 작성합니다. |
+| **성능 리포트** | 성능 측정 로그와 OS 정보를 업로드하면 자동 요약과 권장 사항을 정리합니다. |
 
-**기능 상세**
+공통 기능으로는 파일 확장자 제한, 필수 문서 검증, 업로드 진행 표시, AI 호출 중단(AbortController) 처리, CSV/XLSX 다운로드, 상태 메시지/경고 표시 등이 포함됩니다.
 
-* **파일 업로더(FileUploader)**
-
-  * 업무별 필수 문서 조건과 확장자 제한
-  * 추가 파일 설명 입력 필드 제공
-* **생성하기 버튼**
-
-  * 선택한 파일과 메뉴 ID를 `/drive/projects/:id/generate`로 전송
-  * 중복 요청 방지(AI 호출 시 AbortController 사용)
-* **결함 리포트 최종 반영**
-
-  * `menu_id=defect-report`로 동일 엔드포인트를 호출할 때 정제된 행 데이터를 함께 전송합니다.
-  * `FormData`에는 `rows`(행 목록 JSON)와 `attachment_names`(결함 순번·첨부 파일명 JSON) 필드가 포함됩니다.
-  * 백엔드는 `rows` 필드를 감지하면 OpenAI 호출을 건너뛰고 곧바로 Google 스프레드시트를 업데이트합니다.
-* **CSV 다운로드**
-
-  * AI 생성 결과를 CSV 파일로 저장
-* **다시 생성하기**
-
-  * 상태 초기화 후 재업로드 및 재생성
-* **상태 메시지 영역**
-
-  * 로딩, 성공, 오류 등 실시간 상태 표시
+### 3. 관리자 프롬프트 스튜디오
+- 프롬프트 카테고리별로 시스템/사용자 프롬프트, 평가 기준, 모델 파라미터를 편집하고 기본값으로 복원할 수 있습니다.
+- 첨부 설명 템플릿과 안내 문구를 커스터마이징해 AI가 파일 맥락을 이해하도록 돕습니다.
+- 내장 컨텍스트(XLSX, PDF 등)를 업로드하여 모든 생성 요청에 기본 자료를 포함시킬 수 있습니다.
+- 최근 요청 로그를 확인해 문제 상황을 진단하고, 프롬프트 변경 효과를 빠르게 검증합니다.
 
 ---
 
-### 🧩 관리자 페이지 (프롬프트 관리자)
+<a id="시스템-구성"></a>
+## 🏗️ 시스템 구성
+```
+frontend/ (React + Vite)
+  ├─ pages/ (로그인, Drive 설정, 프로젝트 관리, 프롬프트 관리자)
+  ├─ components/ (파일 업로드, 워크플로, 레이아웃 컴포넌트)
+  └─ app/ (라우팅, 인증 상태, 백그라운드 작업 컨텍스트)
 
-관리자는 `/admin/prompts` 페이지에서 AI 프롬프트 구성을 직접 관리할 수 있습니다.
+backend/ (FastAPI)
+  ├─ routes/ (auth, drive, prompts API)
+  ├─ services/
+  │    ├─ google_drive/ (폴더 관리, 시트 업데이트, 파일 변환)
+  │    ├─ ai_generation/ (OpenAI Responses API 요청, CSV/XLSX 작성)
+  │    ├─ security_report/, performance_report/ (특화 리포트 생성)
+  │    └─ prompt_config/ (프롬프트 저장소, 내장 컨텍스트 로딩)
+  ├─ template/ (기본 제공 문서 템플릿)
+  └─ app/config.py (환경 변수 로딩, 토큰 저장 경로 설정)
+```
 
-**주요 기능**
-
-* **기본값 적용**: 서버의 초기 프롬프트 설정으로 복원
-* **되돌리기**: 수정 내용을 원본 상태로 복귀
-* **저장**: 수정된 프롬프트를 백엔드에 반영
-* **프롬프트 카테고리 선택**: 기능리스트, 테스트케이스 등 유형별 설정 관리
-* **시스템/사용자 프롬프트 편집**: 즉시 미리보기 반영
-* **지침 추가/삭제**: 사용자 지침 블록 생성 및 관리
-* **첨부 안내 문구 설정**: 첨부 섹션의 제목, 소개, 경고문 등을 자유롭게 수정
-* **첨부 설명 템플릿 관리**: 첨부 파일을 모델에 전달할 때의 표시 형식 정의
-* **내장 컨텍스트 추가**: 사전 제공 문서 등록(XLSX, PDF 등) 및 프롬프트 포함 여부 지정
-* **미리보기 및 전체화면 보기**: 현재 설정으로 생성될 프롬프트를 실시간 확인
-* **최근 요청 로그 확인**: `/admin/prompts/logs` API에서 최근 5건 요청 이력 조회
-
----
-
-## 🧾 첨부 설명 템플릿 키 (Attachment Template Keys)
-
-관리자는 첨부 파일의 설명을 렌더링할 때 아래의 플레이스홀더를 자유롭게 활용할 수 있습니다.
-
-| 키                     | 설명                         |
-| --------------------- | -------------------------- |
-| `{{index}}`           | 첨부 순번 (1부터 시작)             |
-| `{{descriptor}}`      | 파일 이름과 확장자 조합 기본 설명        |
-| `{{label}}`           | 사용자가 입력한 별칭 (없으면 파일 이름)    |
-| `{{description}}`     | 파일 설명                      |
-| `{{extension}}`       | 파일 확장자 (예: pdf, pptx, png) |
-| `{{doc_id}}`          | 필수 문서 식별자 (없으면 빈 문자열)      |
-| `{{notes}}`           | 추가 비고                      |
-| `{{source_path}}`     | 원본 경로                      |
-| `{{context_summary}}` | 첨부된 모든 파일의 요약 목록 (쉼표로 연결)  |
-
-이 템플릿 시스템을 통해 첨부 문서를 일관된 포맷으로 구성하여 AI 모델에 전달할 수 있습니다.
+### 외부 연동
+- **Google OAuth 2.0 & Drive API**: 프로젝트 폴더 생성/삭제, 시트 업데이트, 파일 추출을 담당합니다.
+- **OpenAI Responses API**: 기능리스트, 테스트케이스, 각종 리포트 생성을 위한 핵심 언어 모델을 호출합니다.
+- **CSV/XLSX 처리**: `pandas`, `openpyxl`, `xlrd` 등을 사용해 생성 결과를 표준 문서 형식으로 제공합니다.
 
 ---
 
-## 🧠 기술 스택
+<a id="시작하기"></a>
+## 🔧 시작하기
+### 사전 준비
+- Python 3.12+
+- Node.js 20+
+- Google Cloud에서 발급한 OAuth 클라이언트 (Drive API 권한 필요)
+- OpenAI API 키 (Responses API 지원 모델)
 
-| 구분                | 기술                      |
-| ----------------- | ----------------------- |
-| **Frontend**      | React, TypeScript, Vite |
-| **Auth**          | Google OAuth 2.0        |
-| **Backend 연동**    | FastAPI REST API        |
-| **Storage**       | Google Drive API        |
-| **AI Generation** | OpenAI Responses API    |
-| **UI Framework**  | Tailwind CSS            |
+### 환경 변수 설정
+1. `backend/.env` 파일을 생성하고 아래 예시를 참고해 값을 입력하세요.
+   ```env
+   GOOGLE_CLIENT_ID=your-google-oauth-client-id
+   GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
+   GOOGLE_REDIRECT_URI=https://your.backend.host/auth/google/callback
+   FRONTEND_REDIRECT_URL=http://localhost:5173/auth/callback
+   OPENAI_API_KEY=sk-...
+   OPENAI_MODEL=gpt-5-mini
+   # 선택 사항
+   GOOGLE_TOKEN_DB_PATH=/workspace/tta-ai-project/backend/app/google_tokens.db
+   BUILTIN_TEMPLATE_ROOT=/workspace/tta-ai-project/backend/template
+   ```
+   > `GOOGLE_TOKEN_DB_PATH`를 지정하지 않으면 `backend/app/google_tokens.db`가 사용됩니다. 프롬프트 설정은 같은 폴더의 `prompt_configs.json`에 저장됩니다.
+
+2. 프런트엔드에서 사용할 백엔드 주소가 기본값(`http://localhost:8000`)과 다르면 `frontend/.env` 파일에 아래 항목을 추가합니다.
+   ```env
+   VITE_BACKEND_URL=https://your.backend.host
+   ```
+
+### 실행 방법
+#### 1) Docker Compose (권장)
+```bash
+# 저장소 클론 후 최상위 디렉터리에서 실행
+docker compose up --build
+```
+- 프런트엔드: http://localhost:5173
+- 백엔드: http://localhost:8000
+
+#### 2) 로컬 개발 환경
+1. **백엔드**
+   ```bash
+   cd backend
+   python -m venv .venv
+   source .venv/bin/activate  # Windows는 .venv\Scripts\activate
+   pip install -r requirements.txt
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+2. **프런트엔드**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev -- --host 0.0.0.0 --port 5173
+   ```
+
+> Google OAuth Redirect URI에는 `https://<backend-host>/auth/google/callback`이 등록되어 있어야 합니다. 로컬 개발 시에는 `http://localhost:8000/auth/google/callback`을 허용하세요.
 
 ---
 
-## 🚀 프로젝트 특징
-
-* **Google Drive 완전 연동형 문서 생성 허브**
-* **AI Responses API 기반 실시간 업무문서 생성**
-* **내장 템플릿(`builtin_contexts`)을 통한 표준 프롬프트 관리**
-* **관리자용 실시간 프롬프트 미리보기 및 로그 추적**
-* **파일 업로드·생성·다운로드를 하나의 워크플로로 통합**
+<a id="테스트"></a>
+## ✅ 테스트
+- **백엔드**: `cd backend && pytest`
+- **프런트엔드**: `cd frontend && npm run test`
 
 ---
 
-## 💬 예시 사용 흐름
+<a id="프로젝트-구조"></a>
+## 🗂️ 프로젝트 구조
+```
+tta-ai-project/
+├─ README.md
+├─ docker-compose.yml
+├─ backend/
+│  ├─ app/
+│  │  ├─ routes/
+│  │  ├─ services/
+│  │  ├─ dependencies.py
+│  │  ├─ config.py
+│  │  └─ main.py
+│  ├─ template/
+│  ├─ tests/
+│  ├─ requirements.txt
+│  └─ Dockerfile
+└─ frontend/
+   ├─ src/
+   │  ├─ pages/
+   │  ├─ components/
+   │  ├─ app/
+   │  └─ config.ts
+   ├─ public/
+   ├─ package.json
+   └─ Dockerfile
+```
 
-1. Google 계정으로 로그인
-2. Drive 내 기존 프로젝트 선택 또는 새 프로젝트 생성
-3. 업무별 필수 문서를 업로드 (예: 기능리스트, 테스트케이스 등)
-4. **“생성하기”** 클릭 → AI가 결과 CSV 자동 생성
-5. **CSV 다운로드**로 결과 확인
-6. 필요 시 관리자 페이지에서 프롬프트 수정 및 재실행
+---
+
+<a id="프롬프트-및-템플릿-관리-팁"></a>
+## 🧾 프롬프트 및 템플릿 관리 팁
+- **첨부 설명 템플릿 키**: `{{index}}`, `{{descriptor}}`, `{{label}}`, `{{description}}`, `{{extension}}`, `{{doc_id}}`, `{{notes}}`, `{{source_path}}`, `{{context_summary}}` 등을 조합해 파일 목록을 원하는 형식으로 렌더링할 수 있습니다.
+- **내장 컨텍스트**: `backend/template` 아래에 배치하면 관리자 페이지에서 추가/삭제 여부를 제어할 수 있으며, `BUILTIN_TEMPLATE_ROOT` 환경 변수를 통해 다른 경로도 지정할 수 있습니다.
+- **요청 로그**: `prompt_requests.log` 파일에 최근 프롬프트 호출 내역이 저장됩니다. 생성 품질이나 오류를 분석할 때 유용합니다.
+- **Google 토큰 저장소**: 다수의 계정을 운용할 경우 `backend/app/google_tokens.db` 파일을 백업해두면 재인증 과정을 줄일 수 있습니다.
+
+---
+
+TestMate는 반복 문서 업무를 자동화하면서도 운영자가 품질을 직접 제어할 수 있는 실용적인 AI 파트너입니다. 새로운 문서 유형이나 외부 연동 아이디어가 있다면 `docs/COLLABORATION_GUIDE.md`를 참고해 함께 발전시켜 주세요!
