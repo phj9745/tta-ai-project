@@ -52,8 +52,23 @@ export function AppShell({
             {leadingAction ? (
               <div className="app-shell__leading-action">{leadingAction}</div>
             ) : null}
-            <button type="button" className="app-shell__brand-button" onClick={onBrandClick}>
-              <span className="app-shell__brand">TestMate</span>
+            <button
+              type="button"
+              className="app-shell__brand-button"
+              onClick={onBrandClick}
+              aria-label="프로젝트 선택 화면으로 이동"
+            >
+              <span className="app-shell__brand-mark" aria-hidden="true">
+                <span className="app-shell__brand-mark-glow" />
+                <span className="app-shell__brand-initials">TM</span>
+              </span>
+              <span className="app-shell__brand-wordmark">
+                <span className="app-shell__brand-text">
+                  <span className="app-shell__brand-primary">Test</span>
+                  <span className="app-shell__brand-highlight">Mate</span>
+                </span>
+                <span className="app-shell__brand-tagline">QA Workspace</span>
+              </span>
             </button>
           </div>
           <div className="app-shell__header-right">

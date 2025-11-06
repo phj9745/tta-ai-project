@@ -1286,7 +1286,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <polyline points="15 6 9 12 15 18" />
+              <rect x="4" y="4" width="4" height="16" rx="1.5" />
+              <path d="M15 8L11 12L15 16" />
+              <line x1="20" y1="5" x2="20" y2="19" />
             </svg>
           ) : (
             <svg
@@ -1297,9 +1299,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <line x1="4" y1="6" x2="20" y2="6" />
-              <line x1="4" y1="12" x2="20" y2="12" />
-              <line x1="4" y1="18" x2="16" y2="18" />
+              <rect x="4" y="4" width="4" height="16" rx="1.5" />
+              <path d="M10 8L14 12L10 16" />
+              <line x1="18" y1="5" x2="18" y2="19" />
             </svg>
           )}
         </span>
