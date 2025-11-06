@@ -12,6 +12,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1.5rem;
   padding: 1.25rem clamp(1.5rem, 4vw, 3.5rem);
   background: rgba(15, 23, 42, 0.92);
   color: white;
@@ -19,12 +20,53 @@
   backdrop-filter: blur(12px);
 }
 
+.app-shell__header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-shell__leading-action {
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-shell__brand-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-shell__brand-button:hover,
+.app-shell__brand-button:focus-visible {
+  background: rgba(148, 163, 184, 0.22);
+  color: #f8fafc;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.24);
+}
+
+.app-shell__brand-button:focus-visible {
+  outline: 2px solid rgba(226, 232, 240, 0.85);
+  outline-offset: 3px;
+}
+
 .app-shell__tasks {
-  margin-left: auto;
-  margin-right: 1.5rem;
   position: relative;
   display: flex;
   align-items: center;
+}
+
+.app-shell__header-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5rem;
 }
 
 .app-shell__tasks-toggle {
@@ -1473,29 +1515,26 @@
 }
 
 .project-management-sidebar-toggle {
-  position: absolute;
-  top: calc(var(--app-shell-main-padding-y) / 2);
-  left: calc(var(--app-shell-main-padding-x) / 2);
-  z-index: 3;
   width: 44px;
   height: 44px;
-  border: none;
+  border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 14px;
-  background: rgba(15, 23, 42, 0.92);
+  background: rgba(15, 23, 42, 0.65);
   color: #e2e8f0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 18px 32px rgba(15, 23, 42, 0.22);
-  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
 .project-management-sidebar-toggle:hover,
 .project-management-sidebar-toggle:focus-visible {
   background: rgba(30, 41, 59, 0.95);
-  transform: translateY(-1px);
-  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.25);
+  color: #f8fafc;
+  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.28);
+  border-color: rgba(226, 232, 240, 0.55);
 }
 
 .project-management-sidebar-toggle:focus-visible {
@@ -2079,11 +2118,6 @@
 @media (max-width: 1024px) {
   .project-management-page {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .project-management-sidebar-toggle {
-    top: 1rem;
-    left: 1rem;
   }
 
   .project-management-sidebar {
