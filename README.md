@@ -3,9 +3,9 @@
 
 ---
 
-# 🧠 TTA AI Project Hub (tta-ai-project)
+# 🧠 TestMate
 
-**TTA AI Project Hub**는 *AI-ON 업무혁신 공모전*을 위해 제작된 **AI 업무 자동화 및 문서 생성 플랫폼**입니다.
+**TestMate**는 *AI-ON 업무혁신 공모전*을 위해 제작된 **AI 업무 자동화 및 문서 생성 플랫폼**입니다.
 Google Drive와 연동하여 프로젝트 자료를 관리하고, AI를 활용해 기능 리스트·테스트케이스·리포트 등을 자동 생성할 수 있으며, 관리자 전용 **프롬프트 관리 기능**도 제공합니다.
 
 ---

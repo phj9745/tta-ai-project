@@ -31,7 +31,7 @@ export function AppShell({
   return (
     <div className="app-shell">
       <header className="app-shell__header">
-        <div className="app-shell__brand">TTA AI 프로젝트 허브</div>
+        <div className="app-shell__brand">TestMate</div>
         <BackgroundTaskTray />
         {isAuthenticated && (
           <nav aria-label="계정 메뉴" className="app-shell__nav">
