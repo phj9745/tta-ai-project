@@ -854,7 +854,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
             기능리스트 불러오기
           </h2>
           <p className="testcase-workflow__helper">
-            테스트케이스를 작성할 기능리스트 파일을 업로드하세요. AI가 대분류/중분류/소분류 정보를 추출해 다음 단계에서 활용합니다.
+            테스트케이스를 작성할 기능리스트 파일을 업로드하세요. 대/중/소분류 정보를 활용합니다.
           </p>
           <div className="testcase-workflow__upload" aria-live="polite">
             <FileUploader

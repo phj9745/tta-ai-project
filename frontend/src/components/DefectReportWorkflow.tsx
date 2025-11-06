@@ -599,7 +599,7 @@ export function DefectReportWorkflow({
             onClick={handleGenerate}
             disabled={!canGenerate || finalizeStatus === 'loading'}
           >
-            {finalizeStatus === 'loading' ? '리포트 생성 중…' : '결함 리포트 생성'}
+            {finalizeStatus === 'loading' ? '리포트 생성 중…' : '결함리포트 생성'}
           </button>
         </div>
 

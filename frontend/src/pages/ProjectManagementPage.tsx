@@ -178,10 +178,10 @@ const MENU_ITEMS: MenuItemContent[] = [
     id: 'configuration-images',
     label: '형상 이미지 추출',
     eyebrow: '형상 관리',
-    title: '장면 전환 감지로 화면 캡처',
+    title: '형상 이미지 추출',
     description:
       '프로그램 기능 시연 동영상을 업로드하면 장면 전환을 감지하여 주요 화면 이미지를 자동으로 추출합니다.',
-    helper: 'MP4 또는 MOV 형식의 동영상 1개만 업로드하면 됩니다. 추가 문서는 필요하지 않습니다.',
+    helper: 'MP4 또는 MOV 형식의 동영상 1개만 업로드하면 됩니다.',
     buttonLabel: '형상 이미지 추출하기',
     allowedTypes: ['mp4', 'mov'],
     requiredDocuments: [
@@ -196,11 +196,11 @@ const MENU_ITEMS: MenuItemContent[] = [
   },
   {
     id: 'feature-list',
-    label: '기능리스트 생성',
-    eyebrow: '기능 정의',
-    title: '요구사항에서 기능 목록 추출',
+    label: '기능리스트',
+    eyebrow: '계획',
+    title: '기능리스트 생성',
     description:
-      '요구사항 명세나 기획 문서를 업로드하면 AI가 주요 기능과 설명을 정리한 기능 정의서를 제안합니다.',
+      '사용자 매뉴얼 및 요구사항 명세 문서를 업로드하면 AI가 주요 기능을 정리한 기능 리스트를 생성합니다.',
     helper: 'PDF, TXT, CSV 등 요구사항 관련 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '기능리스트 생성하기',
     allowedTypes: ALL_FILE_TYPES,
@@ -226,12 +226,12 @@ const MENU_ITEMS: MenuItemContent[] = [
   },
   {
     id: 'testcase-generation',
-    label: '테스트케이스 생성',
-    eyebrow: '테스트 설계',
-    title: '요구사항에서 테스트 케이스 생성',
+    label: '테스트케이스',
+    eyebrow: '설계',
+    title: '테스트케이스 생성',
     description:
-      '업로드된 요구사항을 바탕으로 테스트 시나리오와 기대 결과를 정리한 테스트 케이스 초안을 생성합니다.',
-    helper: '테스트 대상 기능이 담긴 문서를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
+      '기능리스트를 바탕으로 테스트 시나리오와 기대 결과를 정리한 테스트케이스 초안을 생성합니다.',
+    helper: '기능리스트를 업로드해 주세요. 필요한 자료를 하나만 올리면 됩니다.',
     buttonLabel: '테스트케이스 생성하기',
     allowedTypes: ALL_FILE_TYPES,
     requiredDocuments: [
@@ -256,13 +256,13 @@ const MENU_ITEMS: MenuItemContent[] = [
   },
   {
     id: 'defect-report',
-    label: '결함 리포트',
-    eyebrow: '결함 리포트',
-    title: '결함 리포트 초안 만들기',
+    label: '결함리포트',
+    eyebrow: '수행',
+    title: '결함리포트 생성',
     description:
-      '시험 결과와 로그 파일을 업로드하면 결함 리포트 초안을 빠르게 구성할 수 있습니다.',
+      '기능리스트와 결함 메모를 바탕으로 결함 리포트 초안을 생성합니다.',
     helper: '테스트 로그, 정리된 표, 스크린샷 등 결함 관련 증적 자료를 첨부해 주세요.',
-    buttonLabel: '결함 리포트 생성하기',
+    buttonLabel: '결함리포트 생성하기',
     allowedTypes: ['pdf', 'txt', 'csv', 'jpg'],
     uploaderVariant: 'grid',
     maxFiles: 12,
@@ -270,13 +270,13 @@ const MENU_ITEMS: MenuItemContent[] = [
   },
   {
     id: 'security-report',
-    label: '보안성 리포트',
-    eyebrow: '보안성 분석',
-    title: 'Invicti HTML 보고서 정규화',
+    label: '보안성 결함리포트',
+    eyebrow: '수행',
+    title: '보안성 결함리포트 생성',
     description:
-      'Invicti에서 추출한 HTML 결과를 업로드하면 AI가 TTA 기준표에 맞춘 표준 결함 목록을 생성합니다.',
+      'Invicti 상세 스캔 보고서를 바탕으로 결함리포트를 생성합니다.',
     helper:
-      'Invicti HTML 결과 파일(.html/.htm)을 1개 업로드하세요. 보고서에 포함된 Medium 이상 취약점만 분석됩니다.',
+      'Invicti 상세 스캔 보고서(.html)를 업로드하세요. 보고서에 포함된 Medium 이상 취약점만 분석됩니다.',
     buttonLabel: 'Invicti 보고서 분석하기',
     allowedTypes: ['html'],
     maxFiles: 1,
@@ -284,17 +284,17 @@ const MENU_ITEMS: MenuItemContent[] = [
   },
   {
     id: 'performance-report',
-    label: '성능 평가 리포트',
-    eyebrow: '성능 평가',
-    title: '성능 평가 리포트 완성하기',
-  description:
-      '벤치마크 결과나 모니터링 데이터를 업로드하면 성능 분석 리포트를 구조화해 드립니다.',
+    label: '성능시험 리포트',
+    eyebrow: '수행',
+    title: '성능시험 리포트 생성',
+    description:
+      '성능 모니터링 데이터를 바탕으로 성능시험 리포트를 생성합니다.',
     helper:
-      'Windows Perfmon CSV 또는 Linux vmstat TXT 등 성능 측정 rawdata를 여러 개 업로드할 수 있습니다. 두 OS를 혼합해도 됩니다.',
-    buttonLabel: '성능평가 리포트 생성하기',
+      'Windows 성능 모니터 및 Linux vmstat 성능 측정 rawdata를 여러 개 업로드할 수 있습니다.',
+    buttonLabel: '성능시험 리포트 생성하기',
     allowedTypes: ['csv', 'txt'],
     maxFiles: 12,
-    hideDropzoneWhenFilled: false,
+    hideDropzoneWhenFilled: true,
   },
 ]
 
