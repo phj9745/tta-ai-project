@@ -294,7 +294,7 @@ const MENU_ITEMS: MenuItemContent[] = [
     buttonLabel: '성능시험 리포트 생성하기',
     allowedTypes: ['csv', 'txt'],
     maxFiles: 12,
-    hideDropzoneWhenFilled: true,
+    hideDropzoneWhenFilled: false,
   },
 ]
 
