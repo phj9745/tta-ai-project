@@ -322,11 +322,13 @@
 }
 
 .app-shell__main {
+  --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
+  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
   flex: 1;
   display: flex;
   align-items: stretch;
   justify-content: center;
-  padding: clamp(2rem, 4vw, 4rem) clamp(1.5rem, 4vw, 3.5rem);
+  padding: var(--app-shell-main-padding-y) var(--app-shell-main-padding-x);
 }
 
 .app-shell__footer {
@@ -1448,27 +1450,130 @@
 }
 
 .project-management-page {
-  width: min(1320px, 100%);
-  min-height: 70vh;
-  display: flex;
-  background: #ffffff;
-  border-radius: 24px;
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+  --project-management-sidebar-width: 280px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
+  align-self: stretch;
+  min-width: 0;
+  width: calc(100% + (2 * var(--app-shell-main-padding-x)));
+  margin: calc(-1 * var(--app-shell-main-padding-y)) calc(-1 * var(--app-shell-main-padding-x));
+  background: #f8fafc;
+  min-height: calc(100vh - (2 * var(--app-shell-main-padding-y)));
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease;
 }
 
 .project-management-page--preview {
-  width: min(1560px, 100%);
+  --project-management-sidebar-width: 320px;
+}
+
+.project-management-page--sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.project-management-sidebar-toggle {
+  position: absolute;
+  top: calc(var(--app-shell-main-padding-y) / 2);
+  left: calc(var(--app-shell-main-padding-x) / 2);
+  z-index: 3;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.22);
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.project-management-sidebar-toggle:hover,
+.project-management-sidebar-toggle:focus-visible {
+  background: rgba(30, 41, 59, 0.95);
+  transform: translateY(-1px);
+  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.25);
+}
+
+.project-management-sidebar-toggle:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 2px;
+}
+
+.project-management-sidebar-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-management-sidebar-toggle__icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+
+.project-management-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.project-management-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+  border: none;
+}
+
+.project-management-page--sidebar-open .project-management-sidebar-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (min-width: 1025px) {
+  .project-management-sidebar-backdrop {
+    display: none;
+  }
 }
 
 .project-management-sidebar {
-  flex: 0 0 260px;
+  position: relative;
+  z-index: 2;
+  width: var(--project-management-sidebar-width);
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
-  padding: 2rem 1.75rem;
+  padding: 2.5rem 2rem;
   background: #0f172a;
   color: #e2e8f0;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  box-shadow: 1px 0 0 rgba(15, 23, 42, 0.4);
+  min-height: 100%;
+}
+
+.project-management-page--sidebar-collapsed .project-management-sidebar {
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-management-page--sidebar-open .project-management-sidebar {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-management-overview {
@@ -1565,8 +1670,9 @@
   display: flex;
   align-items: stretch;
   background: #f8fafc;
-  padding: 2.5rem;
+  padding: clamp(2rem, 3vw, 3rem);
   min-width: 0;
+  min-height: 0;
 }
 
 .project-management-content--preview {
@@ -1960,39 +2066,62 @@
   box-shadow: 0 10px 20px rgba(148, 163, 184, 0.24);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1280px) {
   .project-management-page {
-    flex-direction: column;
+    --project-management-sidebar-width: 260px;
   }
 
   .project-management-sidebar {
-    flex: none;
-    width: 100%;
-    padding: 1.75rem 1.5rem;
-    border-right: none;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.2);
+    padding: 2.25rem 1.75rem;
+  }
+}
+
+@media (max-width: 1024px) {
+  .project-management-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-management-sidebar-toggle {
+    top: 1rem;
+    left: 1rem;
+  }
+
+  .project-management-sidebar {
+    position: fixed;
+    top: calc(64px + 1rem);
+    left: 0;
+    bottom: 0;
+    width: min(var(--project-management-sidebar-width), 80vw);
+    max-width: 320px;
+    padding: 2rem 1.5rem 2.25rem;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 18px 0 36px rgba(15, 23, 42, 0.25);
+  }
+
+  .project-management-page--sidebar-open .project-management-sidebar {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .project-management-content {
-    padding: 1.75rem;
+    padding: clamp(1.5rem, 5vw, 2.25rem);
   }
 }
 
 @media (max-width: 720px) {
-  .project-management-page {
-    border-radius: 20px;
-  }
-
   .project-management-sidebar {
-    padding: 1.5rem 1.25rem;
+    padding: 1.75rem 1.35rem 2rem;
   }
 
   .project-management-menu__button {
-    padding: 0.75rem 0.85rem;
+    padding: 0.75rem 0.9rem;
   }
 
   .project-management-content {
-    padding: 1.5rem 1.25rem;
+    padding: clamp(1.25rem, 6vw, 1.75rem);
   }
 
   .project-management-content__inner {

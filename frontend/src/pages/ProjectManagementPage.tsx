@@ -322,6 +322,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const performanceOverridesRef = useRef<Record<string, string> | null>(null)
   const [performanceModalState, setPerformanceModalState] = useState<PerformanceOSModalState | null>(null)
   const { startTask } = useBackgroundTasks()
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const isMountedRef = useRef(true)
 
   const menuById = useMemo(() => {
@@ -352,6 +353,24 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
+
+  const handleToggleSidebar = useCallback(() => {
+    setIsSidebarOpen((prev) => !prev)
+  }, [])
+
+  const handleCloseSidebar = useCallback(() => {
+    setIsSidebarOpen(false)
+  }, [])
+
+  const handleSelectMenuItem = useCallback(
+    (itemId: MenuItemId) => {
+      setActiveItem(itemId)
+      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+        setIsSidebarOpen(false)
+      }
+    },
+    [setActiveItem, setIsSidebarOpen],
+  )
 
   useEffect(() => {
     return () => {
@@ -1244,9 +1263,66 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
     }
   }, [])
 
+  const sidebarToggleLabel = isSidebarOpen ? '사이드바 접기' : '사이드바 펼치기'
+  const pageClassName = [
+    'project-management-page',
+    isSidebarOpen ? 'project-management-page--sidebar-open' : 'project-management-page--sidebar-collapsed',
+    isTestcaseWorkflow ? 'project-management-page--preview' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const contentClassName = [
+    'project-management-content',
+    isTestcaseWorkflow ? 'project-management-content--preview' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <div className="project-management-page">
-      <aside className="project-management-sidebar">
+    <div className={pageClassName}>
+      <button
+        type="button"
+        className="project-management-sidebar-toggle"
+        onClick={handleToggleSidebar}
+        aria-expanded={isSidebarOpen}
+        aria-controls="project-management-sidebar"
+        title={sidebarToggleLabel}
+      >
+        <span className="project-management-sidebar-toggle__icon" aria-hidden="true">
+          {isSidebarOpen ? (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 6 9 12 15 18" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="4" y1="6" x2="20" y2="6" />
+              <line x1="4" y1="12" x2="20" y2="12" />
+              <line x1="4" y1="18" x2="16" y2="18" />
+            </svg>
+          )}
+        </span>
+        <span className="project-management-sr-only">{sidebarToggleLabel}</span>
+      </button>
+
+      <aside
+        id="project-management-sidebar"
+        className="project-management-sidebar"
+        aria-hidden={!isSidebarOpen}
+      >
         <div className="project-management-overview">
           <span className="project-management-overview__label">프로젝트</span>
           <strong className="project-management-overview__name">{projectName}</strong>
@@ -1267,7 +1343,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                   <button
                     type="button"
                     className="project-management-menu__button"
-                    onClick={() => setActiveItem(item.id)}
+                    onClick={() => handleSelectMenuItem(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <span className="project-management-menu__label">{item.label}</span>
@@ -1280,7 +1356,15 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         </nav>
       </aside>
 
-      <main className="project-management-content" aria-label="프로젝트 관리 컨텐츠">
+      <button
+        type="button"
+        className="project-management-sidebar-backdrop"
+        aria-hidden="true"
+        tabIndex={-1}
+        onClick={handleCloseSidebar}
+      />
+
+      <main className={contentClassName} aria-label="프로젝트 관리 컨텐츠">
         <div className="project-management-content__inner">
           <div className="project-management-content__toolbar" role="navigation" aria-label="프로젝트 작업 메뉴">
             <button
