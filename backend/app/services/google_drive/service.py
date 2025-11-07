@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from fastapi import HTTPException, UploadFile
@@ -1132,11 +1133,22 @@ class GoogleDriveService:
             raise HTTPException(status_code=422, detail="업로드할 파일이 필요합니다.")
 
         agreement_file = files[0]
-        if not agreement_file.filename or not agreement_file.filename.lower().endswith(".docx"):
-            raise HTTPException(status_code=422, detail="시험 합의서는 DOCX 파일이어야 합니다.")
+        allowed_extensions = {".docx", ".pdf"}
+        filename = agreement_file.filename or ""
+        extension = Path(filename).suffix.lower()
+        content_type = agreement_file.content_type or ""
+
+        if extension not in allowed_extensions:
+            if "pdf" in content_type:
+                extension = ".pdf"
+            elif "officedocument.wordprocessingml.document" in content_type:
+                extension = ".docx"
+
+        if extension not in allowed_extensions:
+            raise HTTPException(status_code=422, detail="시험 합의서는 DOCX 또는 PDF 파일이어야 합니다.")
 
         agreement_bytes = await agreement_file.read()
-        metadata = extract_project_metadata(agreement_bytes)
+        metadata = extract_project_metadata(agreement_bytes, file_extension=extension)
         project_name = build_project_folder_name(metadata)
         if not project_name:
             raise HTTPException(status_code=422, detail="생성할 프로젝트 이름을 결정할 수 없습니다.")
@@ -1170,23 +1182,34 @@ class GoogleDriveService:
 
         uploaded_files: List[Dict[str, Any]] = []
 
-        agreement_name = agreement_file.filename or "시험 합의서.docx"
+        default_name = "시험 합의서.pdf" if extension == ".pdf" else "시험 합의서.docx"
+        agreement_name = agreement_file.filename or default_name
         agreement_name = replace_placeholders(agreement_name, metadata["exam_number"])
         file_info, active_tokens = await self._client.upload_file_to_folder(
             active_tokens,
             file_name=agreement_name,
             parent_id=project_id,
             content=agreement_bytes,
-            content_type=agreement_file.content_type
-            or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            content_type=
+            agreement_file.content_type
+            or (
+                "application/pdf"
+                if extension == ".pdf"
+                else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
         )
         uploaded_files.append(
             {
                 "id": file_info.get("id"),
                 "name": file_info.get("name", agreement_name),
                 "size": len(agreement_bytes),
-                "contentType": agreement_file.content_type
-                or "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "contentType":
+                agreement_file.content_type
+                or (
+                    "application/pdf"
+                    if extension == ".pdf"
+                    else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ),
             }
         )
         await agreement_file.close()
