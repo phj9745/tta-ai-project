@@ -41,6 +41,8 @@ __all__ = [
 ]
 
 
+ET.register_namespace("", SPREADSHEET_NS)
+
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
     "대분류": ("대분류", "대 분류", "상위 기능", "상위기능"),
     "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),

@@ -28,6 +28,7 @@ from .models import (
 from .utils import append_attachment_note, parse_csv_records, safe_int
 from .workbook import WorksheetPopulator, column_to_index, replace_sheet_bytes
 
+ET.register_namespace("", SPREADSHEET_NS)
 ET.register_namespace("xdr", DRAWING_NS)
 ET.register_namespace("a", DRAWING_A_NS)
 ET.register_namespace("r", REL_NS)

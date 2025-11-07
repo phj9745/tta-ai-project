@@ -57,6 +57,7 @@ _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-type
 _EMU_PER_PIXEL = 9525
 _IMAGE_VERTICAL_GAP_PX = 4
 
+ET.register_namespace("", _SPREADSHEET_NS)
 ET.register_namespace("xdr", _DRAWING_NS)
 ET.register_namespace("a", _DRAWING_A_NS)
 ET.register_namespace("r", _REL_NS)
