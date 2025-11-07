@@ -678,6 +678,29 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     })
   }, [])
 
+  const handleRemoveGroup = useCallback((groupIndex: number) => {
+    if (groupIndex < 0) {
+      return
+    }
+
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      const confirmed = window.confirm(
+        '이 소분류를 삭제할까요? 생성된 시나리오와 첨부한 파일이 모두 사라집니다.',
+      )
+      if (!confirmed) {
+        return
+      }
+    }
+
+    setGroups((prev) => {
+      if (groupIndex < 0 || groupIndex >= prev.length) {
+        return prev
+      }
+
+      return prev.filter((_, index) => index !== groupIndex)
+    })
+  }, [])
+
   const canProceedToReview = useMemo(
     () => groups.length > 0 && groups.every((group) => group.scenarios.length >= 1),
     [groups],
@@ -937,6 +960,13 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                         수정
                       </button>
                     )}
+                    <button
+                      type="button"
+                      className="testcase-workflow__danger testcase-workflow__button"
+                      onClick={() => handleRemoveGroup(index)}
+                    >
+                      소분류 삭제
+                    </button>
                   </div>
                 </header>
 

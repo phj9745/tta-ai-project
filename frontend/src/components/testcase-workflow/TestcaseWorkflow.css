@@ -292,6 +292,23 @@
   background: #e0f2fe;
 }
 
+.testcase-workflow__danger {
+  background: transparent;
+  color: #b42318;
+  border: 1px solid #fca5a5;
+}
+
+.testcase-workflow__danger:hover:not(:disabled),
+.testcase-workflow__danger:focus-visible:not(:disabled) {
+  background: #fee2e2;
+}
+
+.testcase-workflow__danger:disabled {
+  background: transparent;
+  color: #fca5a5;
+  border-color: #fecaca;
+}
+
 .testcase-workflow__scenario-list {
   display: flex;
   flex-direction: column;
