@@ -240,7 +240,13 @@ export function DefectReportWorkflow({
       updatePolished(defectIndex, value)
       setDefectItems((prev) =>
         prev.map((item) =>
-          item.entry.index === defectIndex ? { ...item, isCollapsed: false } : item,
+          item.entry.index === defectIndex
+            ? {
+                ...item,
+                entry: { ...item.entry, polishedText: value },
+                isCollapsed: false,
+              }
+            : item,
         ),
       )
     },
