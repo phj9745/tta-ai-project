@@ -12,6 +12,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 1.5rem;
   padding: 1.25rem clamp(1.5rem, 4vw, 3.5rem);
   background: rgba(15, 23, 42, 0.92);
   color: white;
@@ -19,12 +20,123 @@
   backdrop-filter: blur(12px);
 }
 
+.app-shell__header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-shell__leading-action {
+  display: inline-flex;
+  align-items: center;
+}
+
+.app-shell__brand-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.55rem 1.25rem 0.55rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16) 0%, rgba(15, 23, 42, 0.28) 100%);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.app-shell__brand-button:hover,
+.app-shell__brand-button:focus-visible {
+  transform: translateY(-1px);
+  border-color: rgba(148, 197, 255, 0.65);
+  background: linear-gradient(135deg, rgba(96, 165, 250, 0.35) 0%, rgba(30, 64, 175, 0.65) 100%);
+  color: #f8fafc;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.35);
+}
+
+.app-shell__brand-button:focus-visible {
+  outline: 2px solid rgba(226, 232, 240, 0.75);
+  outline-offset: 3px;
+}
+
+.app-shell__brand-mark {
+  position: relative;
+  width: 2.45rem;
+  height: 2.45rem;
+  border-radius: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.95) 0%, rgba(59, 130, 246, 0.85) 100%);
+  box-shadow: 0 16px 32px rgba(59, 130, 246, 0.35);
+}
+
+.app-shell__brand-mark-glow {
+  position: absolute;
+  inset: -30%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, rgba(224, 231, 255, 0.6), transparent 60%);
+  opacity: 0.8;
+}
+
+.app-shell__brand-initials {
+  position: relative;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f8fafc;
+  text-shadow: 0 4px 12px rgba(15, 23, 42, 0.4);
+}
+
+.app-shell__brand-wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  line-height: 1;
+}
+
+.app-shell__brand-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: 1.32rem;
+  font-weight: 700;
+  letter-spacing: 0.015em;
+  color: #f1f5f9;
+  text-shadow: 0 8px 24px rgba(15, 23, 42, 0.4);
+}
+
+.app-shell__brand-primary {
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.app-shell__brand-highlight {
+  color: #bfdbfe;
+}
+
+.app-shell__brand-tagline {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.85);
+}
+
 .app-shell__tasks {
-  margin-left: auto;
-  margin-right: 1.5rem;
   position: relative;
   display: flex;
   align-items: center;
+}
+
+.app-shell__header-right {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5rem;
 }
 
 .app-shell__tasks-toggle {
@@ -208,12 +320,6 @@
   color: #fee2e2;
 }
 
-.app-shell__brand {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
 .app-shell__nav {
   display: flex;
   align-items: center;
@@ -322,11 +428,13 @@
 }
 
 .app-shell__main {
+  --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
+  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
   flex: 1;
   display: flex;
   align-items: stretch;
   justify-content: center;
-  padding: clamp(2rem, 4vw, 4rem) clamp(1.5rem, 4vw, 3.5rem);
+  padding: var(--app-shell-main-padding-y) var(--app-shell-main-padding-x);
 }
 
 .app-shell__footer {
@@ -1448,27 +1556,125 @@
 }
 
 .project-management-page {
-  width: min(1320px, 100%);
-  min-height: 70vh;
-  display: flex;
-  background: #ffffff;
-  border-radius: 24px;
-  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+  --project-management-sidebar-width: 280px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
+  align-self: stretch;
+  min-width: 0;
+  width: calc(100% + (2 * var(--app-shell-main-padding-x)));
+  margin: calc(-1 * var(--app-shell-main-padding-y)) calc(-1 * var(--app-shell-main-padding-x));
+  background: #f8fafc;
+  min-height: calc(100vh - (2 * var(--app-shell-main-padding-y)));
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease;
 }
 
-.project-management-page--preview {
-  width: min(1560px, 100%);
+.project-management-page--sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.project-management-sidebar-toggle {
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.6);
+  color: #e2e8f0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.22);
+  transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.project-management-sidebar-toggle:hover,
+.project-management-sidebar-toggle:focus-visible {
+  transform: translateY(-1px);
+  background: rgba(30, 41, 59, 0.9);
+  color: #f8fafc;
+  box-shadow: 0 20px 36px rgba(15, 23, 42, 0.28);
+  border-color: rgba(226, 232, 240, 0.55);
+}
+
+.project-management-sidebar-toggle:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 2px;
+}
+
+.project-management-sidebar-toggle__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-management-sidebar-toggle__icon svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.8;
+}
+
+.project-management-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.project-management-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+  z-index: 1;
+  border: none;
+}
+
+.project-management-page--sidebar-open .project-management-sidebar-backdrop {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (min-width: 1025px) {
+  .project-management-sidebar-backdrop {
+    display: none;
+  }
 }
 
 .project-management-sidebar {
-  flex: 0 0 260px;
+  position: relative;
+  z-index: 2;
+  width: var(--project-management-sidebar-width);
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
-  padding: 2rem 1.75rem;
+  padding: 2.5rem 2rem;
   background: #0f172a;
   color: #e2e8f0;
+  transition: transform 0.3s ease, opacity 0.3s ease;
+  box-shadow: 1px 0 0 rgba(15, 23, 42, 0.4);
+  min-height: 100%;
+}
+
+.project-management-page--sidebar-collapsed .project-management-sidebar {
+  transform: translateX(-100%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-management-page--sidebar-open .project-management-sidebar {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-management-overview {
@@ -1565,8 +1771,9 @@
   display: flex;
   align-items: stretch;
   background: #f8fafc;
-  padding: 2.5rem;
+  padding: clamp(2rem, 3vw, 3rem);
   min-width: 0;
+  min-height: 0;
 }
 
 .project-management-content--preview {
@@ -1960,39 +2167,57 @@
   box-shadow: 0 10px 20px rgba(148, 163, 184, 0.24);
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 1280px) {
   .project-management-page {
-    flex-direction: column;
+    --project-management-sidebar-width: 260px;
   }
 
   .project-management-sidebar {
-    flex: none;
-    width: 100%;
-    padding: 1.75rem 1.5rem;
-    border-right: none;
-    border-bottom: 1px solid rgba(226, 232, 240, 0.2);
+    padding: 2.25rem 1.75rem;
+  }
+}
+
+@media (max-width: 1024px) {
+  .project-management-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-management-sidebar {
+    position: fixed;
+    top: calc(64px + 1rem);
+    left: 0;
+    bottom: 0;
+    width: min(var(--project-management-sidebar-width), 80vw);
+    max-width: 320px;
+    padding: 2rem 1.5rem 2.25rem;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 18px 0 36px rgba(15, 23, 42, 0.25);
+  }
+
+  .project-management-page--sidebar-open .project-management-sidebar {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .project-management-content {
-    padding: 1.75rem;
+    padding: clamp(1.5rem, 5vw, 2.25rem);
   }
 }
 
 @media (max-width: 720px) {
-  .project-management-page {
-    border-radius: 20px;
-  }
-
   .project-management-sidebar {
-    padding: 1.5rem 1.25rem;
+    padding: 1.75rem 1.35rem 2rem;
   }
 
   .project-management-menu__button {
-    padding: 0.75rem 0.85rem;
+    padding: 0.75rem 0.9rem;
   }
 
   .project-management-content {
-    padding: 1.5rem 1.25rem;
+    padding: clamp(1.25rem, 6vw, 1.75rem);
   }
 
   .project-management-content__inner {

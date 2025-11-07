@@ -31,6 +31,10 @@ function App() {
     navigate('/admin/prompts')
   }, [])
 
+  const handleClickBrand = useCallback(() => {
+    navigate('/projects')
+  }, [])
+
   return (
     <AppShell
       isAuthenticated={authStatus === 'authenticated'}
@@ -38,6 +42,7 @@ function App() {
       onLogout={handleLogout}
       onOpenDrive={handleOpenDrive}
       onNavigateAdmin={handleOpenAdmin}
+      onBrandClick={handleClickBrand}
     >
       {pageContent}
     </AppShell>

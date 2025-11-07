@@ -1,6 +1,7 @@
-import type { PropsWithChildren } from 'react'
+import { useCallback, useMemo, useState, type PropsWithChildren, type ReactNode } from 'react'
 
 import { BackgroundTaskTray } from '../../components/layout/BackgroundTaskTray'
+import { AppShellHeaderContext } from './AppShellHeaderContext'
 
 interface AppShellProps {
   isAuthenticated: boolean
@@ -8,6 +9,7 @@ interface AppShellProps {
   onLogout: () => void
   onOpenDrive: () => void
   onNavigateAdmin: () => void
+  onBrandClick: () => void
 }
 
 export function AppShell({
@@ -16,6 +18,7 @@ export function AppShell({
   onLogout,
   onOpenDrive,
   onNavigateAdmin,
+  onBrandClick,
   children,
 }: PropsWithChildren<AppShellProps>) {
   const isAdminActive = currentPath.startsWith('/admin')
@@ -28,29 +31,68 @@ export function AppShell({
     .filter(Boolean)
     .join(' ')
 
+  const [leadingAction, setLeadingAction] = useState<ReactNode | null>(null)
+
+  const handleSetLeadingAction = useCallback((node: ReactNode | null) => {
+    setLeadingAction(node)
+  }, [])
+
+  const headerContextValue = useMemo(
+    () => ({
+      setLeadingAction: handleSetLeadingAction,
+    }),
+    [handleSetLeadingAction],
+  )
+
   return (
-    <div className="app-shell">
-      <header className="app-shell__header">
-        <div className="app-shell__brand">TestMate</div>
-        <BackgroundTaskTray />
-        {isAuthenticated && (
-          <nav aria-label="계정 메뉴" className="app-shell__nav">
-            <button type="button" className="app-shell__drive" onClick={onOpenDrive}>
-              구글 드라이브
+    <AppShellHeaderContext.Provider value={headerContextValue}>
+      <div className="app-shell">
+        <header className="app-shell__header">
+          <div className="app-shell__header-left">
+            {leadingAction ? (
+              <div className="app-shell__leading-action">{leadingAction}</div>
+            ) : null}
+            <button
+              type="button"
+              className="app-shell__brand-button"
+              onClick={onBrandClick}
+              aria-label="프로젝트 선택 화면으로 이동"
+            >
+              <span className="app-shell__brand-mark" aria-hidden="true">
+                <span className="app-shell__brand-mark-glow" />
+                <span className="app-shell__brand-initials">TM</span>
+              </span>
+              <span className="app-shell__brand-wordmark">
+                <span className="app-shell__brand-text">
+                  <span className="app-shell__brand-primary">Test</span>
+                  <span className="app-shell__brand-highlight">Mate</span>
+                </span>
+                <span className="app-shell__brand-tagline">QA Workspace</span>
+              </span>
             </button>
-            <button type="button" className={adminClasses} onClick={onNavigateAdmin}>
-              프롬프트 관리자
-            </button>
-            <button type="button" className="app-shell__logout" onClick={onLogout}>
-              로그아웃
-            </button>
-          </nav>
-        )}
-      </header>
+          </div>
+          <div className="app-shell__header-right">
+            <BackgroundTaskTray />
+            {isAuthenticated && (
+              <nav aria-label="계정 메뉴" className="app-shell__nav">
+                <button type="button" className="app-shell__drive" onClick={onOpenDrive}>
+                  구글 드라이브
+                </button>
+                <button type="button" className={adminClasses} onClick={onNavigateAdmin}>
+                  프롬프트 관리자
+                </button>
+                <button type="button" className="app-shell__logout" onClick={onLogout}>
+                  로그아웃
+                </button>
+              </nav>
+            )}
+          </div>
+        </header>
 
-      <main className="app-shell__main">{children}</main>
+        <main className="app-shell__main">{children}</main>
 
-      <footer className="app-shell__footer">© {new Date().getFullYear()} TTA AI Platform</footer>
-    </div>
+        <footer className="app-shell__footer">© {new Date().getFullYear()} TTA AI Platform</footer>
+      </div>
+    </AppShellHeaderContext.Provider>
   )
 }
