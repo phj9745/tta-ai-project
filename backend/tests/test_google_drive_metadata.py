@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("docx")
+pytest.importorskip("pypdf")
 from docx import Document
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -34,12 +35,60 @@ def _build_sample_agreement() -> bytes:
     return buffer.getvalue()
 
 
+def _build_sample_pdf_agreement() -> bytes:
+    stream_content = (
+        "BT /F1 12 Tf 72 720 Td (시험 신청 번호 : GS-B-12-3456) Tj "
+        "T* (제조자 : Acme Corp) Tj "
+        "T* (제품명 및 버전 : Wonder Widget 1.0) Tj ET"
+    ).encode("utf-8")
+
+    buffer = io.BytesIO()
+    buffer.write(b"%PDF-1.4\n")
+    offsets: list[int] = []
+
+    def _write_object(payload: bytes) -> None:
+        offsets.append(buffer.tell())
+        buffer.write(payload)
+        if not payload.endswith(b"\n"):
+            buffer.write(b"\n")
+
+    _write_object(b"1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n")
+    _write_object(b"2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n")
+    _write_object(
+        b"3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>endobj\n"
+    )
+    stream_header = f"4 0 obj<< /Length {len(stream_content)} >>stream\n".encode("ascii")
+    _write_object(stream_header + stream_content + b"\nendstream\nendobj\n")
+    _write_object(b"5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n")
+
+    xref_offset = buffer.tell()
+    buffer.write(f"xref\n0 {len(offsets) + 1}\n".encode("ascii"))
+    buffer.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        buffer.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    buffer.write(f"trailer<< /Size {len(offsets) + 1} /Root 1 0 R >>\n".encode("ascii"))
+    buffer.write(b"startxref\n")
+    buffer.write(f"{xref_offset}\n".encode("ascii"))
+    buffer.write(b"%%EOF\n")
+    return buffer.getvalue()
+
+
 def test_normalize_label_strips_whitespace() -> None:
     assert normalize_label(" 제 조 자 ") == "제조자"
 
 
 def test_extract_project_metadata_reads_table() -> None:
     metadata = extract_project_metadata(_build_sample_agreement())
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "Wonder Widget 1.0",
+    }
+
+
+def test_extract_project_metadata_reads_pdf() -> None:
+    metadata = extract_project_metadata(_build_sample_pdf_agreement(), file_extension=".pdf")
     assert metadata == {
         "exam_number": "GS-B-12-3456",
         "company_name": "Acme Corp",
