@@ -27,6 +27,16 @@
   line-height: 1.5;
 }
 
+.testcase-workflow__bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+.testcase-workflow__bulk-actions .testcase-workflow__button {
+  min-width: 180px;
+}
+
 .testcase-workflow__overview {
   margin: 0 0 1.25rem;
   padding: 1rem;
