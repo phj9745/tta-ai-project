@@ -357,7 +357,7 @@ export function SecurityReportWorkflow({
       <section className="defect-workflow__section" aria-labelledby="security-upload">
         <div className="defect-workflow__section-heading">
           <h2 id="security-upload" className="defect-workflow__title">
-            1. Invicti HTML 업로드
+            1. Invicti 상세 스캔 보고서 업로드
           </h2>
           {showResetButton && (
             <div className="defect-workflow__section-actions">
@@ -373,7 +373,7 @@ export function SecurityReportWorkflow({
           )}
         </div>
         <p className="defect-workflow__helper">
-          Invicti에서 추출한 HTML 보고서를 업로드하면 보안성 결함 표를 생성합니다. 표는 아래에서 바로 확인하고 수정할
+          Invicti 상세 스캔 보고서(HTML)를 업로드하면 보안성 결함 표를 생성합니다. 표는 아래에서 바로 확인하고 수정할
           수 있습니다.
         </p>
         <FileUploader
