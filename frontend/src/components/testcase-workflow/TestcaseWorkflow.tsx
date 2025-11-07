@@ -101,6 +101,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     null,
   )
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false)
   const idRef = useRef(0)
   const storageKey = useMemo(() => `tta:testcase-workflow:${projectId}`, [projectId])
 
@@ -416,6 +417,22 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
     },
     [backendUrl, groups, projectId, projectOverview],
   )
+
+  const handleGenerateAllScenarios = useCallback(async () => {
+    if (groups.length === 0) {
+      return
+    }
+
+    setIsGeneratingAll(true)
+    try {
+      for (let index = 0; index < groups.length; index += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await handleGenerateScenarios(index)
+      }
+    } finally {
+      setIsGeneratingAll(false)
+    }
+  }, [groups, handleGenerateScenarios])
 
   const handleUpdateScenarioField = useCallback((groupIndex: number, scenarioId: string, key: 'scenario' | 'input' | 'expected', value: string) => {
     setGroups((prev) => {
@@ -919,6 +936,16 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
               <p className="testcase-workflow__overview-description">{projectOverview}</p>
             </aside>
           )}
+          <div className="testcase-workflow__bulk-actions">
+            <button
+              type="button"
+              className="testcase-workflow__button"
+              onClick={handleGenerateAllScenarios}
+              disabled={isGeneratingAll || groups.length === 0}
+            >
+              {isGeneratingAll ? '전체 생성 중…' : '전체 시나리오 생성'}
+            </button>
+          </div>
           <div className="testcase-workflow__feature-list">
             {groups.map((group, index) => (
               <article
@@ -1008,7 +1035,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                               type="button"
                               className="testcase-workflow__button"
                               onClick={() => handleGenerateScenarios(index)}
-                              disabled={group.status === 'loading'}
+                              disabled={group.status === 'loading' || isGeneratingAll}
                             >
                               {group.status === 'loading' ? '생성 중…' : '시나리오 생성'}
                             </button>
