@@ -9,7 +9,6 @@ import { Modal } from '../components/Modal'
 import { useBackgroundTasks } from '../app/background/BackgroundTaskContext'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
-import { useAppShellHeader } from '../app/components/AppShellHeaderContext'
 
 type MenuItemId =
   | 'configuration-images'
@@ -325,8 +324,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const { startTask } = useBackgroundTasks()
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const isMountedRef = useRef(true)
-  const { setLeadingAction } = useAppShellHeader()
-
   const menuById = useMemo(() => {
     return MENU_ITEMS.reduce((acc, item) => {
       acc[item.id] = item
@@ -1266,8 +1263,22 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   }, [])
 
   const sidebarToggleLabel = isSidebarOpen ? '사이드바 접기' : '사이드바 펼치기'
-  const sidebarToggleAction = useMemo(
-    () => (
+  const pageClassName = [
+    'project-management-page',
+    isSidebarOpen ? 'project-management-page--sidebar-open' : 'project-management-page--sidebar-collapsed',
+    isTestcaseWorkflow ? 'project-management-page--preview' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const contentClassName = [
+    'project-management-content',
+    isTestcaseWorkflow ? 'project-management-content--preview' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div className={pageClassName}>
       <button
         type="button"
         className="project-management-sidebar-toggle"
@@ -1286,9 +1297,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
               <path d="M15 8L11 12L15 16" />
-              <line x1="20" y1="5" x2="20" y2="19" />
             </svg>
           ) : (
             <svg
@@ -1299,41 +1308,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
               <path d="M10 8L14 12L10 16" />
-              <line x1="18" y1="5" x2="18" y2="19" />
             </svg>
           )}
         </span>
         <span className="project-management-sr-only">{sidebarToggleLabel}</span>
       </button>
-    ),
-    [handleToggleSidebar, isSidebarOpen, sidebarToggleLabel],
-  )
-
-  useEffect(() => {
-    setLeadingAction(sidebarToggleAction)
-
-    return () => {
-      setLeadingAction(null)
-    }
-  }, [setLeadingAction, sidebarToggleAction])
-  const pageClassName = [
-    'project-management-page',
-    isSidebarOpen ? 'project-management-page--sidebar-open' : 'project-management-page--sidebar-collapsed',
-    isTestcaseWorkflow ? 'project-management-page--preview' : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-  const contentClassName = [
-    'project-management-content',
-    isTestcaseWorkflow ? 'project-management-content--preview' : '',
-  ]
-    .filter(Boolean)
-    .join(' ')
-
-  return (
-    <div className={pageClassName}>
       <aside
         id="project-management-sidebar"
         className="project-management-sidebar"
