@@ -28,6 +28,10 @@ from .models import (
 from .utils import append_attachment_note, parse_csv_records, safe_int
 from .workbook import WorksheetPopulator, column_to_index, replace_sheet_bytes
 
+ET.register_namespace("xdr", DRAWING_NS)
+ET.register_namespace("a", DRAWING_A_NS)
+ET.register_namespace("r", REL_NS)
+
 __all__ = [
     "DEFECT_REPORT_COLUMNS",
     "DEFECT_REPORT_EXPECTED_HEADERS",
@@ -265,11 +269,8 @@ def _inject_defect_images(
     )
     updated_rels = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
 
-    drawing_root = ET.Element(
-        f"{{{DRAWING_NS}}}wsDr",
-        {"xmlns:xdr": DRAWING_NS, "xmlns:a": DRAWING_A_NS},
-    )
-    drawing_rels_root = ET.Element(f"{{{REL_NS}}}Relationships")
+    drawing_root = ET.Element(f"{{{DRAWING_NS}}}wsDr")
+    drawing_rels_root = ET.Element("Relationships", {"xmlns": REL_NS})
     used_names: Dict[str, int] = {}
     image_entries: List[Tuple[str, bytes]] = []
 
@@ -325,7 +326,7 @@ def _inject_defect_images(
 
         ET.SubElement(
             drawing_rels_root,
-            f"{{{REL_NS}}}Relationship",
+            "Relationship",
             {
                 "Id": rel_id,
                 "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
