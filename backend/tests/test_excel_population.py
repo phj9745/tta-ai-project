@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import io
 import sys
 import zipfile
@@ -18,6 +19,7 @@ from app.services.excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
     SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
+    DefectReportImage,
     extract_feature_list_overview,
     populate_defect_report,
     populate_feature_list,
@@ -182,7 +184,8 @@ def test_populate_security_report_fills_rows() -> None:
 
     start_row = 6
     target_row = start_row + len(existing_rows)
-    assert _cell_text(root, f"A{target_row}") == "1"
+    expected_order = str(len(existing_rows) + 1)
+    assert _cell_text(root, f"A{target_row}") == expected_order
     assert _cell_text(root, f"B{target_row}") == "시험환경 모든 OS"
     assert _cell_text(root, f"C{target_row}") == "요약"
     assert _cell_text(root, f"D{target_row}") == "H"
@@ -247,6 +250,45 @@ def test_populate_security_report_appends_existing_rows() -> None:
     assert _cell_text(root, "A7") == "2"
     assert _cell_text(root, "C7") == "신규 결함 요약"
     assert _cell_text(root, "J7") == "신규 비고"
+
+
+def test_populate_defect_report_injects_images_with_relationship_namespace() -> None:
+    template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    header = "|".join(DEFECT_REPORT_EXPECTED_HEADERS)
+    row = "|".join(
+        [
+            "1",
+            "Windows",
+            "요약",
+            "High",
+            "Frequent",
+            "품질",
+            "설명",
+            "응답",
+            "수정",
+            "비고",
+        ]
+    )
+    csv_text = f"{header}\n{row}"
+
+    image_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8z/C/HwAFgwJ/lW+7TQAAAABJRU5ErkJggg=="
+    )
+
+    workbook_bytes = populate_defect_report(
+        template_bytes,
+        csv_text,
+        images={1: [DefectReportImage(file_name="image.png", content=image_bytes)]},
+    )
+
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
+        drawing_xml = zf.read("xl/drawings/drawing2.xml")
+
+    assert b"<xdr:wsDr" in drawing_xml
+    assert b"xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"" in drawing_xml
+    assert b"r:embed=\"rId1\"" in drawing_xml
 
 
 def test_populate_defect_report_accepts_spaced_headers() -> None:

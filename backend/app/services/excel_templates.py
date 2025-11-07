@@ -57,6 +57,10 @@ _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-type
 _EMU_PER_PIXEL = 9525
 _IMAGE_VERTICAL_GAP_PX = 4
 
+ET.register_namespace("xdr", _DRAWING_NS)
+ET.register_namespace("a", _DRAWING_A_NS)
+ET.register_namespace("r", _REL_NS)
+
 
 @dataclass(frozen=True)
 class ColumnSpec:
@@ -1329,11 +1333,8 @@ def _inject_defect_images(
     )
     updated_rels = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
 
-    drawing_root = ET.Element(
-        f"{{{_DRAWING_NS}}}wsDr",
-        {"xmlns:xdr": _DRAWING_NS, "xmlns:a": _DRAWING_A_NS},
-    )
-    drawing_rels_root = ET.Element(f"{{{_REL_NS}}}Relationships")
+    drawing_root = ET.Element(f"{{{_DRAWING_NS}}}wsDr")
+    drawing_rels_root = ET.Element("Relationships", {"xmlns": _REL_NS})
     used_names: Dict[str, int] = {}
     image_entries: List[Tuple[str, bytes]] = []
 
@@ -1389,7 +1390,7 @@ def _inject_defect_images(
 
         ET.SubElement(
             drawing_rels_root,
-            f"{{{_REL_NS}}}Relationship",
+            "Relationship",
             {
                 "Id": rel_id,
                 "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
