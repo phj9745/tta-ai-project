@@ -344,7 +344,29 @@ def _inject_defect_images(
 
     drawing_elem = ET.Element(f"{{{SPREADSHEET_NS}}}drawing")
     drawing_elem.set(f"{{{REL_NS}}}id", sheet_rel_id)
-    sheet_root.append(drawing_elem)
+
+    children = list(sheet_root)
+
+    def _local_name(tag: str) -> str:
+        return tag.split("}", 1)[-1] if "}" in tag else tag
+
+    insert_index = len(children)
+    for index, child in enumerate(children):
+        if _local_name(child.tag) == "legacyDrawing":
+            insert_index = index
+            break
+    else:
+        last_drawing_index: int | None = None
+        for index, child in enumerate(children):
+            if _local_name(child.tag) == "drawing":
+                last_drawing_index = index + 1
+        if last_drawing_index is not None:
+            insert_index = last_drawing_index
+
+    if insert_index >= len(children):
+        sheet_root.append(drawing_elem)
+    else:
+        sheet_root.insert(insert_index, drawing_elem)
     final_sheet = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
 
     source_buffer.seek(0)
