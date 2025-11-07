@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import io
 import re
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Iterable, Optional, Sequence, Tuple
 
 from docx import Document
 from fastapi import HTTPException
@@ -20,6 +20,16 @@ __all__ = [
 
 def normalize_label(value: str) -> str:
     return re.sub(r"\s+", "", value or "")
+
+
+REQUIRED_LABEL_PREFIXES = (
+    normalize_label("시험신청번호"),
+    normalize_label("제조자"),
+    normalize_label("제품명및버전"),
+)
+
+PRODUCT_LABEL_PATTERN = re.compile(r"^\s*제품명\s*및\s*버전\s*[:：]?\s*", re.IGNORECASE)
+HANGUL_PATTERN = re.compile(r"[\uAC00-\uD7A3]")
 
 
 def extract_project_metadata(file_bytes: bytes, *, file_extension: Optional[str] = None) -> Dict[str, str]:
@@ -180,9 +190,34 @@ def _extract_labeled_value(lines: Sequence[str], target_labels: Sequence[str]) -
         if not _is_target(label):
             continue
 
-        candidate = inline_value.strip()
-        if not candidate:
-            candidate = _next_value(lines, index + 1, normalized_targets)
+        values: list[str] = []
+        inline_candidate = inline_value.strip()
+        next_index = index + 1
+
+        if inline_candidate:
+            values.append(inline_candidate)
+        else:
+            candidate_index, candidate_value = _next_value(lines, index + 1, normalized_targets)
+            if not candidate_value:
+                continue
+            values.append(candidate_value)
+            next_index = candidate_index + 1
+
+        continuation_index = next_index
+        while continuation_index < len(lines):
+            next_line = lines[continuation_index].strip()
+            if not next_line:
+                continuation_index += 1
+                continue
+
+            next_label, _ = _split_label_and_value(next_line)
+            if _is_known_label(next_label):
+                break
+
+            values.append(next_line)
+            continuation_index += 1
+
+        candidate = " ".join(values)
         candidate = _strip_leading_label(candidate, normalized_targets)
         if candidate:
             return candidate.strip()
@@ -198,16 +233,26 @@ def _split_label_and_value(line: str) -> tuple[str, str]:
     return normalize_label(line), ""
 
 
-def _next_value(lines: Sequence[str], start: int, normalized_targets: Sequence[str]) -> str:
-    for candidate in lines[start:]:
-        stripped = candidate.strip()
-        if not stripped:
+def _is_known_label(label: str) -> bool:
+    return any(label.startswith(candidate) for candidate in REQUIRED_LABEL_PREFIXES)
+
+
+def _next_value(
+    lines: Sequence[str],
+    start: int,
+    normalized_targets: Sequence[str],
+) -> Tuple[int, str]:
+    for index in range(start, len(lines)):
+        candidate = lines[index].strip()
+        if not candidate:
             continue
-        candidate_label = normalize_label(stripped)
+        candidate_label, _ = _split_label_and_value(candidate)
         if any(candidate_label.startswith(target) for target in normalized_targets):
             continue
-        return stripped
-    return ""
+        if _is_known_label(candidate_label):
+            return index, ""
+        return index, candidate
+    return len(lines), ""
 
 
 def _strip_leading_label(value: str, normalized_targets: Sequence[str]) -> str:
@@ -225,13 +270,22 @@ def _strip_leading_label(value: str, normalized_targets: Sequence[str]) -> str:
 
 
 def _extract_product_name(raw_value: str) -> Optional[str]:
-    lines = [line.strip() for line in raw_value.split("\n") if line.strip()]
+    cleaned = PRODUCT_LABEL_PATTERN.sub("", raw_value or "")
+    lines = [line.strip() for line in re.split(r"[\r\n]+", cleaned) if line.strip()]
     if not lines:
         return None
 
-    last_line = lines[-1]
-    for separator in (":", "："):
-        if separator in last_line:
-            _, remainder = last_line.split(separator, 1)
-            return remainder.strip()
-    return last_line.strip() or None
+    hangul_segments: list[str] = []
+    for line in lines:
+        if HANGUL_PATTERN.search(line):
+            match = re.search(r"[\uAC00-\uD7A3].*$", line)
+            if match:
+                hangul_segments.append(match.group(0).strip())
+            else:
+                hangul_segments.append(line)
+
+    if hangul_segments:
+        return hangul_segments[-1]
+
+    combined = " ".join(lines).strip()
+    return combined or None

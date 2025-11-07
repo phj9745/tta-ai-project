@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import sys
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
@@ -29,18 +30,65 @@ def _build_sample_agreement() -> bytes:
     table.cell(1, 0).text = "제조자"
     table.cell(1, 1).text = "Acme Corp"
     table.cell(2, 0).text = "제품명및버전"
-    table.cell(2, 1).text = "Wonder Widget 1.0"
+    table.cell(2, 1).text = "Wonder Widget\n1.0"
     buffer = io.BytesIO()
     document.save(buffer)
     return buffer.getvalue()
 
 
 def _build_sample_pdf_agreement() -> bytes:
-    stream_content = (
-        "BT /F1 12 Tf 72 720 Td (시험 신청 번호 : GS-B-12-3456) Tj "
-        "T* (제조자 : Acme Corp) Tj "
-        "T* (제품명 및 버전 : Wonder Widget 1.0) Tj ET"
-    ).encode("utf-8")
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "제품명 및 버전 : Wonder Widget 1.0",
+        ]
+    )
+
+
+def _build_multiline_product_pdf_agreement() -> bytes:
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "제품명 및 버전 : Wonder Widget",
+            "1.0",
+        ]
+    )
+
+
+def _build_multilingual_agreement() -> bytes:
+    document = Document()
+    table = document.add_table(rows=3, cols=2)
+    table.cell(0, 0).text = "시험 신청 번호"
+    table.cell(0, 1).text = "GS-B-12-3456"
+    table.cell(1, 0).text = "제조자"
+    table.cell(1, 1).text = "Acme Corp"
+    table.cell(2, 0).text = "제품명및버전"
+    table.cell(2, 1).text = "Wonder Widget 1.0\n중장비 호출 v1.0"
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def _build_multilingual_pdf_agreement() -> bytes:
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "제품명 및 버전 : Wonder Widget 1.0",
+            "중장비 호출 v1.0",
+        ]
+    )
+
+
+def _build_pdf_agreement_stream(lines: Sequence[str]) -> bytes:
+    stream_segments = ["BT /F1 12 Tf 72 720 Td"]
+    for index, line in enumerate(lines):
+        prefix = "" if index == 0 else "T* "
+        stream_segments.append(f"{prefix}({line}) Tj")
+    stream_segments.append("ET")
+    stream_content = " ".join(stream_segments).encode("utf-8")
 
     buffer = io.BytesIO()
     buffer.write(b"%PDF-1.4\n")
@@ -93,6 +141,37 @@ def test_extract_project_metadata_reads_pdf() -> None:
         "exam_number": "GS-B-12-3456",
         "company_name": "Acme Corp",
         "product_name": "Wonder Widget 1.0",
+    }
+
+
+def test_extract_project_metadata_reads_pdf_with_multiline_product() -> None:
+    metadata = extract_project_metadata(
+        _build_multiline_product_pdf_agreement(), file_extension=".pdf"
+    )
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "Wonder Widget 1.0",
+    }
+
+
+def test_extract_project_metadata_prefers_korean_product_name_from_docx() -> None:
+    metadata = extract_project_metadata(_build_multilingual_agreement())
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "중장비 호출 v1.0",
+    }
+
+
+def test_extract_project_metadata_prefers_korean_product_name_from_pdf() -> None:
+    metadata = extract_project_metadata(
+        _build_multilingual_pdf_agreement(), file_extension=".pdf"
+    )
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "중장비 호출 v1.0",
     }
 
 
