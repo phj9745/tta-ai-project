@@ -1297,9 +1297,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
               <path d="M15 8L11 12L15 16" />
-              <line x1="20" y1="5" x2="20" y2="19" />
             </svg>
           ) : (
             <svg
@@ -1310,9 +1308,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
               <path d="M10 8L14 12L10 16" />
-              <line x1="18" y1="5" x2="18" y2="19" />
             </svg>
           )}
         </span>

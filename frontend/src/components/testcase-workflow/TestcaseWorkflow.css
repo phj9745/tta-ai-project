@@ -457,6 +457,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
+  margin-top: 15px;
 }
 
 .testcase-workflow__step-actions-group {
