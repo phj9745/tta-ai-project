@@ -349,6 +349,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const hasRequiredDocuments = activeRequiredDocuments.length > 0
   const hasMandatoryDocuments = activeRequiredDocuments.some((doc) => doc.required !== false)
   const requiredSectionTitle = hasMandatoryDocuments ? '필수 문서 업로드' : '문서 업로드 (선택)'
+
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -1287,7 +1288,11 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         aria-controls="project-management-sidebar"
         title={sidebarToggleLabel}
       >
-        <span className="project-management-sidebar-toggle__icon" aria-hidden="true">
+        <span className="project-management-sidebar-toggle__icon" aria-hidden="true"   style={
+          !isSidebarOpen
+            ? { position: "absolute", left: "17px" }
+            : undefined
+        }>
           {isSidebarOpen ? (
             <svg
               viewBox="0 0 24 24"
@@ -1307,6 +1312,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              
             >
               <path d="M10 8L14 12L10 16" />
             </svg>
@@ -1319,6 +1325,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         className="project-management-sidebar"
         aria-hidden={!isSidebarOpen}
       >
+        <div className="project-management-sidebar__inner-follow" >
         <div className="project-management-overview">
           <span className="project-management-overview__label">프로젝트</span>
           <strong className="project-management-overview__name">{projectName}</strong>
@@ -1350,6 +1357,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             })}
           </ul>
         </nav>
+        </div>
       </aside>
 
       <button

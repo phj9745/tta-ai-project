@@ -1586,8 +1586,8 @@
   justify-content: center;
   cursor: pointer;
   box-shadow: 0 18px 32px rgba(15, 23, 42, 0.22);
-  position: absolute;
-  top: 50%;
+  position: fixed;
+  top: 500px;
   z-index: 3;
   --project-management-sidebar-toggle-x: 0;
   --project-management-sidebar-toggle-y: -50%;
@@ -1623,13 +1623,14 @@
   outline-offset: 2px;
 }
 
+
 .project-management-page--sidebar-open .project-management-sidebar-toggle {
   left: var(--project-management-sidebar-width);
   --project-management-sidebar-toggle-x: 50%;
 }
 
 .project-management-page--sidebar-collapsed .project-management-sidebar-toggle {
-  left: 0.75rem;
+  left: -1.4rem;
   --project-management-sidebar-toggle-x: 0;
 }
 
@@ -1679,6 +1680,11 @@
   }
 }
 
+.project-management-sidebar__inner-follow{
+  position: fixed;
+  top : 20px;
+}
+
 .project-management-sidebar {
   position: relative;
   z-index: 2;
@@ -1710,6 +1716,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  margin-bottom: 10px;
 }
 
 .project-management-overview__label {

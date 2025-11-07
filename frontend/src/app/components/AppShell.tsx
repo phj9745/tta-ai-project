@@ -90,8 +90,6 @@ export function AppShell({
         </header>
 
         <main className="app-shell__main">{children}</main>
-
-        <footer className="app-shell__footer">© {new Date().getFullYear()} TTA AI Platform</footer>
       </div>
     </AppShellHeaderContext.Provider>
   )
