@@ -57,7 +57,8 @@ def build_project_folder_name(metadata: Dict[str, str]) -> str:
     exam_number = metadata.get("exam_number", "").strip()
     company_name = metadata.get("company_name", "").strip()
     product_name = metadata.get("product_name", "").strip()
-    return f"[{exam_number}] {company_name} - {product_name}"
+    parts = [part for part in (exam_number, company_name, product_name) if part]
+    return " ".join(parts)
 
 
 def _extract_project_metadata_from_docx(file_bytes: bytes) -> Dict[str, str]:

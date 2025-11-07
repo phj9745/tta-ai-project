@@ -181,4 +181,4 @@ def test_build_project_folder_name_formats_metadata() -> None:
         "company_name": "Acme Corp",
         "product_name": "Wonder Widget 1.0",
     }
-    assert build_project_folder_name(metadata) == "[GS-B-12-3456] Acme Corp - Wonder Widget 1.0"
+    assert build_project_folder_name(metadata) == "GS-B-12-3456 Acme Corp Wonder Widget 1.0"
