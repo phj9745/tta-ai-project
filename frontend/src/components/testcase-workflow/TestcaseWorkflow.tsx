@@ -966,7 +966,11 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                     ) : (
                       <>
                         <h3 className="testcase-workflow__card-title">
-                          {group.feature.majorCategory} | {group.feature.middleCategory} | {group.feature.minorCategory}
+                          {[group.feature.majorCategory, group.feature.middleCategory, group.feature.minorCategory]
+                            .filter(Boolean)
+                            .map((label, i) => (
+                              <span className="tcw-tag" key={i}>{label}</span>
+                            ))}
                         </h3>
                         <p className="testcase-workflow__card-subtitle">
                           {group.feature.featureDescription || '기능 설명이 제공되지 않았습니다.'}

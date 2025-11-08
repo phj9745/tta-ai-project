@@ -1798,14 +1798,16 @@
 }
 
 .project-management-content {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   align-items: stretch;
-  background: #f8fafc;
-  padding: clamp(2rem, 3vw, 3rem);
-  min-width: 0;
-  min-height: 0;
   justify-content: center;
+
+  /* 스크롤 핵심 */
+  overflow-y: auto;         /* 세로 스크롤 */
+  overflow-x: hidden;       /* 가로는 숨김 (필요시 auto) */
+  max-height: inherit;      /* 부모(.project-management-page)의 max-height 상속 */
+  min-height: 0;            /* grid/flex 문맥에서 스크롤 되게 하는 필수 설정 */
 }
 
 .project-management-content--preview {
@@ -1813,7 +1815,6 @@
 }
 
 .project-management-content__inner {
-  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 2rem;
@@ -1822,8 +1823,9 @@
   border: 1px solid #e2e8f0;
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
   padding: 2.25rem;
-  width: 100%;
-  overflow-x: hidden;
+  width: 1280px;
+  overflow: visible;
+  height: max-content;
 }
 
 .project-management-content__inner--preview {
