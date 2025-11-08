@@ -299,18 +299,33 @@ def _clear_cell(cell: ET.Element) -> None:
         cell.remove(child)
 
 
+def _sanitize_xml_text(value: str) -> str:
+    def is_allowed(codepoint: int) -> bool:
+        return (
+            codepoint in {0x9, 0xA, 0xD}
+            or 0x20 <= codepoint <= 0xD7FF
+            or 0xE000 <= codepoint <= 0xFFFD
+            or 0x10000 <= codepoint <= 0x10FFFF
+        )
+
+    return "".join(ch for ch in value if is_allowed(ord(ch)))
+
+
 def _set_cell_text(cell: ET.Element, value: str) -> None:
     _clear_cell(cell)
-    cleaned = value.strip()
+    if value is None:
+        value = ""
+    sanitized_value = _sanitize_xml_text(value)
+    cleaned = sanitized_value.strip()
     if not cleaned:
         return
 
     cell.set("t", "inlineStr")
     is_elem = ET.SubElement(cell, f"{{{_SPREADSHEET_NS}}}is")
     text_elem = ET.SubElement(is_elem, f"{{{_SPREADSHEET_NS}}}t")
-    if cleaned != value or "\n" in value:
+    if cleaned != sanitized_value or "\n" in sanitized_value:
         text_elem.set(f"{{{_XML_NS}}}space", "preserve")
-        text_elem.text = value
+        text_elem.text = sanitized_value
     else:
         text_elem.text = cleaned
 
