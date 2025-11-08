@@ -1680,11 +1680,6 @@
   }
 }
 
-.project-management-sidebar__inner-follow{
-  position: fixed;
-  top : 20px;
-}
-
 .project-management-sidebar {
   position: relative;
   z-index: 2;
