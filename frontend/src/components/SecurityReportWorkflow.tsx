@@ -278,7 +278,10 @@ export function SecurityReportWorkflow({
     setIsFullscreenPreview(false)
   }, [])
 
-  const columns: SecurityColumn[] = useMemo(() => SECURITY_COLUMNS, [])
+  const visibleColumns: SecurityColumn[] = useMemo(
+    () => SECURITY_COLUMNS.filter((column) => !column.hidden),
+    [],
+  )
   const showResetButton = sourceFiles.length > 0 || rows.length > 0
   const isPreviewLoading = previewStatus === 'loading'
   const isSaving = saveStatus === 'loading'
@@ -302,7 +305,7 @@ export function SecurityReportWorkflow({
       <table className="defect-workflow__table">
         <thead>
           <tr>
-            {columns.map((column) => (
+            {visibleColumns.map((column) => (
               <th key={column.key} scope="col">
                 {column.label}
               </th>
@@ -312,7 +315,7 @@ export function SecurityReportWorkflow({
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
-              {columns.map((column) => {
+              {visibleColumns.map((column) => {
                 const value = row[column.key] ?? ''
                 const isReadOnly = readOnly || Boolean(column.readOnly)
                 return (
@@ -349,7 +352,7 @@ export function SecurityReportWorkflow({
         </tbody>
       </table>
     ),
-    [columns, handleCellChange, rows],
+    [visibleColumns, handleCellChange, rows],
   )
 
   return (

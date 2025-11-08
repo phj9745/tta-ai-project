@@ -21,25 +21,33 @@ export interface SecurityColumn {
   backendKey: string
   input: 'text' | 'textarea'
   readOnly?: boolean
+  hidden?: boolean
 }
 
 export const SECURITY_COLUMNS: SecurityColumn[] = [
-  { key: 'order', label: '순번', backendKey: '순번', input: 'text', readOnly: true },
+  { key: 'order', label: '순번', backendKey: '순번', input: 'text', readOnly: true, hidden: true },
   {
     key: 'environment',
     label: '시험환경(OS)',
     backendKey: '시험환경 OS',
     input: 'text',
     readOnly: true,
+    hidden: true,
   },
   { key: 'summary', label: '결함요약', backendKey: '결함 요약', input: 'textarea' },
   { key: 'severity', label: '결함정도', backendKey: '결함 정도', input: 'text' },
   { key: 'frequency', label: '발생빈도', backendKey: '발생 빈도', input: 'text' },
-  { key: 'quality', label: '품질특성', backendKey: '품질 특성', input: 'text' },
+  { key: 'quality', label: '품질특성', backendKey: '품질 특성', input: 'text', hidden: true },
   { key: 'description', label: '결함 설명', backendKey: '결함 설명', input: 'textarea' },
-  { key: 'vendorResponse', label: '업체 응답', backendKey: '업체 응답', input: 'textarea' },
-  { key: 'fixStatus', label: '수정여부', backendKey: '수정여부', input: 'text' },
-  { key: 'note', label: '비고', backendKey: '비고', input: 'textarea' },
+  {
+    key: 'vendorResponse',
+    label: '업체 응답',
+    backendKey: '업체 응답',
+    input: 'textarea',
+    hidden: true,
+  },
+  { key: 'fixStatus', label: '수정여부', backendKey: '수정여부', input: 'text', hidden: true },
+  { key: 'note', label: '비고', backendKey: '비고', input: 'textarea', hidden: true },
   {
     key: 'mappingType',
     label: '매핑 유형',
