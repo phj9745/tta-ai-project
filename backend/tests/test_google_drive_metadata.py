@@ -82,6 +82,16 @@ def _build_multilingual_pdf_agreement() -> bytes:
     )
 
 
+def _build_korean_name_only_pdf_agreement() -> bytes:
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "국문명 : 오픈마루 v1.0",
+        ]
+    )
+
+
 def _build_pdf_agreement_stream(lines: Sequence[str]) -> bytes:
     stream_segments = ["BT /F1 12 Tf 72 720 Td"]
     for index, line in enumerate(lines):
@@ -175,10 +185,21 @@ def test_extract_project_metadata_prefers_korean_product_name_from_pdf() -> None
     }
 
 
+def test_extract_project_metadata_reads_korean_name_label_from_pdf() -> None:
+    metadata = extract_project_metadata(
+        _build_korean_name_only_pdf_agreement(), file_extension=".pdf"
+    )
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "오픈마루 v1.0",
+    }
+
+
 def test_build_project_folder_name_formats_metadata() -> None:
     metadata = {
         "exam_number": "GS-B-12-3456",
         "company_name": "Acme Corp",
         "product_name": "Wonder Widget 1.0",
     }
-    assert build_project_folder_name(metadata) == "GS-B-12-3456 Acme Corp Wonder Widget 1.0"
+    assert build_project_folder_name(metadata) == "[GS-B-12-3456] Acme Corp - Wonder Widget 1.0"
