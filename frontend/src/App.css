@@ -371,7 +371,7 @@
 
 .app-shell__main {
   --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
-  /* --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem); */
+  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
   flex: 1;
   display: flex;
   align-items: stretch;
