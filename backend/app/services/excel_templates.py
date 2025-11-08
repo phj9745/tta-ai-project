@@ -733,19 +733,7 @@ class WorksheetPopulator:
         return new_cell
 
     def _set_cell_value(self, cell: ET.Element, value: str) -> None:
-        self._clear_cell(cell)
-        cleaned = value.strip()
-        if not cleaned:
-            return
-
-        cell.set("t", "inlineStr")
-        is_elem = ET.SubElement(cell, self._tag("is"))
-        t_elem = ET.SubElement(is_elem, self._tag("t"))
-        if cleaned != value or "\n" in value:
-            t_elem.set(f"{{{_XML_NS}}}space", "preserve")
-            t_elem.text = value
-        else:
-            t_elem.text = cleaned
+        _set_cell_text(cell, value)
 
     def populate(self, records: Sequence[Dict[str, str]]) -> None:
         # 우선 기존 데이터를 비웁니다.
