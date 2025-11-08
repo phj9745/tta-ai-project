@@ -26,9 +26,45 @@ REQUIRED_LABEL_PREFIXES = (
     normalize_label("시험신청번호"),
     normalize_label("제조자"),
     normalize_label("제품명및버전"),
+    normalize_label("제품및버전"),
+    normalize_label("및버전"),
+    normalize_label("국문명"),
+    normalize_label("국문"),
+    normalize_label("제품"),
+    normalize_label("제품명"),
+    normalize_label("(국문)"),
+    normalize_label("영문"),
+    normalize_label("(영문)"),
 )
 
-PRODUCT_LABEL_PATTERN = re.compile(r"^\s*제품명\s*및\s*버전\s*[:：]?\s*", re.IGNORECASE)
+PRODUCT_LABEL_PATTERN = re.compile(
+    r"^\s*(?:제품\s*명?(?:\s*\([^)]*\))*\s*(?:및\s*버전)?|\(?국문\)?명?)\s*[:：]?\s*",
+    re.IGNORECASE,
+)
+PRODUCT_LABEL_FALLBACKS = (
+    "제품명및버전",
+    "제품및버전",
+    "및버전",
+    "국문명",
+    "국문",
+    "제품",
+    "제품명",
+    "(국문)",
+)
+VERSION_BOUNDARY_PATTERN = re.compile(r"(?<=[A-Za-z\uAC00-\uD7A3\)])(?=\d+(?:\.\d+)+)")
+
+
+def _normalized_label_to_regex(label: str) -> str:
+    return r"\s*".join(re.escape(char) for char in label)
+
+
+def _build_label_regex(labels: Sequence[str]) -> str:
+    fragments = [_normalized_label_to_regex(label) for label in labels]
+    return "|".join(fragments)
+
+
+_LABEL_REGEX = _build_label_regex(REQUIRED_LABEL_PREFIXES)
+_LABEL_SPLIT_PATTERN = re.compile(rf"((?:{_LABEL_REGEX})\s*[:：])", re.IGNORECASE)
 HANGUL_PATTERN = re.compile(r"[\uAC00-\uD7A3]")
 
 
@@ -147,7 +183,35 @@ def _finalize_metadata_from_lines(
     company_name: Optional[str],
     product_name: Optional[str],
 ) -> Dict[str, str]:
-    meaningful_lines = [line.strip() for line in lines if line and line.strip()]
+    expanded_lines: list[str] = []
+    pending_fragment: Optional[Tuple[int, str]] = None
+    for line in lines:
+        for segment in _split_line_by_known_labels(line):
+            if pending_fragment is not None:
+                index, fragment = pending_fragment
+                candidate = f"{fragment}{segment}".strip()
+                normalized_label, _ = _split_label_and_value(candidate)
+                is_known = _is_known_label(normalized_label)
+                if not is_known and PRODUCT_LABEL_PATTERN.match(candidate):
+                    is_known = True
+
+                if is_known:
+                    previous = expanded_lines[index].rstrip()
+                    expanded_lines[index] = previous[: -len(fragment)].rstrip()
+                    segment = candidate
+
+                pending_fragment = None
+
+            expanded_lines.append(segment)
+
+        if expanded_lines:
+            last_segment = expanded_lines[-1]
+            if last_segment.rstrip().endswith("제품"):
+                pending_fragment = (len(expanded_lines) - 1, "제품")
+            elif last_segment.rstrip().endswith("국문"):
+                pending_fragment = (len(expanded_lines) - 1, "국문")
+
+    meaningful_lines = [line.strip() for line in expanded_lines if line and line.strip()]
     combined_text = "\n".join(meaningful_lines)
 
     if not exam_number:
@@ -159,7 +223,7 @@ def _finalize_metadata_from_lines(
         company_name = _extract_labeled_value(meaningful_lines, ("제조자",))
 
     if not product_name:
-        product_name = _extract_labeled_value(meaningful_lines, ("제품명및버전",))
+        product_name = _extract_labeled_value(meaningful_lines, PRODUCT_LABEL_FALLBACKS)
         if product_name:
             product_name = _extract_product_name(product_name)
 
@@ -225,11 +289,84 @@ def _extract_labeled_value(lines: Sequence[str], target_labels: Sequence[str]) -
     return None
 
 
+def _split_line_by_known_labels(line: str) -> list[str]:
+    normalized_line = _normalize_pdf_line(line)
+
+    parts = _LABEL_SPLIT_PATTERN.split(normalized_line)
+    if len(parts) <= 1:
+        return [normalized_line]
+
+    segments: list[str] = []
+    current = ""
+
+    for part in parts:
+        if not part:
+            continue
+        if _LABEL_SPLIT_PATTERN.fullmatch(part):
+            if current.strip():
+                segments.append(current.strip())
+            current = part
+        else:
+            current += part
+
+    if current.strip():
+        segments.append(current.strip())
+
+    for index in range(len(segments) - 1):
+        current_segment = segments[index]
+        next_segment = segments[index + 1]
+        stripped_current = current_segment.rstrip()
+        if not stripped_current.endswith("제품"):
+            continue
+
+        next_label, _ = _split_label_and_value(next_segment)
+        if not next_label.startswith(normalize_label("및버전")):
+            continue
+
+        segments[index] = stripped_current[:-2].rstrip()
+        segments[index + 1] = f"제품{next_segment}".strip()
+
+    return segments
+
+
+def _normalize_pdf_line(line: str) -> str:
+    if not line or HANGUL_PATTERN.search(line):
+        return line
+
+    try:
+        encoded = line.encode("latin1")
+    except UnicodeEncodeError:
+        return line
+
+    if encoded.startswith(b"\xfe\xff") or b"\x00" in encoded:
+        try:
+            decoded_utf16 = encoded.decode("utf-16")
+        except UnicodeDecodeError:
+            decoded_utf16 = encoded.decode("utf-16", errors="ignore")
+        if decoded_utf16.strip():
+            return decoded_utf16
+
+    try:
+        decoded = encoded.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = encoded.decode("utf-8", errors="ignore")
+
+    if not decoded:
+        return line
+
+    return decoded
+
+
 def _split_label_and_value(line: str) -> tuple[str, str]:
     for separator in (":", "："):
         if separator in line:
             left, right = line.split(separator, 1)
             return normalize_label(left), right
+    match = PRODUCT_LABEL_PATTERN.match(line)
+    if match:
+        label_text = match.group(0)
+        remainder = line[match.end() :]
+        return normalize_label(label_text), remainder
     return normalize_label(line), ""
 
 
@@ -271,21 +408,30 @@ def _strip_leading_label(value: str, normalized_targets: Sequence[str]) -> str:
 
 def _extract_product_name(raw_value: str) -> Optional[str]:
     cleaned = PRODUCT_LABEL_PATTERN.sub("", raw_value or "")
+    cleaned = re.split(r"\(\s*영문\s*\)|\b영문\s*[:：]", cleaned, maxsplit=1)[0]
     lines = [line.strip() for line in re.split(r"[\r\n]+", cleaned) if line.strip()]
     if not lines:
         return None
+
+    def _strip_english_suffix(value: str) -> str:
+        trimmed = re.split(r"\(\s*영문\s*\)|\b영문\s*[:：]", value, maxsplit=1)[0]
+        trimmed = re.sub(r"\s+[A-Z]{2,}[A-Za-z0-9\s\-]*$", "", trimmed)
+        return trimmed.strip()
 
     hangul_segments: list[str] = []
     for line in lines:
         if HANGUL_PATTERN.search(line):
             match = re.search(r"[\uAC00-\uD7A3].*$", line)
             if match:
-                hangul_segments.append(match.group(0).strip())
+                hangul_segments.append(_strip_english_suffix(match.group(0).strip()))
             else:
-                hangul_segments.append(line)
+                hangul_segments.append(_strip_english_suffix(line))
 
     if hangul_segments:
-        return hangul_segments[-1]
+        candidate = hangul_segments[-1].strip()
+        return candidate or None
 
     combined = " ".join(lines).strip()
+    combined = VERSION_BOUNDARY_PATTERN.sub(" ", combined)
+    combined = _strip_english_suffix(combined)
     return combined or None
