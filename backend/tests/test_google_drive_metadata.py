@@ -19,6 +19,7 @@ from app.services.google_drive.metadata import (  # noqa: E402
     build_project_folder_name,
     extract_project_metadata,
     normalize_label,
+    _extract_product_name,
 )
 
 
@@ -92,11 +93,39 @@ def _build_korean_name_only_pdf_agreement() -> bytes:
     )
 
 
+def _build_table_style_pdf_agreement() -> bytes:
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "제품명 ( V ) ( 국문 ) 오픈마루",
+            "캅 v1.0",
+            "(영문) OPENMARU COP v1.0",
+        ]
+    )
+
+
+def _build_multiline_label_pdf_agreement() -> bytes:
+    return _build_pdf_agreement_stream(
+        [
+            "시험 신청 번호 : GS-B-12-3456",
+            "제조자 : Acme Corp",
+            "제품명 ( V )",
+            "(국문) 오픈마루",
+            "캅 v1.0",
+            "(영문) OPENMARU COP v1.0",
+        ]
+    )
+
+
 def _build_pdf_agreement_stream(lines: Sequence[str]) -> bytes:
     stream_segments = ["BT /F1 12 Tf 72 720 Td"]
     for index, line in enumerate(lines):
         prefix = "" if index == 0 else "T* "
-        stream_segments.append(f"{prefix}({line}) Tj")
+        escaped_line = (
+            line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        )
+        stream_segments.append(f"{prefix}({escaped_line}) Tj")
     stream_segments.append("ET")
     stream_content = " ".join(stream_segments).encode("utf-8")
 
@@ -188,6 +217,37 @@ def test_extract_project_metadata_prefers_korean_product_name_from_pdf() -> None
 def test_extract_project_metadata_reads_korean_name_label_from_pdf() -> None:
     metadata = extract_project_metadata(
         _build_korean_name_only_pdf_agreement(), file_extension=".pdf"
+    )
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        "product_name": "오픈마루 v1.0",
+    }
+
+
+def test_extract_product_name_strips_english_suffix_from_mixed_line() -> None:
+    assert (
+        _extract_product_name("오픈마루 캅 v1.0(영문) OPENMARU COP v1.0")
+        == "오픈마루 캅 v1.0"
+    )
+
+
+def test_extract_project_metadata_reads_table_style_product_rows_from_pdf() -> None:
+    metadata = extract_project_metadata(
+        _build_table_style_pdf_agreement(), file_extension=".pdf"
+    )
+    assert metadata == {
+        "exam_number": "GS-B-12-3456",
+        "company_name": "Acme Corp",
+        # The minimal PDF fixture truncates the trailing "캅" glyph, but we still
+        # verify that the Korean line is preferred over the English continuation.
+        "product_name": "오픈마루 v1.0",
+    }
+
+
+def test_extract_project_metadata_reads_multiline_product_label_from_pdf() -> None:
+    metadata = extract_project_metadata(
+        _build_multiline_label_pdf_agreement(), file_extension=".pdf"
     )
     assert metadata == {
         "exam_number": "GS-B-12-3456",
