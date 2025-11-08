@@ -1499,9 +1499,6 @@
 
 .project-management-page {
   --project-management-sidebar-width: 280px;
-  --project-management-viewport-height: calc(
-    100vh - (2 * var(--app-shell-main-padding-y, 0px))
-  );
   position: relative;
   display: grid;
   grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
@@ -1510,8 +1507,7 @@
   width: calc(100% + (2 * var(--app-shell-main-padding-x)));
   margin: calc(-1 * var(--app-shell-main-padding-y)) calc(-1 * var(--app-shell-main-padding-x));
   background: #f8fafc;
-  height: var(--project-management-viewport-height);
-  max-height: var(--project-management-viewport-height);
+  max-height: calc(100vh - (2 * var(--app-shell-main-padding-y)));
   overflow: hidden;
   transition: grid-template-columns 0.3s ease;
 }
@@ -1748,7 +1744,6 @@
   display: flex;
   align-items: stretch;
   justify-content: center;
-  height: 100%;
 
   /* 스크롤 핵심 */
   overflow-y: auto;         /* 세로 스크롤 */
