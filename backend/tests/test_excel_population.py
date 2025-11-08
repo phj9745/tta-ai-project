@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import importlib.util
 import io
 import sys
 import zipfile
@@ -18,21 +20,100 @@ from app.services.excel_templates import (
     FEATURE_LIST_EXPECTED_HEADERS,
     SECURITY_REPORT_EXPECTED_HEADERS,
     TESTCASE_EXPECTED_HEADERS,
+    DefectReportImage,
     extract_feature_list_overview,
     populate_defect_report,
     populate_feature_list,
     populate_security_report,
     populate_testcase_list,
 )
+from app.services.excel_templates.defect_report import (
+    DefectReportImage as modern_DefectReportImage,
+    _inject_defect_images as modern_inject_defect_images,
+)
 from app.services.excel_templates.security_report import _extract_existing_rows
 
 _SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_DUMMY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACklEQVR42mP8/5+hHgAHggJ/P0BkhQAAAABJRU5ErkJggg=="
+)
+import app.services.excel_templates.utils as modern_utils
+sys.modules.setdefault("app.services.utils", modern_utils)
+_LEGACY_SPEC = importlib.util.spec_from_file_location(
+    "app.services._legacy_excel_templates",
+    BACKEND_ROOT / "app/services/excel_templates.py",
+)
+assert _LEGACY_SPEC and _LEGACY_SPEC.loader is not None
+legacy_module = importlib.util.module_from_spec(_LEGACY_SPEC)
+sys.modules[_LEGACY_SPEC.name] = legacy_module
+_LEGACY_SPEC.loader.exec_module(legacy_module)
+legacy_inject_defect_images = legacy_module._inject_defect_images
+legacy_DefectReportImage = legacy_module.DefectReportImage
 
 
 def _load_sheet(workbook_bytes: bytes) -> ET.Element:
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
         data = zf.read("xl/worksheets/sheet1.xml")
     return ET.fromstring(data)
+
+
+def _build_test_workbook(*, include_drawing: bool, include_legacy: bool) -> tuple[bytes, bytes]:
+    page_margins = '<pageMargins left="0" right="0" top="0" bottom="0"/>'
+    sheet_parts = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+        "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"",
+        "           xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
+        "  <sheetData>",
+        "    <row r=\"6\" ht=\"15\"/>",
+        "  </sheetData>",
+        f"  {page_margins}",
+    ]
+
+    rel_entries: list[str] = []
+
+    if include_drawing:
+        sheet_parts.append('  <drawing r:id="rId1"/>')
+        rel_entries.append(
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" '
+            'Target="../drawings/drawing1.xml"/>'
+        )
+
+    if include_legacy:
+        legacy_rel_id = "rId2" if include_drawing else "rId1"
+        sheet_parts.append(f'  <legacyDrawing r:id="{legacy_rel_id}"/>')
+        rel_entries.append(
+            f'<Relationship Id="{legacy_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" '
+            'Target="../drawings/vmlDrawing1.vml"/>'
+        )
+
+    sheet_parts.append("</worksheet>")
+    sheet_xml = "\n".join(sheet_parts)
+
+    rels_lines = [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+        f"<Relationships xmlns=\"{_RELATIONSHIPS_NS}\">",
+        *rel_entries,
+        "</Relationships>",
+    ]
+    sheet_rels_xml = "\n".join(rels_lines)
+
+    content_types_xml = """<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
+<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">
+  <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>
+  <Default Extension=\"xml\" ContentType=\"application/xml\"/>
+  <Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>
+</Types>
+"""
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        zf.writestr("xl/worksheets/_rels/sheet1.xml.rels", sheet_rels_xml)
+
+    return buffer.getvalue(), sheet_xml.encode("utf-8")
 
 
 def _cell_text(root: ET.Element, ref: str) -> str | None:
@@ -182,7 +263,8 @@ def test_populate_security_report_fills_rows() -> None:
 
     start_row = 6
     target_row = start_row + len(existing_rows)
-    assert _cell_text(root, f"A{target_row}") == "1"
+    expected_order = str(len(existing_rows) + 1)
+    assert _cell_text(root, f"A{target_row}") == expected_order
     assert _cell_text(root, f"B{target_row}") == "시험환경 모든 OS"
     assert _cell_text(root, f"C{target_row}") == "요약"
     assert _cell_text(root, f"D{target_row}") == "H"
@@ -249,6 +331,45 @@ def test_populate_security_report_appends_existing_rows() -> None:
     assert _cell_text(root, "J7") == "신규 비고"
 
 
+def test_populate_defect_report_injects_images_with_relationship_namespace() -> None:
+    template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    header = "|".join(DEFECT_REPORT_EXPECTED_HEADERS)
+    row = "|".join(
+        [
+            "1",
+            "Windows",
+            "요약",
+            "High",
+            "Frequent",
+            "품질",
+            "설명",
+            "응답",
+            "수정",
+            "비고",
+        ]
+    )
+    csv_text = f"{header}\n{row}"
+
+    image_bytes = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P8z/C/HwAFgwJ/lW+7TQAAAABJRU5ErkJggg=="
+    )
+
+    workbook_bytes = populate_defect_report(
+        template_bytes,
+        csv_text,
+        images={1: [DefectReportImage(file_name="image.png", content=image_bytes)]},
+    )
+
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
+        drawing_xml = zf.read("xl/drawings/drawing2.xml")
+
+    assert b"<xdr:wsDr" in drawing_xml
+    assert b"xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"" in drawing_xml
+    assert b"r:embed=\"rId1\"" in drawing_xml
+
+
 def test_populate_defect_report_accepts_spaced_headers() -> None:
     template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
     template_bytes = template_path.read_bytes()
@@ -294,3 +415,63 @@ def test_populate_defect_report_accepts_spaced_headers() -> None:
     assert _cell_text(root, "F6") == "보안성"
     assert _cell_text(root, "G6") == "상세 설명"
     assert _cell_text(root, "J6") == "비고 메모"
+
+
+@pytest.mark.parametrize(
+    "inject_fn,image_cls",
+    [
+        (modern_inject_defect_images, modern_DefectReportImage),
+        (legacy_inject_defect_images, legacy_DefectReportImage),
+    ],
+)
+def test_inject_defect_images_inserts_before_legacy(
+    inject_fn, image_cls
+) -> None:
+    workbook_bytes, sheet_bytes = _build_test_workbook(
+        include_drawing=False, include_legacy=True
+    )
+    images_map = {1: [image_cls(file_name="image.png", content=_DUMMY_PNG)]}
+
+    result = inject_fn(
+        workbook_bytes,
+        sheet_bytes,
+        row_positions={1: 6},
+        images_map=images_map,
+        column_letter="J",
+    )
+
+    root = _load_sheet(result)
+    child_tags = [child.tag.split("}", 1)[-1] for child in list(root)]
+    assert child_tags == ["sheetData", "pageMargins", "drawing", "legacyDrawing"]
+
+
+@pytest.mark.parametrize(
+    "inject_fn,image_cls",
+    [
+        (modern_inject_defect_images, modern_DefectReportImage),
+        (legacy_inject_defect_images, legacy_DefectReportImage),
+    ],
+)
+def test_inject_defect_images_preserves_existing_drawing_order(
+    inject_fn, image_cls
+) -> None:
+    workbook_bytes, sheet_bytes = _build_test_workbook(
+        include_drawing=True, include_legacy=True
+    )
+    images_map = {1: [image_cls(file_name="image.png", content=_DUMMY_PNG)]}
+
+    result = inject_fn(
+        workbook_bytes,
+        sheet_bytes,
+        row_positions={1: 6},
+        images_map=images_map,
+        column_letter="J",
+    )
+
+    root = _load_sheet(result)
+    child_tags = [child.tag.split("}", 1)[-1] for child in list(root)]
+    assert child_tags == ["sheetData", "pageMargins", "drawing", "drawing", "legacyDrawing"]
+
+    drawings = [child for child in root if child.tag.split("}", 1)[-1] == "drawing"]
+    assert len(drawings) == 2
+    assert all(drawing.get(f"{{{_REL_NS}}}id") for drawing in drawings)

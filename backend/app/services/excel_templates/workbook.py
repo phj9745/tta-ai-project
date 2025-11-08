@@ -30,6 +30,8 @@ __all__ = [
 ]
 
 
+ET.register_namespace("", SPREADSHEET_NS)
+
 def column_to_index(letter: str) -> int:
     result = 0
     for char in letter:

@@ -57,6 +57,11 @@ _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-type
 _EMU_PER_PIXEL = 9525
 _IMAGE_VERTICAL_GAP_PX = 4
 
+ET.register_namespace("", _SPREADSHEET_NS)
+ET.register_namespace("xdr", _DRAWING_NS)
+ET.register_namespace("a", _DRAWING_A_NS)
+ET.register_namespace("r", _REL_NS)
+
 
 @dataclass(frozen=True)
 class ColumnSpec:
@@ -1329,11 +1334,8 @@ def _inject_defect_images(
     )
     updated_rels = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
 
-    drawing_root = ET.Element(
-        f"{{{_DRAWING_NS}}}wsDr",
-        {"xmlns:xdr": _DRAWING_NS, "xmlns:a": _DRAWING_A_NS},
-    )
-    drawing_rels_root = ET.Element(f"{{{_REL_NS}}}Relationships")
+    drawing_root = ET.Element(f"{{{_DRAWING_NS}}}wsDr")
+    drawing_rels_root = ET.Element("Relationships", {"xmlns": _REL_NS})
     used_names: Dict[str, int] = {}
     image_entries: List[Tuple[str, bytes]] = []
 
@@ -1389,7 +1391,7 @@ def _inject_defect_images(
 
         ET.SubElement(
             drawing_rels_root,
-            f"{{{_REL_NS}}}Relationship",
+            "Relationship",
             {
                 "Id": rel_id,
                 "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
@@ -1408,7 +1410,29 @@ def _inject_defect_images(
     # Add drawing reference to sheet xml
     drawing_elem = ET.Element(f"{{{_SPREADSHEET_NS}}}drawing")
     drawing_elem.set(f"{{{_REL_NS}}}id", sheet_rel_id)
-    sheet_root.append(drawing_elem)
+
+    children = list(sheet_root)
+
+    def _local_name(tag: str) -> str:
+        return tag.split("}", 1)[-1] if "}" in tag else tag
+
+    insert_index = len(children)
+    for index, child in enumerate(children):
+        if _local_name(child.tag) == "legacyDrawing":
+            insert_index = index
+            break
+    else:
+        last_drawing_index: int | None = None
+        for index, child in enumerate(children):
+            if _local_name(child.tag) == "drawing":
+                last_drawing_index = index + 1
+        if last_drawing_index is not None:
+            insert_index = last_drawing_index
+
+    if insert_index >= len(children):
+        sheet_root.append(drawing_elem)
+    else:
+        sheet_root.insert(insert_index, drawing_elem)
     final_sheet = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
 
     source_buffer.seek(0)
