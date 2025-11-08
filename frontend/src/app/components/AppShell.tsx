@@ -24,9 +24,9 @@ export function AppShell({
   const isAdminActive = currentPath.startsWith('/admin')
 
   const adminClasses = [
-    'app-shell__link',
-    'app-shell__link-button',
-    isAdminActive ? 'app-shell__link--active' : '',
+    'app-shell__nav-button',
+    'app-shell__nav-button--ghost',
+    isAdminActive ? 'app-shell__nav-button--active' : '',
   ]
     .filter(Boolean)
     .join(' ')
@@ -48,44 +48,63 @@ export function AppShell({
     <AppShellHeaderContext.Provider value={headerContextValue}>
       <div className="app-shell">
         <header className="app-shell__header">
-          <div className="app-shell__header-left">
-            {leadingAction ? (
-              <div className="app-shell__leading-action">{leadingAction}</div>
-            ) : null}
-            <button
-              type="button"
-              className="app-shell__brand-button"
-              onClick={onBrandClick}
-              aria-label="프로젝트 선택 화면으로 이동"
-            >
-              <span className="app-shell__brand-mark" aria-hidden="true">
-                <span className="app-shell__brand-mark-glow" />
-                <span className="app-shell__brand-initials">TM</span>
-              </span>
-              <span className="app-shell__brand-wordmark">
-                <span className="app-shell__brand-text">
-                  <span className="app-shell__brand-primary">Test</span>
-                  <span className="app-shell__brand-highlight">Mate</span>
+          <div className="app-shell__header-inner">
+            <div className="app-shell__header-left">
+              {leadingAction ? (
+                <div className="app-shell__leading-action">{leadingAction}</div>
+              ) : null}
+              <button
+                type="button"
+                className="app-shell__brand-button"
+                onClick={onBrandClick}
+                aria-label="프로젝트 선택 화면으로 이동"
+              >
+                <span className="app-shell__brand-icon" aria-hidden="true">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="app-shell__brand-icon-mark"
+                  >
+                    <path
+                      d="M4 12.5L9 17.5L20 6.5"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
                 </span>
-                <span className="app-shell__brand-tagline">QA Workspace</span>
-              </span>
-            </button>
-          </div>
-          <div className="app-shell__header-right">
-            <BackgroundTaskTray />
-            {isAuthenticated && (
-              <nav aria-label="계정 메뉴" className="app-shell__nav">
-                <button type="button" className="app-shell__drive" onClick={onOpenDrive}>
-                  구글 드라이브
-                </button>
-                <button type="button" className={adminClasses} onClick={onNavigateAdmin}>
-                  프롬프트 관리자
-                </button>
-                <button type="button" className="app-shell__logout" onClick={onLogout}>
-                  로그아웃
-                </button>
-              </nav>
-            )}
+                <span className="app-shell__brand-copy">
+                  <span className="app-shell__brand-title">TestMate</span>
+                  <span className="app-shell__brand-subtitle">QA Workspace</span>
+                </span>
+              </button>
+            </div>
+            <div className="app-shell__header-right">
+              <BackgroundTaskTray />
+              {isAuthenticated && (
+                <nav aria-label="계정 메뉴" className="app-shell__nav">
+                  <button
+                    type="button"
+                    className="app-shell__nav-button app-shell__nav-button--ghost"
+                    onClick={onOpenDrive}
+                  >
+                    구글 드라이브
+                  </button>
+                  <button type="button" className={adminClasses} onClick={onNavigateAdmin}>
+                    프롬프트 관리자
+                  </button>
+                  <button
+                    type="button"
+                    className="app-shell__nav-button app-shell__nav-button--primary"
+                    onClick={onLogout}
+                  >
+                    로그아웃
+                  </button>
+                </nav>
+              )}
+            </div>
           </div>
         </header>
 

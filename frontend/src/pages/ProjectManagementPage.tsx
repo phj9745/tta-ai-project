@@ -1325,38 +1325,56 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         className="project-management-sidebar"
         aria-hidden={!isSidebarOpen}
       >
-        <div className="project-management-sidebar__inner-follow" >
-        <div className="project-management-overview">
-          <span className="project-management-overview__label">프로젝트</span>
-          <strong className="project-management-overview__name">{projectName}</strong>
-        </div>
+        <div className="project-management-sidebar__inner">
+          <div className="project-management-overview">
+            <span className="project-management-overview__label">프로젝트</span>
+            <strong className="project-management-overview__name">{projectName}</strong>
+          </div>
 
-        <nav aria-label="프로젝트 관리 메뉴" className="project-management-menu">
-          <ul className="project-management-menu__list">
-            {MENU_ITEMS.map((item) => {
-              const isActive = activeItem === item.id
+          <nav aria-label="프로젝트 관리 메뉴" className="project-management-menu">
+            <ul className="project-management-menu__list">
+              {MENU_ITEMS.map((item) => {
+                const isActive = activeItem === item.id
+                const helperInitial = item.eyebrow?.[0] ?? ''
 
-              return (
-                <li
-                  key={item.id}
-                  className={`project-management-menu__item${
-                    isActive ? ' project-management-menu__item--active' : ''
-                  }`}
-                >
-                  <button
-                    type="button"
-                    className="project-management-menu__button"
-                    onClick={() => handleSelectMenuItem(item.id)}
-                    aria-current={isActive ? 'page' : undefined}
+                return (
+                  <li
+                    key={item.id}
+                    className={`project-management-menu__item${
+                      isActive ? ' project-management-menu__item--active' : ''
+                    }`}
                   >
-                    <span className="project-management-menu__label">{item.label}</span>
-                    <span className="project-management-menu__helper">{item.eyebrow}</span>
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        </nav>
+                    <button
+                      type="button"
+                      className="project-management-menu__button"
+                      onClick={() => handleSelectMenuItem(item.id)}
+                      aria-current={isActive ? 'page' : undefined}
+                    >
+                      <span className="project-management-menu__icon" aria-hidden="true">
+                        <span className="project-management-menu__icon-letter">{helperInitial}</span>
+                      </span>
+                      <span className="project-management-menu__text">
+                        <span className="project-management-menu__helper">{item.eyebrow}</span>
+                        <span className="project-management-menu__label">{item.label}</span>
+                      </span>
+                      <span className="project-management-menu__chevron" aria-hidden="true">
+                        <svg
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M9 6L15 12L9 18" />
+                        </svg>
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </nav>
         </div>
       </aside>
 

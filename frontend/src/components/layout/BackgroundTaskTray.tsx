@@ -39,8 +39,10 @@ export function BackgroundTaskTray() {
         aria-expanded={isOpen}
         aria-haspopup="dialog"
       >
-        작업 현황
-        <span className="app-shell__tasks-count">{runningCount}</span>
+        <span className="app-shell__tasks-label">작업 현황</span>
+        <span className="app-shell__tasks-count" aria-live="polite">
+          {runningCount}
+        </span>
       </button>
 
       {isOpen && (
