@@ -59,16 +59,9 @@ export function AppShell({
               aria-label="프로젝트 선택 화면으로 이동"
             >
               <span className="app-shell__brand-mark" aria-hidden="true">
-                <span className="app-shell__brand-mark-glow" />
-                <span className="app-shell__brand-initials">TM</span>
+                <img src="/logo.png" alt="Testmate 로고" className="app-shell__brand-img" />
               </span>
-              <span className="app-shell__brand-wordmark">
-                <span className="app-shell__brand-text">
-                  <span className="app-shell__brand-primary">Test</span>
-                  <span className="app-shell__brand-highlight">Mate</span>
-                </span>
-                <span className="app-shell__brand-tagline">QA Workspace</span>
-              </span>
+              <span className="app-shell__brand-text">Testmate</span>
             </button>
           </div>
           <div className="app-shell__header-right">

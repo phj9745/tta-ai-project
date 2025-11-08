@@ -1084,7 +1084,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                                 />
                               </label>
                               <label className="testcase-workflow__scenario-field">
-                                <span>입력(사전조건 포함)</span>
+                                <span>입력</span>
                                 <textarea
                                   className="testcase-workflow__textarea"
                                   value={scenario.input}
@@ -1094,7 +1094,7 @@ export function TestcaseWorkflow({ projectId, backendUrl, projectName }: Testcas
                                 />
                               </label>
                               <label className="testcase-workflow__scenario-field">
-                                <span>기대 출력(사후조건 포함)</span>
+                                <span>기대 출력</span>
                                 <textarea
                                   className="testcase-workflow__textarea"
                                   value={scenario.expected}

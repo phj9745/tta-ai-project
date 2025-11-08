@@ -32,98 +32,40 @@
 }
 
 .app-shell__brand-button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 0.55rem 1.25rem 0.55rem 0.55rem;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.28);
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16) 0%, rgba(15, 23, 42, 0.28) 100%);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
-}
-
-.app-shell__brand-button:hover,
-.app-shell__brand-button:focus-visible {
-  transform: translateY(-1px);
-  border-color: rgba(148, 197, 255, 0.65);
-  background: linear-gradient(135deg, rgba(96, 165, 250, 0.35) 0%, rgba(30, 64, 175, 0.65) 100%);
-  color: #f8fafc;
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.35);
-}
-
-.app-shell__brand-button:focus-visible {
-  outline: 2px solid rgba(226, 232, 240, 0.75);
-  outline-offset: 3px;
-}
-
-.app-shell__brand-mark {
-  position: relative;
-  width: 2.45rem;
-  height: 2.45rem;
-  border-radius: 0.85rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
-  background: linear-gradient(135deg, rgba(79, 70, 229, 0.95) 0%, rgba(59, 130, 246, 0.85) 100%);
-  box-shadow: 0 16px 32px rgba(59, 130, 246, 0.35);
+  gap: 0.6rem;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  cursor: pointer;
 }
 
-.app-shell__brand-mark-glow {
-  position: absolute;
-  inset: -30%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, rgba(224, 231, 255, 0.6), transparent 60%);
-  opacity: 0.8;
-}
-
-.app-shell__brand-initials {
-  position: relative;
-  font-weight: 700;
-  font-size: 0.95rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #f8fafc;
-  text-shadow: 0 4px 12px rgba(15, 23, 42, 0.4);
-}
-
-.app-shell__brand-wordmark {
+.app-shell__brand-mark {
+  width: 42px;
+  height: 42px;
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  line-height: 1;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
+.app-shell__brand-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .app-shell__brand-text {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 0.3rem;
-  font-size: 1.32rem;
+  margin-top: 2px;
+  font-size: 2rem;
   font-weight: 700;
-  letter-spacing: 0.015em;
-  color: #f1f5f9;
-  text-shadow: 0 8px 24px rgba(15, 23, 42, 0.4);
-}
-
-.app-shell__brand-primary {
-  color: rgba(226, 232, 240, 0.92);
-}
-
-.app-shell__brand-highlight {
-  color: #bfdbfe;
-}
-
-.app-shell__brand-tagline {
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  color: rgba(148, 163, 184, 0.85);
+  color: white;
+  line-height: 1;
+  display: flex;
+  align-items: center;
 }
 
 .app-shell__tasks {
@@ -429,7 +371,7 @@
 
 .app-shell__main {
   --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
-  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
+  /* --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem); */
   flex: 1;
   display: flex;
   align-items: stretch;
@@ -448,7 +390,7 @@
 }
 
 .page {
-  width: min(960px, 100%);
+  width: min(1280px, 100%);
   margin: 0 auto;
   padding: clamp(2.5rem, 4vw, 4rem) clamp(1.75rem, 3vw, 3.5rem);
   border-radius: 28px;
@@ -1826,6 +1768,7 @@
   width: 1280px;
   overflow: visible;
   height: max-content;
+  margin: 20px;
 }
 
 .project-management-content__inner--preview {

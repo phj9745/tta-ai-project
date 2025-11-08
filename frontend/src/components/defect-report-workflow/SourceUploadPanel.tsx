@@ -34,7 +34,7 @@ export function SourceUploadPanel({
   return (
     <section className="defect-workflow__section" aria-labelledby="defect-upload">
       <h2 id="defect-upload" className="defect-workflow__title">
-        1. 기능리스트 및 결함 메모 업로드
+        기능리스트 및 결함 메모 업로드
       </h2>
       <div className="defect-workflow__upload-group">
         <div className="defect-workflow__upload-block">
@@ -53,7 +53,7 @@ export function SourceUploadPanel({
         </div>
         <div className="defect-workflow__upload-block">
           <h3 className="defect-workflow__subtitle">결함 메모 업로드</h3>
-          <p className="defect-workflow__helper">숫자 목록(1. 2. …) 형태의 TXT 파일을 업로드한 뒤 결함 문장을 정제하세요.</p>
+          <p className="defect-workflow__helper">결함 내용이 작성된 TXT 파일을 업로드하면 공식적인 문장으로 정제합니다.</p>
           <FileUploader
             allowedTypes={TXT_ALLOWED_TYPES}
             files={sourceFiles}

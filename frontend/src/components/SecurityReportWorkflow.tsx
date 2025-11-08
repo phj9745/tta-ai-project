@@ -357,7 +357,7 @@ export function SecurityReportWorkflow({
       <section className="defect-workflow__section" aria-labelledby="security-upload">
         <div className="defect-workflow__section-heading">
           <h2 id="security-upload" className="defect-workflow__title">
-            1. Invicti 상세 스캔 보고서 업로드
+            Invicti 상세 스캔 보고서 업로드
           </h2>
           {showResetButton && (
             <div className="defect-workflow__section-actions">
@@ -413,7 +413,7 @@ export function SecurityReportWorkflow({
         <section className="defect-workflow__section" aria-labelledby="security-review">
           <div className="defect-workflow__section-heading">
             <h2 id="security-review" className="defect-workflow__title">
-              2. 보안성 결함 검토 및 편집
+              보안성 결함 검토 및 편집
             </h2>
             <div className="defect-workflow__section-actions">
               <button
