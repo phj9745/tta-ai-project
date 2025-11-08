@@ -9,7 +9,6 @@ import { Modal } from '../components/Modal'
 import { useBackgroundTasks } from '../app/background/BackgroundTaskContext'
 import { getBackendUrl } from '../config'
 import { navigate } from '../navigation'
-import { useAppShellHeader } from '../app/components/AppShellHeaderContext'
 
 type MenuItemId =
   | 'configuration-images'
@@ -325,8 +324,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const { startTask } = useBackgroundTasks()
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const isMountedRef = useRef(true)
-  const { setLeadingAction } = useAppShellHeader()
-
   const menuById = useMemo(() => {
     return MENU_ITEMS.reduce((acc, item) => {
       acc[item.id] = item
@@ -352,6 +349,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   const hasRequiredDocuments = activeRequiredDocuments.length > 0
   const hasMandatoryDocuments = activeRequiredDocuments.some((doc) => doc.required !== false)
   const requiredSectionTitle = hasMandatoryDocuments ? '필수 문서 업로드' : '문서 업로드 (선택)'
+
   const handleSelectAnotherProject = useCallback(() => {
     navigate('/projects')
   }, [])
@@ -1266,58 +1264,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
   }, [])
 
   const sidebarToggleLabel = isSidebarOpen ? '사이드바 접기' : '사이드바 펼치기'
-  const sidebarToggleAction = useMemo(
-    () => (
-      <button
-        type="button"
-        className="project-management-sidebar-toggle"
-        onClick={handleToggleSidebar}
-        aria-expanded={isSidebarOpen}
-        aria-controls="project-management-sidebar"
-        title={sidebarToggleLabel}
-      >
-        <span className="project-management-sidebar-toggle__icon" aria-hidden="true">
-          {isSidebarOpen ? (
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
-              <path d="M15 8L11 12L15 16" />
-              <line x1="20" y1="5" x2="20" y2="19" />
-            </svg>
-          ) : (
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <rect x="4" y="4" width="4" height="16" rx="1.5" />
-              <path d="M10 8L14 12L10 16" />
-              <line x1="18" y1="5" x2="18" y2="19" />
-            </svg>
-          )}
-        </span>
-        <span className="project-management-sr-only">{sidebarToggleLabel}</span>
-      </button>
-    ),
-    [handleToggleSidebar, isSidebarOpen, sidebarToggleLabel],
-  )
-
-  useEffect(() => {
-    setLeadingAction(sidebarToggleAction)
-
-    return () => {
-      setLeadingAction(null)
-    }
-  }, [setLeadingAction, sidebarToggleAction])
   const pageClassName = [
     'project-management-page',
     isSidebarOpen ? 'project-management-page--sidebar-open' : 'project-management-page--sidebar-collapsed',
@@ -1334,11 +1280,52 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
   return (
     <div className={pageClassName}>
+      <button
+        type="button"
+        className="project-management-sidebar-toggle"
+        onClick={handleToggleSidebar}
+        aria-expanded={isSidebarOpen}
+        aria-controls="project-management-sidebar"
+        title={sidebarToggleLabel}
+      >
+        <span className="project-management-sidebar-toggle__icon" aria-hidden="true"   style={
+          !isSidebarOpen
+            ? { position: "absolute", left: "17px" }
+            : undefined
+        }>
+          {isSidebarOpen ? (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M15 8L11 12L15 16" />
+            </svg>
+          ) : (
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              
+            >
+              <path d="M10 8L14 12L10 16" />
+            </svg>
+          )}
+        </span>
+        <span className="project-management-sr-only">{sidebarToggleLabel}</span>
+      </button>
       <aside
         id="project-management-sidebar"
         className="project-management-sidebar"
         aria-hidden={!isSidebarOpen}
       >
+        <div className="project-management-sidebar__inner-follow" >
         <div className="project-management-overview">
           <span className="project-management-overview__label">프로젝트</span>
           <strong className="project-management-overview__name">{projectName}</strong>
@@ -1370,6 +1357,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             })}
           </ul>
         </nav>
+        </div>
       </aside>
 
       <button

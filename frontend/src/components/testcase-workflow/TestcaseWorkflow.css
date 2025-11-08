@@ -27,6 +27,16 @@
   line-height: 1.5;
 }
 
+.testcase-workflow__bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 1rem;
+}
+
+.testcase-workflow__bulk-actions .testcase-workflow__button {
+  min-width: 180px;
+}
+
 .testcase-workflow__overview {
   margin: 0 0 1.25rem;
   padding: 1rem;
@@ -292,6 +302,23 @@
   background: #e0f2fe;
 }
 
+.testcase-workflow__danger {
+  background: transparent;
+  color: #b42318;
+  border: 1px solid #fca5a5;
+}
+
+.testcase-workflow__danger:hover:not(:disabled),
+.testcase-workflow__danger:focus-visible:not(:disabled) {
+  background: #fee2e2;
+}
+
+.testcase-workflow__danger:disabled {
+  background: transparent;
+  color: #fca5a5;
+  border-color: #fecaca;
+}
+
 .testcase-workflow__scenario-list {
   display: flex;
   flex-direction: column;
@@ -430,6 +457,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
+  margin-top: 15px;
 }
 
 .testcase-workflow__step-actions-group {
