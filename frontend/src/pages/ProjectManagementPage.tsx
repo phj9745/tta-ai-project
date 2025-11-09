@@ -5,7 +5,7 @@ import {
   ImageIcon,
   ListIcon,
   ShieldCheckIcon,
-  TestTubeIcon,
+  ScrollTextIcon,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -239,7 +239,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'testcase-generation',
     label: '테스트케이스',
-    icon: TestTubeIcon,
+    icon: ScrollTextIcon,
     eyebrow: '설계',
     title: '테스트케이스 생성',
     description:
