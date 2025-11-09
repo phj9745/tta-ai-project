@@ -12,7 +12,6 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.excel_templates import defect_report
-from app.services.excel_templates.models import SPREADSHEET_NS
 from app.services.excel_templates.utils import AI_CSV_DELIMITER
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "excel_templates"
