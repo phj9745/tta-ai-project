@@ -380,13 +380,10 @@
 }
 
 .app-shell__main {
-  --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
-  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
   flex: 1;
   display: flex;
   align-items: stretch;
   justify-content: center;
-  padding: var(--app-shell-main-padding-y) var(--app-shell-main-padding-x);
   min-height: 0;
 }
 
@@ -1511,17 +1508,13 @@
 .project-management-page {
   --project-management-sidebar-width: 280px;
   --project-management-available-height:
-    calc(
-      var(--viewport-height) - var(--app-shell-header-height, 0px) -
-        (2 * var(--app-shell-main-padding-y))
-    );
+    calc(var(--viewport-height) - var(--app-shell-header-height, 0px));
   position: relative;
   display: grid;
   grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
   align-self: stretch;
   min-width: 0;
-  width: calc(100% + (2 * var(--app-shell-main-padding-x)));
-  margin: calc(-1 * var(--app-shell-main-padding-y)) calc(-1 * var(--app-shell-main-padding-x));
+  width: 100%;
   background: #f8fafc;
   height: var(--project-management-available-height);
   max-height: var(--project-management-available-height);
