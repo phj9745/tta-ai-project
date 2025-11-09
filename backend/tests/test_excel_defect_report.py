@@ -31,14 +31,27 @@ def test_populate_defect_report_matches_fixture() -> None:
     assert hashlib.sha256(result).hexdigest() == expected_hash
 
 
-def test_populate_defect_report_does_not_inject_dimension() -> None:
+def _populate_and_extract_sheet(workbook: bytes, csv_text: str) -> ET.Element:
+    result = defect_report.populate_defect_report(workbook, csv_text)
+    with zipfile.ZipFile(io.BytesIO(result), "r") as archive:
+        updated_sheet = archive.read("xl/worksheets/sheet1.xml")
+    return ET.fromstring(updated_sheet)
+
+
+def test_populate_defect_report_removes_dimension_metadata() -> None:
     template_bytes = TEMPLATE_PATH.read_bytes()
     csv_text = (FIXTURE_DIR / "defect_report.csv").read_text(encoding="utf-8")
     if AI_CSV_DELIMITER != ",":
         csv_text = csv_text.replace(",", AI_CSV_DELIMITER)
 
-    stripped_buffer = io.BytesIO()
     dimension_tag = f"{{{SPREADSHEET_NS}}}dimension"
+
+    root_with_dimension = _populate_and_extract_sheet(template_bytes, csv_text)
+    assert (
+        root_with_dimension.find(dimension_tag) is None
+    ), "<dimension> should be removed from populated worksheets"
+
+    stripped_buffer = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(template_bytes), "r") as source, zipfile.ZipFile(
         stripped_buffer, "w"
     ) as target:
@@ -52,12 +65,7 @@ def test_populate_defect_report_does_not_inject_dimension() -> None:
                 data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             target.writestr(info, data)
 
-    stripped_template = stripped_buffer.getvalue()
-    result = defect_report.populate_defect_report(stripped_template, csv_text)
-
-    with zipfile.ZipFile(io.BytesIO(result), "r") as archive:
-        updated_sheet = archive.read("xl/worksheets/sheet1.xml")
-
-    updated_root = ET.fromstring(updated_sheet)
-    dimension = updated_root.find(dimension_tag)
-    assert dimension is None, "<dimension> should not be injected"
+    stripped_root = _populate_and_extract_sheet(stripped_buffer.getvalue(), csv_text)
+    assert (
+        stripped_root.find(dimension_tag) is None
+    ), "<dimension> should remain absent when missing from the template"
