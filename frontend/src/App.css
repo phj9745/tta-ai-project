@@ -1509,6 +1509,9 @@
   --project-management-sidebar-width: 280px;
   --project-management-available-height:
     calc(var(--viewport-height) - var(--app-shell-header-height, 0px));
+  --project-management-sidebar-padding-inline: clamp(1.4rem, 2.25vw, 1.75rem);
+  --project-management-sidebar-padding-block: clamp(1.75rem, 4.5vh, 2.75rem);
+  --project-management-sidebar-height: var(--project-management-available-height);
   position: relative;
   display: grid;
   grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
@@ -1640,15 +1643,19 @@
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
-  padding: 1.5rem;
+  padding: var(--project-management-sidebar-padding-block)
+    var(--project-management-sidebar-padding-inline);
   background: linear-gradient(180deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.96) 100%);
   color: #e2e8f0;
   transition: transform 0.3s ease, opacity 0.3s ease;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.55), 6px 0 24px rgba(15, 23, 42, 0.28);
-  min-height: 100vh;
-  height: 100vh;
-  height: 100dvh;
+  min-height: var(--project-management-sidebar-height);
+  max-height: var(--project-management-sidebar-height);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
 }
 
 .project-management-page--sidebar-collapsed .project-management-sidebar {
@@ -1661,7 +1668,6 @@
   transform: translateX(0);
   opacity: 1;
   pointer-events: auto;
-  padding: 10px;
 }
 
 .project-management-overview {
@@ -1705,6 +1711,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  padding-bottom: clamp(1.25rem, 3vh, 2.5rem);
 }
 
 
@@ -2249,30 +2256,35 @@
 @media (max-width: 1280px) {
   .project-management-page {
     --project-management-sidebar-width: 260px;
-  }
-
-  .project-management-sidebar {
-    padding: 1.35rem;
+    --project-management-sidebar-padding-inline: clamp(1.25rem, 2vw, 1.55rem);
+    --project-management-sidebar-padding-block: clamp(1.6rem, 4vh, 2.4rem);
   }
 }
 
 @media (max-width: 1024px) {
   .project-management-page {
     grid-template-columns: minmax(0, 1fr);
+    --project-management-sidebar-height: calc(
+      var(--viewport-height) - (var(--app-shell-header-height, 0px) + 1rem)
+    );
+    --project-management-sidebar-padding-inline: clamp(1.15rem, 5vw, 1.4rem);
+    --project-management-sidebar-padding-block: clamp(1.5rem, 5vh, 2.2rem);
   }
 
   .project-management-sidebar {
     position: fixed;
-    top: calc(64px + 1rem);
+    top: calc(var(--app-shell-header-height, 64px) + 1rem);
     left: 0;
     bottom: 0;
     width: min(var(--project-management-sidebar-width), 80vw);
     max-width: 320px;
-    padding: 1.85rem 1.4rem 2.1rem;
     transform: translateX(-100%);
     opacity: 0;
     pointer-events: none;
     box-shadow: 18px 0 36px rgba(15, 23, 42, 0.25);
+    min-height: auto;
+    max-height: none;
+    height: auto;
   }
 
   .project-management-content {
@@ -2281,8 +2293,9 @@
 }
 
 @media (max-width: 720px) {
-  .project-management-sidebar {
-    padding: 1.6rem 1.2rem 1.9rem;
+  .project-management-page {
+    --project-management-sidebar-padding-inline: clamp(1rem, 6vw, 1.25rem);
+    --project-management-sidebar-padding-block: clamp(1.35rem, 6vh, 1.9rem);
   }
 
   .project-management-menu__button {
