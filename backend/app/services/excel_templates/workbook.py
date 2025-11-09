@@ -229,6 +229,7 @@ class WorksheetPopulator:
         }
 
         self._dimension = self._root.find("s:dimension", self._ns)
+        self._dimension_was_missing = self._dimension is None
         ref = ""
         if self._dimension is not None:
             ref = (self._dimension.get("ref") or "").strip()
@@ -410,6 +411,7 @@ class WorksheetPopulator:
                 "ref",
                 f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
             )
+        self._dimension_was_missing = self._dimension is None and self._dimension_was_missing
 
     def _merge_tag(self, name: str) -> str:
         return f"{{{SPREADSHEET_NS}}}{name}"
@@ -533,4 +535,24 @@ class WorksheetPopulator:
         )
 
     def to_bytes(self) -> bytes:
+        ref = (
+            f"{self._dimension_start_col}{self._dimension_start_row}:"
+            f"{self._dimension_end_col}{self._dimension_end_row}"
+        )
+
+        if self._dimension is not None:
+            self._dimension.set("ref", ref)
+        elif self._dimension_was_missing:
+            dimension_elem = ET.Element(self._tag("dimension"), {"ref": ref})
+            sheet_data_tag = self._tag("sheetData")
+            inserted = False
+            for index, child in enumerate(list(self._root)):
+                if child.tag == sheet_data_tag:
+                    self._root.insert(index, dimension_elem)
+                    inserted = True
+                    break
+            if not inserted:
+                self._root.insert(0, dimension_elem)
+            self._dimension = dimension_elem
+            self._dimension_was_missing = False
         return ET.tostring(self._root, encoding="utf-8", xml_declaration=True)
