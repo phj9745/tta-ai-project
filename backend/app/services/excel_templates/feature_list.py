@@ -312,47 +312,36 @@ def _apply_project_overview_to_sheet(sheet_bytes: bytes, cell_ref: str, value: s
     set_cell_text(cell, value)
 
     dimension = root.find("s:dimension", ns)
-    if dimension is None:
-        dimension_tag = f"{{{SPREADSHEET_NS}}}dimension"
-        dimension = ET.Element(dimension_tag)
-        inserted = False
-        for idx, child in enumerate(list(root)):
-            if child.tag in {dimension_tag, f"{{{SPREADSHEET_NS}}}sheetData"}:
-                root.insert(idx, dimension)
-                inserted = True
-                break
-        if not inserted:
-            root.insert(0, dimension)
+    if dimension is not None:
+        ref = (dimension.get("ref") or "").strip()
+        current_col_index = column_to_index(column)
+        if ref:
+            start_col, start_row, end_col, end_row = parse_dimension(ref)
+            start_col_index = column_to_index(start_col)
+            end_col_index = column_to_index(end_col)
+        else:
+            start_row = end_row = row_index
+            start_col_index = end_col_index = current_col_index
 
-    ref = (dimension.get("ref") or "").strip()
-    current_col_index = column_to_index(column)
-    if ref:
-        start_col, start_row, end_col, end_row = parse_dimension(ref)
-        start_col_index = column_to_index(start_col)
-        end_col_index = column_to_index(end_col)
-    else:
-        start_row = end_row = row_index
-        start_col_index = end_col_index = current_col_index
+        updated = False
+        if row_index < start_row:
+            start_row = row_index
+            updated = True
+        if row_index > end_row:
+            end_row = row_index
+            updated = True
+        if current_col_index < start_col_index:
+            start_col_index = current_col_index
+            updated = True
+        if current_col_index > end_col_index:
+            end_col_index = current_col_index
+            updated = True
 
-    updated = False
-    if row_index < start_row:
-        start_row = row_index
-        updated = True
-    if row_index > end_row:
-        end_row = row_index
-        updated = True
-    if current_col_index < start_col_index:
-        start_col_index = current_col_index
-        updated = True
-    if current_col_index > end_col_index:
-        end_col_index = current_col_index
-        updated = True
-
-    if updated or not ref:
-        dimension.set(
-            "ref",
-            f"{index_to_column(start_col_index)}{start_row}:{index_to_column(end_col_index)}{end_row}",
-        )
+        if updated or not ref:
+            dimension.set(
+                "ref",
+                f"{index_to_column(start_col_index)}{start_row}:{index_to_column(end_col_index)}{end_row}",
+            )
 
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
