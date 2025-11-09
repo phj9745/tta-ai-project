@@ -8,6 +8,11 @@ import zipfile
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple, Optional
 
+try:
+    from .excel_templates.defect_report import _remove_dimension_tag as _xml_remove_dimension_tag  # type: ignore
+except Exception:  # pragma: no cover - legacy module import fallback
+    _xml_remove_dimension_tag = None  # type: ignore
+
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.drawing.image import Image as XLImage
@@ -618,11 +623,74 @@ def _set_row_values(ws: Worksheet, row_index: int, record: Dict[str, str], colum
         raw = record.get(spec.key, "")
         ws[f"{spec.letter}{row_index}"].value = _sanitize_xml_text(str(raw or ""))
 
-def _wb_to_bytes(wb) -> bytes:
+def _remove_dimension_from_sheet_xml(sheet_bytes: bytes) -> tuple[bytes, bool]:
+    if not sheet_bytes:
+        return sheet_bytes, False
+
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return sheet_bytes, False
+
+    ns = {"s": _S_NS}
+    has_dimension = root.find("s:dimension", ns) is not None
+    if not has_dimension:
+        return sheet_bytes, False
+
+    if _xml_remove_dimension_tag is None:  # pragma: no cover - defensive fallback
+        return sheet_bytes, False
+
+    _xml_remove_dimension_tag(root)
+    updated = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return updated, True
+
+
+def _remove_dimension_from_workbook(xlsx_bytes: bytes) -> bytes:
+    try:
+        buffer = io.BytesIO(xlsx_bytes)
+        if not zipfile.is_zipfile(buffer):
+            return xlsx_bytes
+        buffer.seek(0)
+        with zipfile.ZipFile(buffer, "r") as zin:
+            entries: List[Tuple[zipfile.ZipInfo, bytes]] = []
+            changed = False
+            for info in zin.infolist():
+                data = zin.read(info.filename)
+                if info.filename == "xl/worksheets/sheet1.xml":
+                    new_data, removed = _remove_dimension_from_sheet_xml(data)
+                    if removed:
+                        data = new_data
+                        changed = True
+                entries.append((info, data))
+
+        if not changed:
+            return xlsx_bytes
+
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as zout:
+            for info, data in entries:
+                zout.writestr(info, data)
+        return out.getvalue()
+    except Exception:  # pragma: no cover - defensive
+        return xlsx_bytes
+
+
+def _wb_to_bytes(wb, *, ensure_dimension_removed: bool = False) -> bytes:
     bio = io.BytesIO()
     wb.save(bio)
-    # 저장 직후 Windows Excel 호환 수리 수행
-    return _repair_package(bio.getvalue())
+    raw_bytes = bio.getvalue()
+
+    if ensure_dimension_removed:
+        raw_bytes = _remove_dimension_from_workbook(raw_bytes)
+
+    repaired = _repair_package(raw_bytes)
+
+    if ensure_dimension_removed:
+        repaired = _remove_dimension_from_workbook(repaired)
+
+    return repaired
 
 
 # --------------------- 공개 API: 표 채우기 ---------------------
@@ -756,7 +824,13 @@ def populate_defect_report(
             vertical_gap_px=4,
         )
 
-    return _wb_to_bytes(wb)
+    try:
+        if hasattr(ws, "calculate_dimension"):
+            setattr(ws, "calculate_dimension", None)
+    except Exception:  # pragma: no cover - best effort cleanup
+        pass
+
+    return _wb_to_bytes(wb, ensure_dimension_removed=True)
 
 
 def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
