@@ -239,6 +239,8 @@ class WorksheetPopulator:
             ref = self._infer_dimension()
             if not ref:
                 raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
+            if self._dimension is None:
+                self._dimension_inferred_ref = ref
 
         (
             self._dimension_start_col,
