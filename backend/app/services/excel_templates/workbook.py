@@ -179,6 +179,20 @@ def set_cell_text(cell: ET.Element, value: str) -> None:
         text_elem.text = cleaned
 
 
+def _repair_workbook_bytes(xlsx_bytes: bytes) -> bytes:
+    """Attempt to run the legacy XLSX repair routine if it's available."""
+
+    try:  # Lazy import to avoid a hard dependency during tests.
+        from ..excel_templates import _repair_package  # type: ignore
+    except Exception:  # pragma: no cover - best-effort fallback
+        return xlsx_bytes
+
+    try:
+        return _repair_package(xlsx_bytes)
+    except Exception:  # pragma: no cover - legacy repair is defensive too
+        return xlsx_bytes
+
+
 def replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes:
     source_buffer = io.BytesIO(workbook_bytes)
     output_buffer = io.BytesIO()
@@ -189,7 +203,7 @@ def replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes:
                 if info.filename == XLSX_SHEET_PATH:
                     data = new_sheet_bytes
                 target_zip.writestr(info, data)
-    return output_buffer.getvalue()
+    return _repair_workbook_bytes(output_buffer.getvalue())
 
 
 class WorksheetPopulator:
