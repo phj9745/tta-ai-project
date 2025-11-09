@@ -172,6 +172,18 @@
   background-color: #fff;
 }
 
+.defect-edit__table th:nth-child(7),
+.defect-edit__table td:nth-child(7) {
+  min-width: 22rem;
+}
+
+.defect-edit__table th:nth-child(8),
+.defect-edit__table td:nth-child(8),
+.defect-edit__table th:nth-child(9),
+.defect-edit__table td:nth-child(9) {
+  display: none;
+}
+
 .defect-edit__cell--readonly {
   font-weight: 600;
   color: #1f2937;
