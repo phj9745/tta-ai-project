@@ -1,437 +1,430 @@
-"""Utilities for extracting project metadata from 시험 합의서 문서."""
+# backend/services/google/metadata.py
+# -------------------------------------------------------
+# GPT 기반 시험 합의서 메타데이터 추출 (드롭인 교체판)
+# -------------------------------------------------------
 from __future__ import annotations
 
 import io
+import os
 import re
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+import json
+from typing import Dict, List, Optional
 
-from docx import Document
 from fastapi import HTTPException
+from docx import Document
 from pypdf import PdfReader
 
-EXAM_NUMBER_PATTERN = re.compile(r"GS-[A-Z]-\d{2}-\d{4}")
+try:
+    from openai import OpenAI  # openai-python v1 클라이언트
+except Exception:  # pragma: no cover
+    OpenAI = None  # type: ignore
 
-__all__ = [
-    "normalize_label",
-    "extract_project_metadata",
-    "build_project_folder_name",
+# --- 외부로 노출되는 정규식(기존 코드와 동일한 인터페이스) ---
+# 공백/대시 삽입 변형 허용 (예: "G S - B - 12 - 3456")
+EXAM_NUMBER_PATTERN = re.compile(
+    r"G\s*S\s*-\s*[A-Z]\s*-\s*\d{2}\s*-\s*\d{4}",
+    re.IGNORECASE,
+)
+
+# --- 내부 상수 ---
+_MAXLEN = 160
+
+
+# =========================
+# 공개 API
+# =========================
+def build_project_folder_name(metadata: Dict[str, str]) -> str:
+    """폴더명: [시험번호] 회사명 - 제품명및버전(영문 우선). 슬래시는 전각으로 치환."""
+    def _one_line(s: str, n: int = _MAXLEN) -> str:
+        import re as _re
+        return _re.sub(r"\s+", " ", (s or "").strip())[:n]
+
+    def _is_ascii_dominant(s: str) -> bool:
+        if not s:
+            return False
+        a = sum(1 for ch in s if ord(ch) < 128)
+        return a >= max(1, len(s) // 2)
+
+    exam_number = _one_line(metadata.get("exam_number", ""))
+    company_name = _one_line(metadata.get("company_name", ""))
+    product_name_version = (
+        _one_line(metadata.get("product_name_version", ""))
+        or _one_line(metadata.get("product_name_en", ""))
+        or _one_line(metadata.get("product_name", ""))
+    )
+
+    preferred = metadata.get("product_name_en") or metadata.get("product_name") or product_name_version
+    if preferred and _is_ascii_dominant(preferred):
+        product_name_version = preferred
+
+    safe = (product_name_version or "").replace("/", "／").replace("\\", "＼")
+    return f"[{exam_number}] {company_name} - {safe}".strip()
+
+
+def extract_project_metadata(
+    file_bytes: bytes,
+    *,
+    file_extension: Optional[str] = None,   # ".pdf" | ".docx"
+    pdf_engine: str = "pypdf",              # "pypdf" | "pdfminer" | "ocr"
+    filename_hint: Optional[str] = None,    # 파일명에서 시험번호 보조 추출
+) -> Dict[str, str]:
+    """
+    DOCX/PDF에서 텍스트를 추출 후, GPT로 메타데이터 추출.
+    반환 키(기존 필드명 유지):
+      - exam_number (필수)
+      - company_name (필수)
+      - product_name / product_name_en (둘 중 하나)
+      - product_name_version (폴더명에 사용)
+    """
+    text = _extract_text(file_bytes, file_extension, pdf_engine)
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="문서에서 텍스트를 추출하지 못했습니다.")
+
+    data = _call_gpt_structured(text)
+
+    # 정규화 & 보정
+    exam = _tighten_exam_number(data.get("exam_number", ""))
+    if not exam:
+        exam = _tighten_exam_number(text)
+    if not exam and filename_hint:
+        exam = _tighten_exam_number(filename_hint)
+
+    comp = _clean_company(data.get("company_name", ""))
+
+    pn_ko = _one_line(data.get("product_name_ko", ""))
+    pn_en = _one_line(data.get("product_name_en", ""))
+    ver   = _one_line(data.get("product_version_hint", ""))
+
+    product_name_version = _choose_product_name_version(pn_ko, pn_en, ver)
+    product_name_compat  = pn_ko or pn_en
+
+    meta = {
+        "exam_number": exam,
+        "company_name": comp,
+        "product_name": product_name_compat,     # 기존 코드 호환
+        "product_name_en": pn_en,
+        "product_name_version": product_name_version,
+    }
+    _validate(meta)
+    return meta
+
+
+# =========================
+# 내부 구현부
+# =========================
+def _one_line(s: str, n: int = _MAXLEN) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip())[:n]
+
+
+def _tighten_exam_number(s: str) -> str:
+    m = EXAM_NUMBER_PATTERN.search(s or "")
+    return re.sub(r"\s+", "", m.group(0).upper()) if m else ""
+
+
+def _clean_company(s: str) -> str:
+    s = _one_line(s, 80)
+    s = re.sub(r"^(제조자|제조사|업체명?|회사|회사명|제조업체)\s*[:：]?\s*", "", s)
+    s = re.sub(r"\s*\([^)]*\)\s*$", "", s)
+    return s.strip()
+
+
+def _is_ascii_dominant(s: str) -> bool:
+    if not s:
+        return False
+    ascii_count = sum(1 for ch in s if ord(ch) < 128)
+    return ascii_count >= max(1, len(s) // 2)
+
+
+def _choose_product_name_version(ko: str, en: str, version_hint: str) -> str:
+    base = en if en and _is_ascii_dominant(en) else (en or ko)
+    if version_hint and (base or "") and version_hint not in base:
+        return _one_line(f"{base} {version_hint}")
+    return _one_line(base)
+
+
+def _validate(meta: Dict[str, str]) -> None:
+    if not meta.get("exam_number"):
+        raise HTTPException(status_code=422, detail="시험신청 번호를 찾을 수 없습니다.")
+    if not meta.get("company_name"):
+        raise HTTPException(status_code=422, detail="제조자(업체명)를 찾을 수 없습니다.")
+    if not (meta.get("product_name") or meta.get("product_name_en")):
+        raise HTTPException(status_code=422, detail="제품명 및 버전을 찾을 수 없습니다.")
+
+
+# -------- 텍스트 추출 --------
+def _extract_text(file_bytes: bytes, file_extension: Optional[str], pdf_engine: str) -> str:
+    ext = (file_extension or "").lower().lstrip(".")
+    if ext == "docx":
+        return _from_docx(file_bytes)
+    if ext == "pdf":
+        return _from_pdf(file_bytes, engine=pdf_engine)
+    # 확장자 미지정: DOCX→실패 시 PDF
+    try:
+        return _from_docx(file_bytes)
+    except Exception:
+        return _from_pdf(file_bytes, engine=pdf_engine)
+
+
+def _from_docx(b: bytes) -> str:
+    try:
+        doc = Document(io.BytesIO(b))
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=422, detail="DOCX 파일을 읽지 못했습니다.") from exc
+    lines: List[str] = []
+    for t in doc.tables:
+        for r in t.rows:
+            for c in r.cells:
+                if c and c.text:
+                    lines.append(_one_line(c.text))
+    for p in doc.paragraphs:
+        if p.text:
+            lines.append(_one_line(p.text))
+    return "\n".join(ln for ln in lines if ln)
+
+
+def _from_pdf(b: bytes, *, engine: str) -> str:
+    engine = (engine or "pypdf").lower().strip()
+    if engine == "pypdf":
+        try:
+            reader = PdfReader(io.BytesIO(b))
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=422, detail="PDF 파일을 읽지 못했습니다.") from exc
+        lines: List[str] = []
+        for p in reader.pages:
+            try:
+                text = p.extract_text() or ""
+            except Exception as exc:  # pragma: no cover
+                raise HTTPException(status_code=422, detail="PDF 텍스트 추출 실패.") from exc
+            for ln in text.splitlines():
+                ln = _strip_ctrl_spaces(ln)
+                if ln and not _likely_header_footer(ln):
+                    lines.append(ln)
+        return "\n".join(lines)
+
+    if engine == "pdfminer":
+        try:
+            from pdfminer.high_level import extract_text  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=501, detail="pdfminer가 설치되어 있지 않습니다.")
+        text = extract_text(io.BytesIO(b)) or ""
+        return "\n".join(
+            _strip_ctrl_spaces(ln) for ln in text.splitlines()
+            if ln and not _likely_header_footer(ln)
+        )
+
+    if engine == "ocr":
+        try:
+            import pytesseract  # type: ignore
+            from pdf2image import convert_from_bytes  # type: ignore
+        except Exception:
+            raise HTTPException(status_code=501, detail="OCR 모드에 pytesseract/pdf2image가 필요합니다.")
+        images = convert_from_bytes(b, dpi=300)
+        lines: List[str] = []
+        for img in images:
+            ocr = pytesseract.image_to_string(img, lang="kor+eng") or ""
+            lines.extend(
+                _strip_ctrl_spaces(ln) for ln in ocr.splitlines()
+                if ln and not _likely_header_footer(ln)
+            )
+        return "\n".join(lines)
+
+    raise HTTPException(status_code=400, detail="지원하지 않는 PDF 파서 엔진입니다.")
+
+
+def _strip_ctrl_spaces(line: str) -> str:
+    if not line:
+        return ""
+    line = "".join(ch for ch in line if ch.isprintable() or ch in "\t ")
+    line = re.sub(r"[\u2000-\u200B\u202F\u205F\u3000]", " ", line)  # 제로폭/넓은 공백 제거
+    return line.strip()
+
+
+def _likely_header_footer(ln: str) -> bool:
+    if not ln:
+        return True
+    if re.fullmatch(r"-{3,}|_{3,}|〔?\d+/?\d+〕?", ln):  # 구분선/페이지번호류
+        return True
+    return False
+
+
+# =========================
+# GPT 호출부 (이중 폴백)
+# =========================
+_SYS = (
+    "당신은 문서에서 프로젝트 생성용 메타데이터를 추출하는 전문가입니다.\n"
+    "- 시험신청번호는 'GS-B-12-3456' 패턴만 허용(공백/대시 포함 가능).\n"
+    "- 회사명은 고유명(문장형 설명 금지).\n"
+    "- 제품명은 국문/영문을 각각. 없으면 빈 문자열.\n"
+    "- 버전은 명확할 때만 product_version_hint에.\n"
+    "- 반드시 JSON만 출력.\n"
+)
+
+_JSON_KEYS = [
+    "exam_number",
+    "company_name",
+    "product_name_ko",
+    "product_name_en",
+    "product_version_hint",
+    "evidence",
+    "confidence",
 ]
 
 
-def normalize_label(value: str) -> str:
-    return re.sub(r"\s+", "", value or "")
+def _get_openai_client() -> OpenAI:
+    if OpenAI is None:  # pragma: no cover
+        raise HTTPException(status_code=500, detail="openai 패키지가 설치되어 있지 않습니다.")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY가 설정되어 있지 않습니다.")
+    base = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
+    # openai v1 클라이언트는 base_url 인자를 사용
+    return OpenAI(api_key=api_key, base_url=base) if base else OpenAI(api_key=api_key)
 
 
-REQUIRED_LABEL_PREFIXES = (
-    normalize_label("시험신청번호"),
-    normalize_label("제조자"),
-    normalize_label("제품명및버전"),
-    normalize_label("제품및버전"),
-    normalize_label("및버전"),
-    normalize_label("국문명"),
-    normalize_label("국문"),
-    normalize_label("제품"),
-    normalize_label("제품명"),
-    normalize_label("(국문)"),
-    normalize_label("영문"),
-    normalize_label("(영문)"),
-)
-
-PRODUCT_LABEL_PATTERN = re.compile(
-    r"^\s*(?:제품\s*명?(?:\s*\([^)]*\))*\s*(?:및\s*버전)?|\(?국문\)?명?)\s*[:：]?\s*",
-    re.IGNORECASE,
-)
-PRODUCT_LABEL_FALLBACKS = (
-    "제품명및버전",
-    "제품및버전",
-    "및버전",
-    "국문명",
-    "국문",
-    "제품",
-    "제품명",
-    "(국문)",
-)
-VERSION_BOUNDARY_PATTERN = re.compile(r"(?<=[A-Za-z\uAC00-\uD7A3\)])(?=\d+(?:\.\d+)+)")
-
-
-def _normalized_label_to_regex(label: str) -> str:
-    return r"\s*".join(re.escape(char) for char in label)
-
-
-def _build_label_regex(labels: Sequence[str]) -> str:
-    fragments = [_normalized_label_to_regex(label) for label in labels]
-    return "|".join(fragments)
-
-
-_LABEL_REGEX = _build_label_regex(REQUIRED_LABEL_PREFIXES)
-_LABEL_SPLIT_PATTERN = re.compile(rf"((?:{_LABEL_REGEX})\s*[:：])", re.IGNORECASE)
-HANGUL_PATTERN = re.compile(r"[\uAC00-\uD7A3]")
-
-
-def extract_project_metadata(file_bytes: bytes, *, file_extension: Optional[str] = None) -> Dict[str, str]:
-    """Extract metadata required for project creation from DOCX or PDF files."""
-
-    normalized_extension = (file_extension or "").lower().lstrip(".")
-
-    if normalized_extension == "pdf":
-        return _extract_project_metadata_from_pdf(file_bytes)
-
+def _extract_json_safely(s: str) -> dict:
+    """코드펜스/앞뒤 설명이 섞여도 JSON만 최대한 안전 추출."""
+    if not s:
+        return {}
     try:
-        return _extract_project_metadata_from_docx(file_bytes)
-    except HTTPException as exc:
-        # If the caller did not provide a reliable extension, attempt PDF parsing
-        # as a graceful fallback before surfacing the DOCX error.
-        if not file_extension:
-            try:
-                return _extract_project_metadata_from_pdf(file_bytes)
-            except HTTPException:
-                pass
-        raise exc
+        return json.loads(s)
+    except Exception:
+        pass
 
-
-def build_project_folder_name(metadata: Dict[str, str]) -> str:
-    exam_number = metadata.get("exam_number", "").strip()
-    company_name = metadata.get("company_name", "").strip()
-    product_name = metadata.get("product_name", "").strip()
-    return f"[{exam_number}] {company_name} - {product_name}"
-
-
-def _extract_project_metadata_from_docx(file_bytes: bytes) -> Dict[str, str]:
-    try:
-        document = Document(io.BytesIO(file_bytes))
-    except Exception as exc:  # pragma: no cover - library level validation
-        raise HTTPException(status_code=422, detail="시험 합의서 파일을 읽지 못했습니다.") from exc
-
-    exam_number: Optional[str] = None
-    company_name: Optional[str] = None
-    product_name: Optional[str] = None
-    collected_lines: list[str] = []
-
-    def _extract_from_cells(cells: Iterable[str]) -> None:
-        nonlocal exam_number, company_name, product_name
-        cell_iter = iter(cells)
-        for label, value in zip(cell_iter, cell_iter):
-            collected_lines.append(label)
-            collected_lines.append(value)
-            normalized_label = normalize_label(label)
-            stripped_value = value.strip()
-            if not stripped_value:
-                continue
-            if normalized_label == "시험신청번호":
-                match = EXAM_NUMBER_PATTERN.search(stripped_value)
-                if match:
-                    exam_number = match.group(0)
-            elif normalized_label == "제조자":
-                company_name = stripped_value
-            elif normalized_label.startswith("제품명및버전"):
-                candidate = _extract_product_name(stripped_value)
-                if candidate:
-                    product_name = candidate
-
-    for table in document.tables:
-        cells: list[str] = []
-        for row in table.rows:
-            if len(row.cells) >= 2:
-                left_label = row.cells[0].text.strip()
-                left_value = row.cells[1].text.strip()
-                if left_label and left_value:
-                    cells.append(left_label)
-                    cells.append(left_value)
-            if len(row.cells) >= 4:
-                right_label = row.cells[2].text.strip()
-                right_value = row.cells[3].text.strip()
-                if right_label and right_value:
-                    cells.append(right_label)
-                    cells.append(right_value)
-
-        if cells:
-            _extract_from_cells(cells)
-
-    paragraph_lines = [
-        paragraph.text.strip()
-        for paragraph in document.paragraphs
-        if paragraph.text and paragraph.text.strip()
-    ]
-    collected_lines.extend(paragraph_lines)
-
-    metadata = _finalize_metadata_from_lines(collected_lines, exam_number, company_name, product_name)
-    return metadata
-
-
-def _extract_project_metadata_from_pdf(file_bytes: bytes) -> Dict[str, str]:
-    try:
-        reader = PdfReader(io.BytesIO(file_bytes))
-    except Exception as exc:  # pragma: no cover - library level validation
-        raise HTTPException(status_code=422, detail="시험 합의서 파일을 읽지 못했습니다.") from exc
-
-    lines: list[str] = []
-    for page in reader.pages:
+    # fenced code block 우선
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", s, re.DOTALL | re.IGNORECASE)
+    if m:
         try:
-            text = page.extract_text() or ""
-        except Exception as exc:  # pragma: no cover - library level validation
-            raise HTTPException(status_code=422, detail="시험 합의서 파일을 읽지 못했습니다.") from exc
-        if text:
-            lines.extend(text.splitlines())
+            return json.loads(m.group(1))
+        except Exception:
+            pass
 
-    metadata = _finalize_metadata_from_lines(lines, None, None, None)
-    return metadata
+    # 첫 번째 top-level {..}만 추출 (중첩 안전 흉내)
+    # 균형 맞는 중괄호를 선형으로 스캔
+    start = s.find("{")
+    while start != -1:
+        depth = 0
+        for end in range(start, len(s)):
+            ch = s[end]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    chunk = s[start : end + 1]
+                    try:
+                        return json.loads(chunk)
+                    except Exception:
+                        break
+        start = s.find("{", start + 1)
+
+    return {}
 
 
-def _finalize_metadata_from_lines(
-    lines: Iterable[str],
-    exam_number: Optional[str],
-    company_name: Optional[str],
-    product_name: Optional[str],
-) -> Dict[str, str]:
-    expanded_lines: list[str] = []
-    pending_fragment: Optional[Tuple[int, str]] = None
-    for line in lines:
-        for segment in _split_line_by_known_labels(line):
-            if pending_fragment is not None:
-                index, fragment = pending_fragment
-                candidate = f"{fragment}{segment}".strip()
-                normalized_label, _ = _split_label_and_value(candidate)
-                is_known = _is_known_label(normalized_label)
-                if not is_known and PRODUCT_LABEL_PATTERN.match(candidate):
-                    is_known = True
-
-                if is_known:
-                    previous = expanded_lines[index].rstrip()
-                    expanded_lines[index] = previous[: -len(fragment)].rstrip()
-                    segment = candidate
-
-                pending_fragment = None
-
-            expanded_lines.append(segment)
-
-        if expanded_lines:
-            last_segment = expanded_lines[-1]
-            if last_segment.rstrip().endswith("제품"):
-                pending_fragment = (len(expanded_lines) - 1, "제품")
-            elif last_segment.rstrip().endswith("국문"):
-                pending_fragment = (len(expanded_lines) - 1, "국문")
-
-    meaningful_lines = [line.strip() for line in expanded_lines if line and line.strip()]
-    combined_text = "\n".join(meaningful_lines)
-
-    if not exam_number:
-        match = EXAM_NUMBER_PATTERN.search(combined_text)
-        if match:
-            exam_number = match.group(0)
-
-    if not company_name:
-        company_name = _extract_labeled_value(meaningful_lines, ("제조자",))
-
-    if not product_name:
-        product_name = _extract_labeled_value(meaningful_lines, PRODUCT_LABEL_FALLBACKS)
-        if product_name:
-            product_name = _extract_product_name(product_name)
-
-    if not exam_number:
-        raise HTTPException(status_code=422, detail="시험신청 번호를 찾을 수 없습니다.")
-
-    if not company_name:
-        raise HTTPException(status_code=422, detail="제조자(업체명)를 찾을 수 없습니다.")
-
-    if not product_name:
-        raise HTTPException(status_code=422, detail="제품명 및 버전을 찾을 수 없습니다.")
-
-    return {
-        "exam_number": exam_number.strip(),
-        "company_name": company_name.strip(),
-        "product_name": product_name.strip(),
+def _ensure_shape(d: dict) -> dict:
+    """필요 키를 보장하고 타입을 정리(없으면 기본값)."""
+    out = {
+        "exam_number": str(d.get("exam_number") or "").strip(),
+        "company_name": str(d.get("company_name") or "").strip(),
+        "product_name_ko": str(d.get("product_name_ko") or "").strip(),
+        "product_name_en": str(d.get("product_name_en") or "").strip(),
+        "product_version_hint": str(d.get("product_version_hint") or "").strip(),
+        "evidence": [],
+        "confidence": float(d.get("confidence") or 0.0),
     }
+    ev = d.get("evidence")
+    if isinstance(ev, list):
+        out["evidence"] = [str(x) for x in ev if isinstance(x, (str, int, float))][:3]
+    return out
 
 
-def _extract_labeled_value(lines: Sequence[str], target_labels: Sequence[str]) -> Optional[str]:
-    normalized_targets = tuple(normalize_label(label) for label in target_labels)
+def _call_gpt_structured(text: str) -> Dict:
+    """
+    1) Chat Completions + JSON 모드 (response_format={"type":"json_object"})
+    2) Responses API(일반 텍스트) → 'JSON만 출력' 지시 → 안전 파싱
+    """
+    client = _get_openai_client()
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 환경에서 주입 권장
 
-    def _is_target(label: str) -> bool:
-        return any(label.startswith(target) for target in normalized_targets)
+    sys_prompt = _SYS
+    user_prompt = (
+        "다음 텍스트에서 메타데이터를 JSON으로만 반환하세요.\n"
+        f"- 키: {', '.join(_JSON_KEYS)}\n"
+        "- evidence는 원문에서 발췌한 1~3줄 배열, confidence는 0~1 부동소수점\n\n"
+        f"{text[:150_000]}"
+    )
 
-    for index, line in enumerate(lines):
-        label, inline_value = _split_label_and_value(line)
-        if not _is_target(label):
-            continue
-
-        values: list[str] = []
-        inline_candidate = inline_value.strip()
-        next_index = index + 1
-
-        if inline_candidate:
-            values.append(inline_candidate)
-        else:
-            candidate_index, candidate_value = _next_value(lines, index + 1, normalized_targets)
-            if not candidate_value:
-                continue
-            values.append(candidate_value)
-            next_index = candidate_index + 1
-
-        continuation_index = next_index
-        while continuation_index < len(lines):
-            next_line = lines[continuation_index].strip()
-            if not next_line:
-                continuation_index += 1
-                continue
-
-            next_label, _ = _split_label_and_value(next_line)
-            if _is_known_label(next_label):
-                break
-
-            values.append(next_line)
-            continuation_index += 1
-
-        candidate = " ".join(values)
-        candidate = _strip_leading_label(candidate, normalized_targets)
-        if candidate:
-            return candidate.strip()
-
-    return None
-
-
-def _split_line_by_known_labels(line: str) -> list[str]:
-    normalized_line = _normalize_pdf_line(line)
-
-    parts = _LABEL_SPLIT_PATTERN.split(normalized_line)
-    if len(parts) <= 1:
-        return [normalized_line]
-
-    segments: list[str] = []
-    current = ""
-
-    for part in parts:
-        if not part:
-            continue
-        if _LABEL_SPLIT_PATTERN.fullmatch(part):
-            if current.strip():
-                segments.append(current.strip())
-            current = part
-        else:
-            current += part
-
-    if current.strip():
-        segments.append(current.strip())
-
-    for index in range(len(segments) - 1):
-        current_segment = segments[index]
-        next_segment = segments[index + 1]
-        stripped_current = current_segment.rstrip()
-        if not stripped_current.endswith("제품"):
-            continue
-
-        next_label, _ = _split_label_and_value(next_segment)
-        if not next_label.startswith(normalize_label("및버전")):
-            continue
-
-        segments[index] = stripped_current[:-2].rstrip()
-        segments[index + 1] = f"제품{next_segment}".strip()
-
-    return segments
-
-
-def _normalize_pdf_line(line: str) -> str:
-    if not line or HANGUL_PATTERN.search(line):
-        return line
-
+    # --- 1) Chat Completions JSON 모드 시도 ---
     try:
-        encoded = line.encode("latin1")
-    except UnicodeEncodeError:
-        return line
+        if hasattr(client, "chat") and hasattr(client.chat, "completions"):
+            resp = client.chat.completions.create(
+                model=model,
+                temperature=0.0,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=400,
+            )
+            content = (resp.choices[0].message.content or "").strip()
+            data = _extract_json_safely(content)
+            if data:
+                return _ensure_shape(data)
+    except Exception:
+        # JSON 모드 미지원, 또는 엔드포인트/모델에서 예외 → 폴백으로 진행
+        pass
 
-    if encoded.startswith(b"\xfe\xff") or b"\x00" in encoded:
-        try:
-            decoded_utf16 = encoded.decode("utf-16")
-        except UnicodeDecodeError:
-            decoded_utf16 = encoded.decode("utf-16", errors="ignore")
-        if decoded_utf16.strip():
-            return decoded_utf16
-
+    # --- 2) Responses API(일반 텍스트) + 안전 파싱 ---
     try:
-        decoded = encoded.decode("utf-8")
-    except UnicodeDecodeError:
-        decoded = encoded.decode("utf-8", errors="ignore")
+        resp = client.responses.create(
+            model=model,
+            temperature=0.0,
+            max_output_tokens=400,
+            input=[
+                {"role": "system", "content": sys_prompt + "\n지시: JSON만 출력(설명 금지)."},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
 
-    if not decoded:
-        return line
+        # 가능한 모든 경로에서 텍스트를 수거
+        text_out: Optional[str] = None
 
-    return decoded
+        # 2-1) 공식 output_text
+        if text_out is None:
+            text_out = getattr(resp, "output_text", None)
 
+        # 2-2) output -> content -> (type/text/value)
+        if not (isinstance(text_out, str) and text_out.strip()):
+            out = getattr(resp, "output", None)
+            if isinstance(out, list) and out:
+                try:
+                    parts = getattr(out[0], "content", None) or out[0].get("content")  # type: ignore[attr-defined]
+                    if isinstance(parts, list) and parts:
+                        # part dict or object 호환
+                        p0 = parts[0]
+                        ptype = getattr(p0, "type", None) or (p0.get("type") if isinstance(p0, dict) else None)
+                        if ptype in ("output_text", "text", "input_text"):
+                            text_out = (
+                                getattr(p0, "text", None)
+                                or (p0.get("text") if isinstance(p0, dict) else None)
+                                or getattr(p0, "value", None)
+                                or (p0.get("value") if isinstance(p0, dict) else None)
+                            )
+                except Exception:
+                    pass
 
-def _split_label_and_value(line: str) -> tuple[str, str]:
-    for separator in (":", "："):
-        if separator in line:
-            left, right = line.split(separator, 1)
-            return normalize_label(left), right
-    match = PRODUCT_LABEL_PATTERN.match(line)
-    if match:
-        label_text = match.group(0)
-        remainder = line[match.end() :]
-        return normalize_label(label_text), remainder
-    return normalize_label(line), ""
+        # 2-3) choices -> message -> content 스타일
+        if not (isinstance(text_out, str) and text_out.strip()):
+            choices = getattr(resp, "choices", None)
+            if isinstance(choices, list) and choices:
+                msg = getattr(choices[0], "message", None) or {}
+                text_out = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else None)
 
+        content = (text_out or "").strip()
+        data = _extract_json_safely(content)
+        if data:
+            return _ensure_shape(data)
 
-def _is_known_label(label: str) -> bool:
-    return any(label.startswith(candidate) for candidate in REQUIRED_LABEL_PREFIXES)
-
-
-def _next_value(
-    lines: Sequence[str],
-    start: int,
-    normalized_targets: Sequence[str],
-) -> Tuple[int, str]:
-    for index in range(start, len(lines)):
-        candidate = lines[index].strip()
-        if not candidate:
-            continue
-        candidate_label, _ = _split_label_and_value(candidate)
-        if any(candidate_label.startswith(target) for target in normalized_targets):
-            continue
-        if _is_known_label(candidate_label):
-            return index, ""
-        return index, candidate
-    return len(lines), ""
-
-
-def _strip_leading_label(value: str, normalized_targets: Sequence[str]) -> str:
-    stripped = value.strip()
-    if not stripped:
-        return stripped
-
-    for separator in (":", "："):
-        if separator in stripped:
-            potential_label, remainder = stripped.split(separator, 1)
-            normalized = normalize_label(potential_label)
-            if any(normalized.startswith(target) for target in normalized_targets):
-                return remainder.strip()
-    return stripped
-
-
-def _extract_product_name(raw_value: str) -> Optional[str]:
-    cleaned = PRODUCT_LABEL_PATTERN.sub("", raw_value or "")
-    cleaned = re.split(r"\(\s*영문\s*\)|\b영문\s*[:：]", cleaned, maxsplit=1)[0]
-    lines = [line.strip() for line in re.split(r"[\r\n]+", cleaned) if line.strip()]
-    if not lines:
-        return None
-
-    def _strip_english_suffix(value: str) -> str:
-        trimmed = re.split(r"\(\s*영문\s*\)|\b영문\s*[:：]", value, maxsplit=1)[0]
-        trimmed = re.sub(r"\s+[A-Z]{2,}[A-Za-z0-9\s\-]*$", "", trimmed)
-        return trimmed.strip()
-
-    hangul_segments: list[str] = []
-    for line in lines:
-        if HANGUL_PATTERN.search(line):
-            match = re.search(r"[\uAC00-\uD7A3].*$", line)
-            if match:
-                hangul_segments.append(_strip_english_suffix(match.group(0).strip()))
-            else:
-                hangul_segments.append(_strip_english_suffix(line))
-
-    if hangul_segments:
-        candidate = hangul_segments[-1].strip()
-        return candidate or None
-
-    combined = " ".join(lines).strip()
-    combined = VERSION_BOUNDARY_PATTERN.sub(" ", combined)
-    combined = _strip_english_suffix(combined)
-    return combined or None
+        raise RuntimeError("모델 응답에서 JSON을 파싱하지 못했습니다.")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"GPT 추출 실패: {e}")

@@ -1,83 +1,51 @@
+# hybrid_excel.py  (고수준: openpyxl만 사용 + 패키지 자동 수리)
 from __future__ import annotations
 
 import csv
 import io
 import re
-import copy
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
-from xml.etree import ElementTree as ET
 import zipfile
-from copy import copy as clone_style
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple, Optional
 
-from .utils import AI_CSV_DELIMITER, parse_csv_records as _parse_csv_records
+from openpyxl import load_workbook
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.drawing.image import Image as XLImage
+from openpyxl.utils import get_column_letter
 
+# 선택적(고급 앵커) 의존성: 없으면 자동 폴백
+try:
+    from openpyxl.drawing.spreadsheet_drawing import AnchorMarker, OneCellAnchor, XDRPositiveSize2D
+    from openpyxl.utils.units import pixels_to_EMU
+    _HAS_ONE_CELL_ANCHOR = True
+except Exception:  # pragma: no cover
+    AnchorMarker = OneCellAnchor = XDRPositiveSize2D = None  # type: ignore
+    def pixels_to_EMU(px: float) -> int:  # type: ignore
+        return int(round(px * 9525))  # EMU_PER_PIXEL
+    _HAS_ONE_CELL_ANCHOR = False
 
-def summarize_feature_description(description: object, max_length: int = 120) -> str:
-    """Create a compact single-line summary for a feature description.
+# 외부 유틸(구현 의존 최소화)
+try:
+    from .utils import AI_CSV_DELIMITER  # CSV 구분자
+except Exception:  # pragma: no cover
+    AI_CSV_DELIMITER = ','
 
-    Google Drive routes historically imported this helper to pre-process
-    descriptions before writing them back to legacy templates.  Some runtime
-    environments still import it even though the current workflow no longer
-    relies on the summarised value.  Providing a tolerant implementation keeps
-    backward compatibility without reintroducing the old behaviour.
-
-    The function returns a trimmed, whitespace-normalised string and limits the
-    length to ``max_length`` characters, appending an ellipsis when truncation
-    occurs.
-    """
-
-    if description is None:
-        return ""
-
-    try:
-        text = str(description)
-    except Exception:
-        return ""
-
-    cleaned = " ".join(text.split())
-    if not cleaned:
-        return ""
-
-    if len(cleaned) <= max_length:
-        return cleaned
-
-    truncated = cleaned[: max(1, max_length - 1)].rstrip()
-    if len(truncated) < len(cleaned):
-        return f"{truncated}…"
-    return truncated
-
-_SPREADSHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-_XML_NS = "http://www.w3.org/XML/1998/namespace"
-_XLSX_SHEET_PATH = "xl/worksheets/sheet1.xml"
-_DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing"
-_DRAWING_A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-_EMU_PER_PIXEL = 9525
-_IMAGE_VERTICAL_GAP_PX = 4
-
-ET.register_namespace("", _SPREADSHEET_NS)
-ET.register_namespace("xdr", _DRAWING_NS)
-ET.register_namespace("a", _DRAWING_A_NS)
-ET.register_namespace("r", _REL_NS)
-
-
+# --------------------- 데이터 구조 ---------------------
 @dataclass(frozen=True)
 class ColumnSpec:
     key: str
     letter: str
-    style: str
-
+    style: str  # openpyxl에서는 템플릿 행의 셀 스타일 복사로 대체
 
 @dataclass(frozen=True)
 class DefectReportImage:
     file_name: str
     content: bytes
-    content_type: str | None = None
+    content_type: Optional[str] = None
 
 
-def _safe_int(value: object) -> int | None:
+# --------------------- 유틸 ---------------------
+def _safe_int(value: object) -> Optional[int]:
     if value is None:
         return None
     try:
@@ -90,7 +58,6 @@ def _safe_int(value: object) -> int | None:
         return int(text)
     except ValueError:
         return None
-
 
 def _append_attachment_note(value: object, names: Sequence[str]) -> str:
     cleaned_names = [str(name).strip() for name in names if str(name).strip()]
@@ -106,31 +73,24 @@ def _append_attachment_note(value: object, names: Sequence[str]) -> str:
         return f"{existing}\n{note}"
     return note
 
-
 def _column_width_to_pixels(width: float) -> int:
+    # Excel UI의 '문자폭' 기준을 픽셀 근사로 환산
     if width <= 0:
         return 64
     return max(1, int(round(width * 7.0 + 5)))
-
 
 def _row_height_to_pixels(height_points: float) -> float:
     if height_points <= 0:
         height_points = 15.0
     return height_points * 96.0 / 72.0
 
-
-def _pixels_to_emu(pixels: float) -> int:
-    if pixels <= 0:
-        pixels = 1
-    return int(round(pixels * _EMU_PER_PIXEL))
-
-
 def _image_dimensions(content: bytes) -> Tuple[int, int]:
+    # PNG
     if len(content) >= 24 and content.startswith(b"\x89PNG\r\n\x1a\n"):
         width = int.from_bytes(content[16:20], "big")
         height = int.from_bytes(content[20:24], "big")
         return width, height
-
+    # JPEG
     if len(content) > 4 and content.startswith(b"\xff\xd8"):
         index = 2
         length = len(content)
@@ -140,21 +100,19 @@ def _image_dimensions(content: bytes) -> Tuple[int, int]:
             marker = content[index + 1]
             if marker == 0xD9:
                 break
-            if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
-                block_length = int.from_bytes(content[index + 2 : index + 4], "big")
+            if marker in {0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB,0xCD,0xCE,0xCF}:
+                block_length = int.from_bytes(content[index+2:index+4], "big")
                 start = index + 4
                 if start + 5 < length:
-                    height = int.from_bytes(content[start + 1 : start + 3], "big")
-                    width = int.from_bytes(content[start + 3 : start + 5], "big")
+                    height = int.from_bytes(content[start+1:start+3], "big")
+                    width  = int.from_bytes(content[start+3:start+5], "big")
                     return width, height
                 break
-            block_length = int.from_bytes(content[index + 2 : index + 4], "big")
+            block_length = int.from_bytes(content[index+2:index+4], "big")
             if block_length <= 0:
                 break
             index += 2 + block_length
-
     return 0, 0
-
 
 def _scale_image_dimensions(content: bytes, max_width_px: int) -> Tuple[int, int]:
     width, height = _image_dimensions(content)
@@ -168,32 +126,13 @@ def _scale_image_dimensions(content: bytes, max_width_px: int) -> Tuple[int, int
     scaled_height = max(1, int(round(height * scale)))
     return scaled_width, scaled_height
 
-
-def _normalized_image_filename(name: str, used: Dict[str, int]) -> str:
-    base = (name or "defect-image").strip()
-    base = re.sub(r"[^A-Za-z0-9._-]", "_", base) or "defect-image"
-    if "." not in base:
-        base = f"{base}.png"
-    root, dot, ext = base.rpartition(".")
-    if not root:
-        root = ext
-        ext = "png"
-    ext = ext.lower()
-    key = f"{root}.{ext}" if dot else f"{root}.{ext}"
-    count = used.get(key, 0)
-    if count:
-        key = f"{root}_{count}.{ext}"
-    used[f"{root}.{ext}"] = count + 1
-    return key
-
 def _column_to_index(letter: str) -> int:
     result = 0
-    for char in letter:
-        if not char.isalpha():
+    for ch in letter:
+        if not ch.isalpha():
             break
-        result = result * 26 + (ord(char.upper()) - ord("A") + 1)
+        result = result * 26 + (ord(ch.upper()) - ord("A") + 1)
     return result
-
 
 def _index_to_column(index: int) -> str:
     if index <= 0:
@@ -202,587 +141,27 @@ def _index_to_column(index: int) -> str:
     while index:
         index, remainder = divmod(index - 1, 26)
         letters.append(chr(ord("A") + remainder))
-    if not letters:
-        return "A"
-    return "".join(reversed(letters))
-
+    return "".join(reversed(letters)) or "A"
 
 def _split_cell(reference: str) -> tuple[str, int]:
-    match = re.match(r"([A-Z]+)(\d+)", reference)
-    if not match:
+    m = re.match(r"([A-Z]+)(\d+)", reference)
+    if not m:
         raise ValueError(f"셀 참조를 해석할 수 없습니다: {reference}")
-    column, row = match.groups()
-    return column, int(row)
-
-
-def _parse_dimension(ref: str) -> tuple[str, int, str, int]:
-    if ":" in ref:
-        start_ref, end_ref = ref.split(":", 1)
-    else:
-        start_ref = end_ref = ref
-    start_col, start_row = _split_cell(start_ref)
-    end_col, end_row = _split_cell(end_ref)
-    return start_col, start_row, end_col, end_row
-
-
-def _parse_shared_strings(data: bytes) -> List[str]:
-    if not data:
-        return []
-
-    try:
-        root = ET.fromstring(data)
-    except ET.ParseError:
-        return []
-
-    ns = {"s": _SPREADSHEET_NS}
-    values: List[str] = []
-    for si in root.findall("s:si", ns):
-        text_segments: List[str] = []
-        for text_node in si.findall(".//s:t", ns):
-            if text_node.text:
-                text_segments.append(text_node.text)
-        values.append("".join(text_segments))
-    return values
-
-
-def _cell_text_from_sheet(
-    cell: ET.Element,
-    *,
-    shared_strings: Sequence[str],
-) -> str:
-    text_type = (cell.get("t") or "").strip().lower()
-    ns = {"s": _SPREADSHEET_NS}
-
-    if text_type == "inlinestr":
-        text_elem = cell.find("s:is/s:t", ns)
-        return text_elem.text if text_elem is not None and text_elem.text else ""
-
-    value_elem = cell.find("s:v", ns)
-    if value_elem is None or value_elem.text is None:
-        return ""
-
-    if text_type == "s":
-        try:
-            index = int(value_elem.text)
-        except ValueError:
-            return ""
-        if 0 <= index < len(shared_strings):
-            return shared_strings[index] or ""
-        return ""
-
-    return value_elem.text or ""
-
-
-def _find_sheet_row(root: ET.Element, row_index: int) -> ET.Element | None:
-    ns = {"s": _SPREADSHEET_NS}
-    return root.find(f"s:sheetData/s:row[@r='{row_index}']", ns)
-
-
-def _find_sheet_cell(row: ET.Element, column: str) -> ET.Element | None:
-    ns = {"s": _SPREADSHEET_NS}
-    target_index = _column_to_index(column)
-    for cell in row.findall("s:c", ns):
-        ref = (cell.get("r") or "").strip()
-        if ref:
-            cell_column = "".join(filter(str.isalpha, ref))
-        else:
-            cell_column = ""
-        if cell_column and _column_to_index(cell_column) == target_index:
-            return cell
-    return None
-
-
-def _clear_cell(cell: ET.Element) -> None:
-    if "t" in cell.attrib:
-        del cell.attrib["t"]
-    for child in list(cell):
-        cell.remove(child)
-
+    col, row = m.groups()
+    return col, int(row)
 
 def _sanitize_xml_text(value: str) -> str:
-    def is_allowed(codepoint: int) -> bool:
+    def ok(cp: int) -> bool:
         return (
-            codepoint in {0x9, 0xA, 0xD}
-            or 0x20 <= codepoint <= 0xD7FF
-            or 0xE000 <= codepoint <= 0xFFFD
-            or 0x10000 <= codepoint <= 0x10FFFF
+            cp in {0x9, 0xA, 0xD} or
+            0x20 <= cp <= 0xD7FF or
+            0xE000 <= cp <= 0xFFFD or
+            0x10000 <= cp <= 0x10FFFF
         )
+    return "".join(ch for ch in value if ok(ord(ch)))
 
-    return "".join(ch for ch in value if is_allowed(ord(ch)))
 
-
-def _set_cell_text(cell: ET.Element, value: str) -> None:
-    _clear_cell(cell)
-    if value is None:
-        value = ""
-    sanitized_value = _sanitize_xml_text(value)
-    cleaned = sanitized_value.strip()
-    if not cleaned:
-        return
-
-    cell.set("t", "inlineStr")
-    is_elem = ET.SubElement(cell, f"{{{_SPREADSHEET_NS}}}is")
-    text_elem = ET.SubElement(is_elem, f"{{{_SPREADSHEET_NS}}}t")
-    if cleaned != sanitized_value or "\n" in sanitized_value:
-        text_elem.set(f"{{{_XML_NS}}}space", "preserve")
-        text_elem.text = sanitized_value
-    else:
-        text_elem.text = cleaned
-
-
-def _locate_feature_list_overview(
-    sheet_bytes: bytes,
-    shared_strings: Sequence[str],
-) -> Tuple[str | None, str]:
-    feature_start_row = globals().get("_FEATURE_LIST_START_ROW", 8)
-    try:
-        root = ET.fromstring(sheet_bytes)
-    except ET.ParseError:
-        return None, ""
-
-    ns = {"s": _SPREADSHEET_NS}
-    sheet_data = root.find("s:sheetData", ns)
-    if sheet_data is None:
-        return None, ""
-
-    merges: List[Tuple[str, int, str, int]] = []
-    merge_container = root.find("s:mergeCells", ns)
-    if merge_container is not None:
-        for merge in merge_container.findall("s:mergeCell", ns):
-            ref = (merge.get("ref") or "").strip()
-            if not ref:
-                continue
-            try:
-                if ":" in ref:
-                    start_ref, end_ref = ref.split(":", 1)
-                else:
-                    start_ref = end_ref = ref
-                start_col, start_row = _split_cell(start_ref)
-                end_col, end_row = _split_cell(end_ref)
-            except ValueError:
-                continue
-            merges.append((start_col, start_row, end_col, end_row))
-
-    cell_map: Dict[str, ET.Element] = {}
-    for row in sheet_data.findall("s:row", ns):
-        for cell in row.findall("s:c", ns):
-            ref = (cell.get("r") or "").strip()
-            if ref:
-                cell_map[ref] = cell
-
-    for ref, cell in cell_map.items():
-        try:
-            column, row_index = _split_cell(ref)
-        except ValueError:
-            continue
-
-        if row_index >= feature_start_row:
-            continue
-
-        raw_text = _cell_text_from_sheet(cell, shared_strings=shared_strings).strip()
-        if not raw_text:
-            continue
-
-        normalized = match_feature_list_header(raw_text) or ""
-        normalized_token = _normalize_feature_header_token(raw_text)
-        if normalized_token not in {"개요", "프로젝트개요"} and normalized != "기능 개요":
-            continue
-
-        column_index = _column_to_index(column)
-        header_span: Tuple[str, int, str, int] | None = None
-        for start_col, start_row, end_col, end_row in merges:
-            start_index = _column_to_index(start_col)
-            end_index = _column_to_index(end_col)
-            if start_row <= row_index <= end_row and start_index <= column_index <= end_index:
-                header_span = (start_col, start_row, end_col, end_row)
-                break
-
-        candidate_ref: str | None = None
-        candidate_ranges: List[Tuple[str, int, str, int]] = []
-        if header_span is not None:
-            header_end_row = header_span[3]
-            for start_col, start_row, end_col, end_row in merges:
-                if start_col == header_span[0] and end_col == header_span[2]:
-                    if start_row > header_end_row and start_row <= header_end_row + 6:
-                        candidate_ranges.append((start_col, start_row, end_col, end_row))
-            if candidate_ranges:
-                start_col, start_row, _, _ = min(
-                    candidate_ranges, key=lambda item: (item[1], _column_to_index(item[0]))
-                )
-                candidate_ref = f"{start_col}{start_row}"
-
-        if candidate_ref is None:
-            next_row = row_index + 1
-            for start_col, start_row, end_col, end_row in merges:
-                start_index = _column_to_index(start_col)
-                end_index = _column_to_index(end_col)
-                if start_row <= next_row <= end_row and start_index <= column_index <= end_index:
-                    candidate_ref = f"{start_col}{start_row}"
-                    break
-
-        if candidate_ref is None:
-            candidate_ref = f"{column}{row_index + 1}"
-
-        cell_elem = cell_map.get(candidate_ref)
-        value = ""
-        if cell_elem is not None:
-            value = _cell_text_from_sheet(cell_elem, shared_strings=shared_strings).strip()
-
-        return candidate_ref, value
-
-    return None, ""
-
-
-def _apply_project_overview_to_sheet(sheet_bytes: bytes, cell_ref: str, value: str) -> bytes:
-    try:
-        root = ET.fromstring(sheet_bytes)
-    except ET.ParseError:
-        return sheet_bytes
-
-    try:
-        column, row_index = _split_cell(cell_ref)
-    except ValueError:
-        return sheet_bytes
-
-    ns = {"s": _SPREADSHEET_NS}
-    sheet_data = root.find("s:sheetData", ns)
-    if sheet_data is None:
-        return sheet_bytes
-
-    row = _find_sheet_row(root, row_index)
-    if row is None:
-        row_tag = f"{{{_SPREADSHEET_NS}}}row"
-        row = ET.Element(row_tag, {"r": str(row_index)})
-        inserted = False
-        for idx, existing in enumerate(sheet_data.findall("s:row", ns)):
-            existing_r = existing.get("r") or ""
-            try:
-                existing_index = int(existing_r)
-            except ValueError:
-                continue
-            if existing_index > row_index:
-                sheet_data.insert(idx, row)
-                inserted = True
-                break
-        if not inserted:
-            sheet_data.append(row)
-
-    cell = _find_sheet_cell(row, column)
-    if cell is None:
-        cell_tag = f"{{{_SPREADSHEET_NS}}}c"
-        cell = ET.Element(cell_tag, {"r": f"{column}{row_index}"})
-
-        style_candidate = None
-        for existing in row.findall("s:c", ns):
-            style_attr = existing.get("s")
-            if style_attr:
-                style_candidate = style_attr
-                break
-        if style_candidate:
-            cell.set("s", style_candidate)
-
-        target_index = _column_to_index(column)
-        inserted = False
-        for idx, existing in enumerate(row.findall("s:c", ns)):
-            existing_ref = existing.get("r") or ""
-            existing_col = "".join(filter(str.isalpha, existing_ref))
-            if not existing_col:
-                continue
-            if _column_to_index(existing_col) > target_index:
-                row.insert(idx, cell)
-                inserted = True
-                break
-        if not inserted:
-            row.append(cell)
-
-    _set_cell_text(cell, value)
-
-    dimension = root.find("s:dimension", ns)
-    if dimension is None:
-        dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
-        dimension = ET.Element(dimension_tag)
-        inserted = False
-        for idx, child in enumerate(list(root)):
-            if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
-                root.insert(idx, dimension)
-                inserted = True
-                break
-        if not inserted:
-            root.insert(0, dimension)
-
-    ref = (dimension.get("ref") or "").strip()
-    current_col_index = _column_to_index(column)
-    if ref:
-        start_col, start_row, end_col, end_row = _parse_dimension(ref)
-        start_col_index = _column_to_index(start_col)
-        end_col_index = _column_to_index(end_col)
-    else:
-        start_row = end_row = row_index
-        start_col_index = end_col_index = current_col_index
-
-    updated = False
-    if row_index < start_row:
-        start_row = row_index
-        updated = True
-    if row_index > end_row:
-        end_row = row_index
-        updated = True
-    if current_col_index < start_col_index:
-        start_col_index = current_col_index
-        updated = True
-    if current_col_index > end_col_index:
-        end_col_index = current_col_index
-        updated = True
-
-    if updated or not ref:
-        dimension.set(
-            "ref",
-            f"{_index_to_column(start_col_index)}{start_row}:{_index_to_column(end_col_index)}{end_row}",
-        )
-
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
-
-
-class WorksheetPopulator:
-    def __init__(
-        self,
-        sheet_bytes: bytes,
-        *,
-        start_row: int,
-        columns: Sequence[ColumnSpec],
-    ) -> None:
-        self._ns = {"s": _SPREADSHEET_NS}
-        self._root = ET.fromstring(sheet_bytes)
-        self._sheet_data = self._root.find("s:sheetData", self._ns)
-        if self._sheet_data is None:
-            raise ValueError("워크시트 데이터 영역을 찾을 수 없습니다.")
-
-        self._start_row = start_row
-        self._column_specs = list(columns)
-        if not self._column_specs:
-            raise ValueError("채울 열 정보가 없습니다.")
-
-        self._dimension = self._root.find("s:dimension", self._ns)
-        ref = ""
-        if self._dimension is not None:
-            ref = (self._dimension.get("ref") or "").strip()
-
-        if not ref:
-            ref = self._infer_dimension()
-            if not ref:
-                raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
-
-            dimension_tag = f"{{{_SPREADSHEET_NS}}}dimension"
-            if self._dimension is None:
-                self._dimension = ET.Element(dimension_tag)
-                inserted = False
-                for idx, child in enumerate(list(self._root)):
-                    if child.tag in {dimension_tag, f"{{{_SPREADSHEET_NS}}}sheetData"}:
-                        self._root.insert(idx, self._dimension)
-                        inserted = True
-                        break
-                if not inserted:
-                    self._root.insert(0, self._dimension)
-            self._dimension.set("ref", ref)
-
-        (
-            self._dimension_start_col,
-            self._dimension_start_row,
-            self._dimension_end_col,
-            self._dimension_end_row,
-        ) = _parse_dimension(ref)
-
-        self._row_cache: Dict[int, ET.Element] = {}
-        for row in self._sheet_data.findall("s:row", self._ns):
-            r_attr = row.get("r")
-            if not r_attr:
-                continue
-            try:
-                index = int(r_attr)
-            except ValueError:
-                continue
-            self._row_cache[index] = row
-
-        template_row = self._row_cache.get(self._start_row)
-        if template_row is None:
-            raise ValueError("템플릿 행을 찾을 수 없습니다.")
-        self._template_row = copy.deepcopy(template_row)
-
-    def _infer_dimension(self) -> str | None:
-        min_col: int | None = None
-        max_col: int | None = None
-        min_row: int | None = None
-        max_row: int | None = None
-
-        for row in self._sheet_data.findall("s:row", self._ns):
-            row_index = _safe_int(row.get("r"))
-            if row_index is not None:
-                if min_row is None or row_index < min_row:
-                    min_row = row_index
-                if max_row is None or row_index > max_row:
-                    max_row = row_index
-
-            for cell in row.findall("s:c", self._ns):
-                ref = (cell.get("r") or "").strip()
-                if not ref:
-                    continue
-                try:
-                    column, row_number = _split_cell(ref)
-                except ValueError:
-                    if row_index is None:
-                        continue
-                    column = "".join(filter(str.isalpha, ref))
-                    if not column:
-                        continue
-                    row_number = row_index
-
-                column_index = _column_to_index(column)
-                if column_index:
-                    if min_col is None or column_index < min_col:
-                        min_col = column_index
-                    if max_col is None or column_index > max_col:
-                        max_col = column_index
-                if row_number:
-                    if min_row is None or row_number < min_row:
-                        min_row = row_number
-                    if max_row is None or row_number > max_row:
-                        max_row = row_number
-
-        if (min_col is None or max_col is None) and self._column_specs:
-            column_indices = [
-                _column_to_index(spec.letter)
-                for spec in self._column_specs
-                if spec.letter
-            ]
-            if column_indices:
-                if min_col is None:
-                    min_col = min(column_indices)
-                if max_col is None:
-                    max_col = max(column_indices)
-
-        if min_row is None:
-            min_row = self._start_row
-        if max_row is None:
-            max_row = self._start_row
-
-        if min_col is None or max_col is None:
-            return None
-
-        start_col = _index_to_column(min_col)
-        end_col = _index_to_column(max_col)
-        return f"{start_col}{min_row}:{end_col}{max_row}"
-
-    def _tag(self, name: str) -> str:
-        return f"{{{_SPREADSHEET_NS}}}{name}"
-
-    @staticmethod
-    def _cell_column(cell: ET.Element) -> str:
-        ref = cell.get("r", "")
-        return "".join(filter(str.isalpha, ref))
-
-    def _ensure_row(self, index: int) -> ET.Element:
-        if index in self._row_cache:
-            return self._row_cache[index]
-
-        row = copy.deepcopy(self._template_row)
-        row.set("r", str(index))
-        for cell in row.findall("s:c", self._ns):
-            column = self._cell_column(cell)
-            cell.set("r", f"{column}{index}")
-            self._clear_cell(cell)
-        self._sheet_data.append(row)
-        self._row_cache[index] = row
-        if index > self._dimension_end_row:
-            self._dimension_end_row = index
-        return row
-
-    def _clear_cell(self, cell: ET.Element) -> None:
-        if "t" in cell.attrib:
-            del cell.attrib["t"]
-        for child in list(cell):
-            cell.remove(child)
-
-    def _clear_row(self, row: ET.Element) -> None:
-        for cell in row.findall("s:c", self._ns):
-            self._clear_cell(cell)
-
-    def _ensure_cell(self, row: ET.Element, spec: ColumnSpec) -> ET.Element:
-        column = spec.letter
-        target_index = _column_to_index(column)
-        for cell in row.findall("s:c", self._ns):
-            if self._cell_column(cell) == column:
-                cell.set("r", f"{column}{row.get('r')}")
-                cell.set("s", spec.style)
-                return cell
-
-        new_cell = ET.Element(self._tag("c"), {
-            "r": f"{column}{row.get('r')}",
-            "s": spec.style,
-        })
-        inserted = False
-        for idx, existing in enumerate(list(row)):
-            if existing.tag != self._tag("c"):
-                continue
-            existing_col = self._cell_column(existing)
-            if _column_to_index(existing_col) > target_index:
-                row.insert(idx, new_cell)
-                inserted = True
-                break
-        if not inserted:
-            row.append(new_cell)
-        return new_cell
-
-    def _set_cell_value(self, cell: ET.Element, value: str) -> None:
-        _set_cell_text(cell, value)
-
-    def populate(self, records: Sequence[Dict[str, str]]) -> None:
-        # 우선 기존 데이터를 비웁니다.
-        for index, row in self._row_cache.items():
-            if index >= self._start_row:
-                self._clear_row(row)
-
-        for offset, record in enumerate(records):
-            row_index = self._start_row + offset
-            row = self._ensure_row(row_index)
-            for spec in self._column_specs:
-                value = record.get(spec.key, "")
-                cell = self._ensure_cell(row, spec)
-                self._set_cell_value(cell, value)
-
-        limit = self._start_row + len(records)
-        for index in sorted(self._row_cache):
-            if index >= limit:
-                row = self._row_cache[index]
-                self._clear_row(row)
-
-        if records:
-            last_row = self._start_row + len(records) - 1
-        else:
-            last_row = self._start_row
-        if last_row > self._dimension_end_row:
-            self._dimension_end_row = last_row
-        self._dimension.set(
-            "ref",
-            f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
-        )
-
-    def to_bytes(self) -> bytes:
-        return ET.tostring(self._root, encoding="utf-8", xml_declaration=True)
-
-
-def _replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes:
-    source_buffer = io.BytesIO(workbook_bytes)
-    output_buffer = io.BytesIO()
-    with zipfile.ZipFile(source_buffer, "r") as source_zip:
-        with zipfile.ZipFile(output_buffer, "w") as target_zip:
-            for info in source_zip.infolist():
-                data = source_zip.read(info.filename)
-                if info.filename == _XLSX_SHEET_PATH:
-                    data = new_sheet_bytes
-                target_zip.writestr(info, data)
-    return output_buffer.getvalue()
-
-
+# --------------------- CSV 정규화/헤더 매칭 ---------------------
 def _normalize_header_token(value: str) -> str:
     cleaned = str(value or "").strip().lower()
     if not cleaned:
@@ -793,26 +172,24 @@ def _normalize_header_token(value: str) -> str:
     cleaned = cleaned.replace("-", "").replace("_", "")
     return cleaned
 
-
 def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[Dict[str, str]]:
-    stripped = csv_text.strip()
+    stripped = (csv_text or "").strip()
     if not stripped:
         return []
-
     reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader]
     if not rows:
         return []
-
     header = [cell.strip() for cell in rows[0]]
     if header:
         header[0] = header[0].lstrip("\ufeff")
+
     column_index: Dict[str, int] = {}
     normalized_lookup: Dict[str, str] = {}
-    for column in expected_columns:
-        normalized = _normalize_header_token(column)
+    for col in expected_columns:
+        normalized = _normalize_header_token(col)
         if normalized and normalized not in normalized_lookup:
-            normalized_lookup[normalized] = column
+            normalized_lookup[normalized] = col
 
     for idx, name in enumerate(header):
         if not name:
@@ -823,7 +200,7 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
         if canonical:
             column_index.setdefault(canonical, idx)
 
-    missing = [column for column in expected_columns if column not in column_index]
+    missing = [c for c in expected_columns if c not in column_index]
     if missing:
         raise ValueError(f"CSV에 필요한 열이 없습니다: {', '.join(missing)}")
 
@@ -831,17 +208,18 @@ def _parse_csv_records(csv_text: str, expected_columns: Sequence[str]) -> List[D
     for raw in rows[1:]:
         entry: Dict[str, str] = {}
         is_empty = True
-        for column in expected_columns:
-            idx = column_index[column]
-            value = raw[idx].strip() if idx < len(raw) else ""
+        for col in expected_columns:
+            i = column_index[col]
+            value = raw[i].strip() if i < len(raw) else ""
             if value:
                 is_empty = False
-            entry[column] = value
+            entry[col] = value
         if not is_empty:
             records.append(entry)
     return records
 
 
+# --------- 기능리스트 CSV 헤더 별칭/정규화 ---------
 _FEATURE_LIST_START_ROW = 8
 
 _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
@@ -849,18 +227,11 @@ _FEATURE_LIST_HEADER_ALIASES: Mapping[str, Tuple[str, ...]] = {
     "중분류": ("중분류", "중 분류", "중간 기능", "중간기능"),
     "소분류": ("소분류", "소 분류", "세부 기능", "세부기능"),
     "기능 설명": (
-        "기능 설명",
-        "상세 설명",
-        "상세 내용",
-        "기능 상세",
-        "상세내용",
-        "상세설명",
-        "기능상세",
-        "내용",
+        "기능 설명", "상세 설명", "상세 내용", "기능 상세",
+        "상세내용", "상세설명", "기능상세", "내용",
     ),
     "기능 개요": ("기능 개요", "개요", "요약", "기능 요약", "요약 설명", "개요 설명"),
 }
-
 
 def _normalize_feature_header_token(value: str) -> str:
     cleaned = value.strip().lower()
@@ -871,7 +242,6 @@ def _normalize_feature_header_token(value: str) -> str:
     cleaned = cleaned.replace("-", "").replace("_", "")
     return cleaned
 
-
 _FEATURE_LIST_NORMALIZED_HEADERS: Dict[str, str] = {}
 for canonical, variants in _FEATURE_LIST_HEADER_ALIASES.items():
     for variant in variants:
@@ -879,47 +249,34 @@ for canonical, variants in _FEATURE_LIST_HEADER_ALIASES.items():
         if normalized and normalized not in _FEATURE_LIST_NORMALIZED_HEADERS:
             _FEATURE_LIST_NORMALIZED_HEADERS[normalized] = canonical
 
-
-def match_feature_list_header(value: str) -> str | None:
+def match_feature_list_header(value: str) -> Optional[str]:
     normalized = _normalize_feature_header_token(value)
     if not normalized:
         return None
     return _FEATURE_LIST_NORMALIZED_HEADERS.get(normalized)
 
-
-# Keep these column declarations flush-left; earlier packaging issues inserted
-# accidental leading spaces which triggered IndentationError during import.
 FEATURE_LIST_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="대분류", letter="A", style="12"),
     ColumnSpec(key="중분류", letter="B", style="8"),
     ColumnSpec(key="소분류", letter="C", style="15"),
     ColumnSpec(key="기능 설명", letter="D", style="7"),
 )
-
-FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = [
-    "대분류",
-    "중분류",
-    "소분류",
-    "기능 설명",
-]
-
+FEATURE_LIST_EXPECTED_HEADERS: Sequence[str] = ["대분류", "중분류", "소분류", "기능 설명"]
 
 def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
-    stripped = csv_text.strip()
+    stripped = (csv_text or "").strip()
     if not stripped:
         return []
-
     reader = csv.reader(io.StringIO(stripped), delimiter=AI_CSV_DELIMITER)
     rows = [row for row in reader if any(cell.strip() for cell in row)]
     if not rows:
         return []
-
     header = [cell.strip() for cell in rows[0]]
     if header:
         header[0] = header[0].lstrip("\ufeff")
 
     column_map: Dict[str, int] = {}
-    overview_index: int | None = None
+    overview_index: Optional[int] = None
     for idx, name in enumerate(header):
         if not name:
             continue
@@ -929,10 +286,8 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
             continue
         if matched and matched not in column_map:
             column_map[matched] = idx
-
     if "기능 설명" not in column_map and overview_index is not None:
         column_map["기능 설명"] = overview_index
-
     for fallback_index, column_name in enumerate(FEATURE_LIST_EXPECTED_HEADERS):
         column_map.setdefault(column_name, fallback_index)
 
@@ -950,54 +305,351 @@ def _normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
             entry[column_name] = value
         if not has_value:
             continue
-
         normalized_records.append(entry)
-
     return normalized_records
 
-
 def normalize_feature_list_records(csv_text: str) -> List[Dict[str, str]]:
-    """Public wrapper for feature-list CSV normalisation."""
-
     return _normalize_feature_list_records(csv_text)
 
 
-def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[str | None, str]:
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
+# --------------------- 개요 셀 위치/값 추출 (openpyxl 기반) ---------------------
+def _find_overview_cell_ref_openpyxl(ws: Worksheet, feature_start_row: int) -> Optional[str]:
+    """
+    상단(=feature_start_row 이전)의 영역에서 “개요/기능 개요” 헤더를 찾고,
+    그 헤더와 같은 열의 바로 아래(또는 동일 열 범위의 다음 병합셀) 첫 셀 주소를 반환.
+    """
+    targets = {"개요", "프로젝트개요", "기능 개요"}
+    merged_ranges = list(ws.merged_cells.ranges)  # e.g., [CellRange A1:D1, ...]
+
+    def _merged_of(r: int, c: int):
+        for rng in merged_ranges:
+            if rng.min_row <= r <= rng.max_row and rng.min_col <= c <= rng.max_col:
+                return rng
+        return None
+
+    max_col = ws.max_column or 1
+    for r in range(1, max(1, feature_start_row)):
+        for c in range(1, max_col + 1):
+            v = ws.cell(r, c).value
+            if not v:
+                continue
+            txt = str(v).strip()
+            hit = match_feature_list_header(txt) or ""
+            token = _normalize_feature_header_token(txt)
+            if token not in {"개요", "프로젝트개요"} and hit != "기능 개요":
+                continue
+
+            rng = _merged_of(r, c)
+            base_col_min = rng.min_col if rng else c
+            base_col_max = rng.max_col if rng else c
+            base_row = (rng.max_row if rng else r) + 1  # 헤더 바로 아래
+
+            # 같은 열 범위의 다음 병합블록(최대 6행 이내)을 우선 사용
+            for nxt in merged_ranges:
+                same_cols = (nxt.min_col == base_col_min) and (nxt.max_col == base_col_max)
+                if same_cols and base_row <= nxt.min_row <= base_row + 6:
+                    return f"{_index_to_column(nxt.min_col)}{nxt.min_row}"
+            return f"{_index_to_column(base_col_min)}{base_row}"
+    return None
+
+def extract_feature_list_overview(workbook_bytes: bytes) -> Tuple[Optional[str], str]:
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    ws = wb.worksheets[0]
+    feature_start_row = globals().get("_FEATURE_LIST_START_ROW", 8)
+    ref = _find_overview_cell_ref_openpyxl(ws, feature_start_row)
+    if ref:
+        val = str(ws[ref].value or "").strip()
+        return ref, val
+    return None, ""
+
+
+# --------------------- 패키지 수리(Windows Excel 호환 보정) ---------------------
+_CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_S_NS  = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_R_NS  = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PKG_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships" 
+_BAD_XML_CHARS = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F]")
+
+def _clean_invalid_xml_bytes(data: bytes) -> bytes:
+    try:
+        s = data.decode("utf-8")
+    except Exception:
+        return data
+    s2 = _BAD_XML_CHARS.sub("", s)
+    return s2.encode("utf-8")
+
+def _repair_content_types(ct_bytes: bytes, names_in_pkg: set[str]) -> bytes:
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(ct_bytes)
+    except ET.ParseError:
+        return ct_bytes
+
+    changed = False
+    names = set(names_in_pkg)
+    names_with_slash = {"/" + n for n in names_in_pkg}
+
+    # 정식 sheet metadata 컨텐트 타입
+    VALID_SHEET_METADATA_CT = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheetMetadata+xml"
+    )
+
+    def _is_override(elem: ET.Element) -> bool:
+        tag = elem.tag
+        return tag == "Override" or tag.endswith("}Override")
+
+    for node in list(root):
+        if not _is_override(node):
+            continue
+
+        part = (node.get("PartName") or "").strip()          # "/xl/metadata" 등
+        ctype = (node.get("ContentType") or "").strip()
+        norm = part[1:] if part.startswith("/") else part     # "xl/metadata"
+
+        # 1) metadata 오버라이드는 '정상 CT'가 아니면 무조건 제거
+        if norm in ("xl/metadata", "xl/metadata.xml"):
+            # 파일이 있든 없든, CT가 정상이 아니면 제거
+            if ctype != VALID_SHEET_METADATA_CT:
+                root.remove(node); changed = True
+                continue
+            # CT가 정상이어도 실제 파일이 없으면 제거
+            if ("xl/metadata.xml" not in names) and ("xl/metadata" not in names):
+                root.remove(node); changed = True
+                continue
+
+        # 2) 존재하지 않는 파트를 광고하면 제거
+        if (norm not in names) and (part not in names_with_slash):
+            root.remove(node); changed = True
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True) if changed else ct_bytes
+
+
+def _ensure_drawing_link(sheet_bytes: bytes, rels_bytes: Optional[bytes]) -> Tuple[bytes, Optional[bytes]]:
+    """
+    sheet1.xml.rels(=package ns) 안에 drawing 관계가 있는데 sheet 본문에 <drawing r:id="..."/> 가 없으면 삽입.
+    반대로 본문에 있는데 rels가 없으면 rels 생성.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        s_root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return sheet_bytes, rels_bytes
+
+    # 1) .rels 파싱 (package ns)
+    r_root = None
+    if rels_bytes:
         try:
-            shared_strings_bytes = source.read("xl/sharedStrings.xml")
-        except KeyError:
-            shared_strings_bytes = b""
+            r_root = ET.fromstring(rels_bytes)
+        except ET.ParseError:
+            r_root = None
 
-    shared_strings = _parse_shared_strings(shared_strings_bytes)
-    return _locate_feature_list_overview(sheet_bytes, shared_strings)
+    drawing_rel_ids: List[str] = []
+    if r_root is not None:
+        for rel in r_root.findall(f"{{{_PKG_RELS_NS}}}Relationship"):
+            if rel.get("Type") == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing":
+                rid = rel.get("Id")
+                if rid:
+                    drawing_rel_ids.append(rid)
+
+    ns = {"s": _S_NS, "r": _R_NS}
+    has_drawing_elem = s_root.find("s:drawing", ns) is not None
+
+    changed_sheet = False
+    changed_rels  = False
+
+    # 본문에 없고 rels에 있으면: 첫 rId로 삽입(위치는 sheetData 뒤에 두는 보수적 전략)
+    if not has_drawing_elem and drawing_rel_ids:
+        sd = s_root.find("s:sheetData", ns)
+        drawing = ET.Element(f"{{{_S_NS}}}drawing")
+        drawing.set(f"{{{_R_NS}}}id", drawing_rel_ids[0])  # r:id
+        if sd is not None:
+            idx = list(s_root).index(sd)
+            s_root.insert(idx + 1, drawing)
+        else:
+            s_root.append(drawing)
+        changed_sheet = True
+
+    # 본문에 있는데 rels가 없으면: rId 신규 발급하고 rels 생성(package ns)
+    if has_drawing_elem and not drawing_rel_ids:
+        if r_root is None:
+            r_root = ET.Element("Relationships", {"xmlns": _PKG_RELS_NS})
+
+        # 새 rId
+        exists_ids = []
+        for rel in r_root.findall(f"{{{_PKG_RELS_NS}}}Relationship"):
+            rid = rel.get("Id")
+            if rid and rid.startswith("rId"):
+                exists_ids.append(rid)
+        max_id = 0
+        for rid in exists_ids:
+            try:
+                max_id = max(max_id, int(rid[3:]))
+            except Exception:
+                pass
+        new_id = f"rId{max_id + 1}"
+
+        # 관계 추가 (package ns)
+        ET.SubElement(
+            r_root,
+            f"{{{_PKG_RELS_NS}}}Relationship",
+            {
+                "Id": new_id,
+                "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing",
+                "Target": "../drawings/drawing1.xml",
+            },
+        )
+        # sheet 본문 r:id 갱신
+        dnode = s_root.find("s:drawing", ns)
+        if dnode is not None:
+            dnode.set(f"{{{_R_NS}}}id", new_id)
+        changed_sheet = True
+        changed_rels  = True
+
+    new_sheet = (ET.tostring(s_root, encoding="utf-8", xml_declaration=True)
+                 if changed_sheet else sheet_bytes)
+    new_rels  = (ET.tostring(r_root, encoding="utf-8", xml_declaration=True)
+                 if (changed_rels and r_root is not None) else rels_bytes)
+    return new_sheet, new_rels
+
+def _ensure_dimension_first(sheet_bytes: bytes) -> bytes:
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(sheet_bytes)
+    except ET.ParseError:
+        return sheet_bytes
+
+    ns = {"s": _S_NS}
+    dim = root.find("s:dimension", ns)
+    sd  = root.find("s:sheetData", ns)
+    if dim is None or sd is None:
+        return sheet_bytes  # 보정 불필요
+
+    # 현재 위치가 sheetData 뒤라면 sheetData 앞(가능하면 cols 뒤)에 재배치
+    children = list(root)
+    try:
+        i_dim = children.index(dim)
+        i_sd  = children.index(sd)
+    except ValueError:
+        return sheet_bytes
+
+    if i_dim > i_sd:
+        # 우선 제거
+        root.remove(dim)
+        # cols가 있으면 그 뒤, 없으면 sheetViews/sheetFormatPr 뒤, 전부 없으면 맨 앞
+        insert_idx = 0
+        pref_order = ["cols", "sheetFormatPr", "sheetViews"]
+        for tag in pref_order:
+            node = root.find(f"s:{tag}", ns)
+            if node is not None:
+                insert_idx = list(root).index(node) + 1
+        root.insert(insert_idx, dim)
+        return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return sheet_bytes
 
 
-def populate_feature_list(
-    workbook_bytes: bytes,
-    csv_text: str,
-    project_overview: str | None = None,
-) -> bytes:
+def _repair_package(xlsx_bytes: bytes) -> bytes:
+    """
+    - [Content_Types].xml에서 잘못된 /xl/metadata Override 제거
+    - sheet1.xml의 dimension 위치 보정
+    - sheet1.xml/rel 간 drawing 연결 일관화
+    - sheet1.xml / sharedStrings.xml 에 남은 금지 제어문자 제거
+    """
+    try:
+        bio = io.BytesIO(xlsx_bytes)
+        if not zipfile.is_zipfile(bio):
+            return xlsx_bytes
+        bio.seek(0)
+        with zipfile.ZipFile(bio, "r") as zin:
+            names = {i.filename for i in zin.infolist()}
+            files: Dict[str, bytes] = {i.filename: zin.read(i.filename) for i in zin.infolist()}
+
+        # 1) Content_Types 정리
+        if "[Content_Types].xml" in files:
+            files["[Content_Types].xml"] = _repair_content_types(files["[Content_Types].xml"], names)
+
+        # 2) 금지 제어문자 제거
+        if "xl/worksheets/sheet1.xml" in files:
+            files["xl/worksheets/sheet1.xml"] = _clean_invalid_xml_bytes(files["xl/worksheets/sheet1.xml"])
+        if "xl/sharedStrings.xml" in files:
+            files["xl/sharedStrings.xml"] = _clean_invalid_xml_bytes(files["xl/sharedStrings.xml"])
+
+        # 3) sheet1.xml 구조 보정
+        if "xl/worksheets/sheet1.xml" in files:
+            files["xl/worksheets/sheet1.xml"] = _ensure_dimension_first(files["xl/worksheets/sheet1.xml"])
+
+            rels_name = "xl/worksheets/_rels/sheet1.xml.rels"
+            rels_bytes = files.get(rels_name)
+            new_sheet, new_rels = _ensure_drawing_link(files["xl/worksheets/sheet1.xml"], rels_bytes)
+            files["xl/worksheets/sheet1.xml"] = new_sheet
+            if new_rels is not None:
+                files[rels_name] = new_rels
+
+        # 4) 다시 ZIP 작성
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+            for name, data in files.items():
+                zout.writestr(name, data)
+        return out.getvalue()
+
+    except Exception:
+        # 수리 실패해도 원본 반환(방어)
+        return xlsx_bytes
+
+
+# --------------------- openpyxl 작성기 ---------------------
+def _copy_style_from_template(ws: Worksheet, template_row: int, target_row: int, columns: Sequence[ColumnSpec]) -> None:
+    for spec in columns:
+        src = ws[f"{spec.letter}{template_row}"]
+        dst = ws[f"{spec.letter}{target_row}"]
+        dst.font = src.font
+        dst.fill = src.fill
+        dst.border = src.border
+        dst.alignment = src.alignment
+        dst.number_format = src.number_format
+        dst.protection = src.protection
+
+def _clear_region(ws: Worksheet, start_row: int, end_row: int, columns: Sequence[ColumnSpec]) -> None:
+    for r in range(start_row, end_row + 1):
+        for spec in columns:
+            ws[f"{spec.letter}{r}"].value = None  # 값만 정리(스타일 유지)
+
+def _set_row_values(ws: Worksheet, row_index: int, record: Dict[str, str], columns: Sequence[ColumnSpec]) -> None:
+    for spec in columns:
+        raw = record.get(spec.key, "")
+        ws[f"{spec.letter}{row_index}"].value = _sanitize_xml_text(str(raw or ""))
+
+def _wb_to_bytes(wb) -> bytes:
+    bio = io.BytesIO()
+    wb.save(bio)
+    # 저장 직후 Windows Excel 호환 수리 수행
+    return _repair_package(bio.getvalue())
+
+
+# --------------------- 공개 API: 표 채우기 ---------------------
+def populate_feature_list(workbook_bytes: bytes, csv_text: str, project_overview: Optional[str] = None) -> bytes:
     records = _normalize_feature_list_records(csv_text)
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
-        try:
-            shared_strings_bytes = source.read("xl/sharedStrings.xml")
-        except KeyError:
-            shared_strings_bytes = b""
 
-    shared_strings = _parse_shared_strings(shared_strings_bytes)
-    overview_ref, _ = _locate_feature_list_overview(sheet_bytes, shared_strings)
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    ws = wb.worksheets[0]  # sheet1
+    start_row = _FEATURE_LIST_START_ROW
+    last_template_row = max(ws.max_row, start_row)
 
-    populator = WorksheetPopulator(sheet_bytes, start_row=8, columns=FEATURE_LIST_COLUMNS)
-    populator.populate(records)
+    _clear_region(ws, start_row, last_template_row, FEATURE_LIST_COLUMNS)
 
-    updated_sheet = populator.to_bytes()
-    if overview_ref and project_overview is not None:
-        updated_sheet = _apply_project_overview_to_sheet(updated_sheet, overview_ref, project_overview)
+    for i, rec in enumerate(records, start=start_row):
+        _copy_style_from_template(ws, start_row, i, FEATURE_LIST_COLUMNS)
+        _set_row_values(ws, i, rec, FEATURE_LIST_COLUMNS)
 
-    return _replace_sheet_bytes(workbook_bytes, updated_sheet)
+    end_row = start_row + len(records)
+    if end_row <= last_template_row:
+        _clear_region(ws, end_row, last_template_row, FEATURE_LIST_COLUMNS)
+
+    if project_overview is not None:
+        overview_ref = _find_overview_cell_ref_openpyxl(ws, start_row)
+        if overview_ref:
+            ws[overview_ref].value = _sanitize_xml_text(project_overview)
+
+    return _wb_to_bytes(wb)
 
 
 TESTCASE_COLUMNS: Sequence[ColumnSpec] = (
@@ -1012,28 +664,29 @@ TESTCASE_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="상세 테스트 결과", letter="I", style="7"),
     ColumnSpec(key="비고", letter="J", style="6"),
 )
-
 TESTCASE_EXPECTED_HEADERS: Sequence[str] = [
-    "대분류",
-    "중분류",
-    "소분류",
-    "테스트 케이스 ID",
-    "테스트 시나리오",
-    "입력(사전조건 포함)",
-    "기대 출력(사후조건 포함)",
-    "테스트 결과",
-    "상세 테스트 결과",
-    "비고",
+    "대분류","중분류","소분류","테스트 케이스 ID","테스트 시나리오",
+    "입력(사전조건 포함)","기대 출력(사후조건 포함)","테스트 결과","상세 테스트 결과","비고",
 ]
-
 
 def populate_testcase_list(workbook_bytes: bytes, csv_text: str) -> bytes:
     records = _parse_csv_records(csv_text, TESTCASE_EXPECTED_HEADERS)
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
-    populator = WorksheetPopulator(sheet_bytes, start_row=6, columns=TESTCASE_COLUMNS)
-    populator.populate(records)
-    return _replace_sheet_bytes(workbook_bytes, populator.to_bytes())
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    ws = wb.worksheets[0]
+    start_row = 6
+    last_template_row = max(ws.max_row, start_row)
+
+    _clear_region(ws, start_row, last_template_row, TESTCASE_COLUMNS)
+
+    for i, rec in enumerate(records, start=start_row):
+        _copy_style_from_template(ws, start_row, i, TESTCASE_COLUMNS)
+        _set_row_values(ws, i, rec, TESTCASE_COLUMNS)
+
+    end_row = start_row + len(records)
+    if end_row <= last_template_row:
+        _clear_region(ws, end_row, last_template_row, TESTCASE_COLUMNS)
+
+    return _wb_to_bytes(wb)
 
 
 DEFECT_REPORT_COLUMNS: Sequence[ColumnSpec] = (
@@ -1048,34 +701,14 @@ DEFECT_REPORT_COLUMNS: Sequence[ColumnSpec] = (
     ColumnSpec(key="수정여부", letter="I", style="10"),
     ColumnSpec(key="비고", letter="J", style="11"),
 )
-
 DEFECT_REPORT_EXPECTED_HEADERS: Sequence[str] = [
-    "순번",
-    "시험환경(OS)",
-    "결함요약",
-    "결함정도",
-    "발생빈도",
-    "품질특성",
-    "결함 설명",
-    "업체 응답",
-    "수정여부",
-    "비고",
+    "순번","시험환경(OS)","결함요약","결함정도","발생빈도",
+    "품질특성","결함 설명","업체 응답","수정여부","비고",
 ]
-
 SECURITY_REPORT_EXPECTED_HEADERS: Sequence[str] = [
-    "순번",
-    "시험환경 OS",
-    "결함 요약",
-    "결함 정도",
-    "발생 빈도",
-    "품질 특성",
-    "결함 설명",
-    "업체 응답",
-    "수정여부",
-    "비고",
-    "매핑 유형",
+    "순번","시험환경 OS","결함 요약","결함 정도","발생 빈도",
+    "품질 특성","결함 설명","업체 응답","수정여부","비고","매핑 유형",
 ]
-
 
 def populate_defect_report(
     workbook_bytes: bytes,
@@ -1086,14 +719,11 @@ def populate_defect_report(
 ) -> bytes:
     records = _parse_csv_records(csv_text, DEFECT_REPORT_EXPECTED_HEADERS)
 
-    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as source:
-        sheet_bytes = source.read(_XLSX_SHEET_PATH)
-
+    # 순번 -> 행 위치 & 비고(첨부) 주입
     start_row = 6
     notes_map = attachment_notes or {}
     row_positions: Dict[int, int] = {}
     normalized_records: List[Dict[str, str]] = []
-
     for offset, record in enumerate(records):
         entry = dict(record)
         index_value = _safe_int(entry.get("순번"))
@@ -1104,28 +734,34 @@ def populate_defect_report(
                 entry["비고"] = _append_attachment_note(entry.get("비고"), note_names)
         normalized_records.append(entry)
 
-    populator = WorksheetPopulator(
-        sheet_bytes, start_row=start_row, columns=DEFECT_REPORT_COLUMNS
-    )
-    populator.populate(normalized_records)
-    populated_sheet = populator.to_bytes()
+    wb = load_workbook(io.BytesIO(workbook_bytes))
+    ws = wb.worksheets[0]
+    last_template_row = max(ws.max_row, start_row)
+    _clear_region(ws, start_row, last_template_row, DEFECT_REPORT_COLUMNS)
 
-    image_map = images or {}
-    if not image_map:
-        return _replace_sheet_bytes(workbook_bytes, populated_sheet)
+    for i, rec in enumerate(normalized_records, start=start_row):
+        _copy_style_from_template(ws, start_row, i, DEFECT_REPORT_COLUMNS)
+        _set_row_values(ws, i, rec, DEFECT_REPORT_COLUMNS)
 
-    return _inject_defect_images(
-        workbook_bytes,
-        populated_sheet,
-        row_positions,
-        image_map,
-        column_letter="J",
-    )
+    end_row = start_row + len(normalized_records)
+    if end_row <= last_template_row:
+        _clear_region(ws, end_row, last_template_row, DEFECT_REPORT_COLUMNS)
+
+    if images:
+        _place_defect_images_openpyxl(
+            ws,
+            row_positions=row_positions,
+            images_map=images,
+            column_letter="J",
+            vertical_gap_px=4,
+        )
+
+    return _wb_to_bytes(wb)
 
 
 def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
     records = _parse_csv_records(csv_text, SECURITY_REPORT_EXPECTED_HEADERS)
-
+    # 보안 리포트 -> 일반 결함 리포트 포맷으로 열 매핑
     buffer = io.StringIO()
     writer = csv.writer(buffer, delimiter=AI_CSV_DELIMITER)
     writer.writerow(DEFECT_REPORT_EXPECTED_HEADERS)
@@ -1144,316 +780,83 @@ def populate_security_report(workbook_bytes: bytes, csv_text: str) -> bytes:
                 record.get("비고", ""),
             ]
         )
-
     converted_csv = buffer.getvalue()
     return populate_defect_report(workbook_bytes, converted_csv)
 
 
-def _locate_column_width(root: ET.Element, column_index: int) -> float | None:
-    namespace = {"main": _SPREADSHEET_NS}
-    cols = root.find("main:cols", namespace)
-    if cols is None:
-        return None
-    for col in cols.findall("main:col", namespace):
+# --------------------- 이미지 배치 (고수준) ---------------------
+def _get_column_width_px(ws: Worksheet, col_idx: int) -> int:
+    width = None
+    dim = ws.column_dimensions.get(get_column_letter(col_idx))
+    if dim and dim.width:
         try:
-            min_idx = int(col.get("min", "0"))
-            max_idx = int(col.get("max", "0"))
-        except ValueError:
-            continue
-        if min_idx <= column_index <= max_idx:
-            width_attr = col.get("width")
-            if width_attr:
-                try:
-                    return float(width_attr)
-                except ValueError:
-                    continue
-    return None
+            width = float(dim.width)
+        except Exception:
+            width = None
+    if width is None:
+        width = 8.43  # Excel 기본값
+    return max(1, _column_width_to_pixels(width))
 
-
-def _prepare_defect_image_anchors(
-    sheet_root: ET.Element,
+def _place_defect_images_openpyxl(
+    ws: Worksheet,
+    *,
     row_positions: Dict[int, int],
     images_map: Mapping[int, Sequence[DefectReportImage]],
-    column_letter: str,
-) -> Tuple[ET.Element, List[Dict[str, object]], float]:
-    namespace = {"main": _SPREADSHEET_NS}
-    sheet_data = sheet_root.find("main:sheetData", namespace)
-    if sheet_data is None:
-        raise ValueError("워크시트 데이터 영역을 찾을 수 없습니다.")
+    column_letter: str = "J",
+    vertical_gap_px: int = 4,
+) -> None:
+    col_idx = _column_to_index(column_letter)
+    first_col_width_px = _get_column_width_px(ws, col_idx)
 
-    sheet_format = sheet_root.find("main:sheetFormatPr", namespace)
-    default_row_height = 15.0
-    if sheet_format is not None:
-        try:
-            default_row_height = float(sheet_format.get("defaultRowHeight", default_row_height))
-        except (TypeError, ValueError):
-            default_row_height = 15.0
-
-    column_index = _column_to_index(column_letter)
-    column_width = _locate_column_width(sheet_root, column_index) or 8.43
-    column_width_px = max(1, _column_width_to_pixels(column_width))
-
-    row_elements: Dict[int, ET.Element] = {}
-    for row in sheet_data.findall("main:row", namespace):
-        r_attr = row.get("r")
-        if not r_attr:
-            continue
-        try:
-            row_elements[int(r_attr)] = row
-        except ValueError:
-            continue
-
-    anchors: List[Dict[str, object]] = []
-    for defect_index, attachments in images_map.items():
+    for defect_idx, attachments in images_map.items():
         if not attachments:
             continue
-        row_index = row_positions.get(defect_index)
-        if row_index is None:
-            continue
-        row_elem = row_elements.get(row_index)
-        if row_elem is None:
+        row = row_positions.get(defect_idx)
+        if not row:
             continue
 
-        try:
-            current_height_points = float(row_elem.get("ht", default_row_height))
-        except ValueError:
-            current_height_points = default_row_height
-        existing_height_px = _row_height_to_pixels(current_height_points)
+        # 크기 스케일링 및 총 높이 계산
+        sized_imgs: List[Tuple[XLImage, int, int, str]] = []
+        total_h_px = 0
+        for i, att in enumerate(attachments):
+            w_px, h_px = _scale_image_dimensions(att.content, first_col_width_px)
+            img = XLImage(io.BytesIO(att.content))
+            img.width, img.height = w_px, h_px
+            sized_imgs.append((img, w_px, h_px, att.file_name))
+            total_h_px += h_px
+            if i < len(attachments) - 1:
+                total_h_px += vertical_gap_px
 
-        offset_px = 0.0
-        required_height_px = existing_height_px
-        for attachment_index, attachment in enumerate(attachments):
-            width_px, height_px = _scale_image_dimensions(attachment.content, column_width_px)
-            anchors.append(
-                {
-                    "row": row_index - 1,
-                    "col": column_index - 1,
-                    "row_offset_px": offset_px,
-                    "width_px": width_px,
-                    "height_px": height_px,
-                    "attachment": attachment,
-                }
-            )
-            offset_px += height_px
-            required_height_px = max(required_height_px, offset_px)
-            if attachment_index < len(attachments) - 1:
-                offset_px += _IMAGE_VERTICAL_GAP_PX
-
-        target_height_points = required_height_px * 72.0 / 96.0
-        row_elem.set("ht", f"{target_height_points:.2f}")
-        row_elem.set("customHeight", "1")
-
-    return sheet_root, anchors, float(column_width_px)
-
-
-def _update_content_types(
-    xml_bytes: bytes, image_extensions: Iterable[str]
-) -> bytes:
-    root = ET.fromstring(xml_bytes)
-    namespace = {"ct": _CONTENT_TYPES_NS}
-
-    drawing_part = "/xl/drawings/drawing2.xml"
-    found_drawing = False
-    for override in root.findall("ct:Override", namespace):
-        if override.get("PartName") == drawing_part:
-            found_drawing = True
-            break
-    if not found_drawing:
-        ET.SubElement(
-            root,
-            f"{{{_CONTENT_TYPES_NS}}}Override",
-            {
-                "PartName": drawing_part,
-                "ContentType": "application/vnd.openxmlformats-officedocument.drawing+xml",
-            },
-        )
-
-    existing_defaults = {
-        default.get("Extension", "").lower(): default
-        for default in root.findall("ct:Default", namespace)
-    }
-
-    for extension in image_extensions:
-        if not extension:
-            continue
-        ext = extension.lower()
-        if ext in existing_defaults:
-            continue
-        content_type = "image/png" if ext == "png" else "image/jpeg"
-        ET.SubElement(
-            root,
-            f"{{{_CONTENT_TYPES_NS}}}Default",
-            {"Extension": ext, "ContentType": content_type},
-        )
-
-    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
-
-
-def _inject_defect_images(
-    workbook_bytes: bytes,
-    sheet_bytes: bytes,
-    row_positions: Dict[int, int],
-    images_map: Mapping[int, Sequence[DefectReportImage]],
-    column_letter: str,
-) -> bytes:
-    sheet_root = ET.fromstring(sheet_bytes)
-    sheet_root, anchors, _ = _prepare_defect_image_anchors(
-        sheet_root, row_positions, images_map, column_letter
-    )
-
-    if not anchors:
-        updated_sheet = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
-        return _replace_sheet_bytes(workbook_bytes, updated_sheet)
-
-    updated_sheet = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
-
-    source_buffer = io.BytesIO(workbook_bytes)
-    with zipfile.ZipFile(source_buffer, "r") as source:
-        sheet_rels_bytes = source.read("xl/worksheets/_rels/sheet1.xml.rels")
-        content_types_bytes = source.read("[Content_Types].xml")
-
-    rels_root = ET.fromstring(sheet_rels_bytes)
-    existing_ids = []
-    for rel in rels_root.findall(f"{{{_REL_NS}}}Relationship"):
-        rel_id = rel.get("Id")
-        if rel_id:
-            existing_ids.append(rel_id)
-    max_id = 0
-    for rel_id in existing_ids:
-        if rel_id.startswith("rId"):
+        # 1) 시도: OneCellAnchor(rowOff)로 같은 셀 안 세로 스택
+        if _HAS_ONE_CELL_ANCHOR:
             try:
-                max_id = max(max_id, int(rel_id[3:]))
-            except ValueError:
-                continue
-    sheet_rel_id = f"rId{max_id + 1}"
-    ET.SubElement(
-        rels_root,
-        f"{{{_REL_NS}}}Relationship",
-        {
-            "Id": sheet_rel_id,
-            "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing",
-            "Target": "../drawings/drawing2.xml",
-        },
-    )
-    updated_rels = ET.tostring(rels_root, encoding="utf-8", xml_declaration=True)
+                # 행 높이: 전체 이미지 높이에 맞춰 포인트로 설정
+                ws.row_dimensions[row].height = total_h_px * 72.0 / 96.0
+                offset_px = 0
+                for img, w_px, h_px, _fn in sized_imgs:
+                    marker = AnchorMarker(
+                        col=col_idx - 1,
+                        colOff=pixels_to_EMU(0),
+                        row=row - 1,
+                        rowOff=pixels_to_EMU(offset_px),
+                    )
+                    ext = XDRPositiveSize2D(pixels_to_EMU(w_px), pixels_to_EMU(h_px))
+                    img.anchor = OneCellAnchor(_from=marker, ext=ext)  # type: ignore
+                    ws.add_image(img)
+                    offset_px += h_px + vertical_gap_px
+                continue  # 다음 결함으로
+            except Exception:  # 폴백 경로로 이동
+                pass
 
-    drawing_root = ET.Element(f"{{{_DRAWING_NS}}}wsDr")
-    drawing_rels_root = ET.Element("Relationships", {"xmlns": _REL_NS})
-    used_names: Dict[str, int] = {}
-    image_entries: List[Tuple[str, bytes]] = []
-
-    for index, anchor in enumerate(anchors, start=1):
-        attachment = anchor["attachment"]
-        filename = _normalized_image_filename(getattr(attachment, "file_name", ""), used_names)
-        rel_id = f"rId{index}"
-        image_entries.append((filename, attachment.content))
-
-        anchor_elem = ET.SubElement(drawing_root, f"{{{_DRAWING_NS}}}oneCellAnchor")
-        from_elem = ET.SubElement(anchor_elem, f"{{{_DRAWING_NS}}}from")
-        ET.SubElement(from_elem, f"{{{_DRAWING_NS}}}col").text = str(int(anchor["col"]))
-        ET.SubElement(from_elem, f"{{{_DRAWING_NS}}}colOff").text = "0"
-        ET.SubElement(from_elem, f"{{{_DRAWING_NS}}}row").text = str(int(anchor["row"]))
-        ET.SubElement(from_elem, f"{{{_DRAWING_NS}}}rowOff").text = str(
-            _pixels_to_emu(float(anchor["row_offset_px"]))
-        )
-
-        ET.SubElement(
-            anchor_elem,
-            f"{{{_DRAWING_NS}}}ext",
-            {
-                "cx": str(_pixels_to_emu(float(anchor["width_px"]))),
-                "cy": str(_pixels_to_emu(float(anchor["height_px"]))),
-            },
-        )
-
-        pic = ET.SubElement(anchor_elem, f"{{{_DRAWING_NS}}}pic")
-        nv_pic = ET.SubElement(pic, f"{{{_DRAWING_NS}}}nvPicPr")
-        ET.SubElement(
-            nv_pic,
-            f"{{{_DRAWING_NS}}}cNvPr",
-            {"id": str(index), "name": filename},
-        )
-        c_nv_pic_pr = ET.SubElement(nv_pic, f"{{{_DRAWING_NS}}}cNvPicPr")
-        ET.SubElement(c_nv_pic_pr, f"{{{_DRAWING_A_NS}}}picLocks", {"noChangeAspect": "1"})
-
-        blip_fill = ET.SubElement(pic, f"{{{_DRAWING_NS}}}blipFill")
-        ET.SubElement(
-            blip_fill,
-            f"{{{_DRAWING_A_NS}}}blip",
-            {f"{{{_REL_NS}}}embed": rel_id},
-        )
-        stretch = ET.SubElement(blip_fill, f"{{{_DRAWING_A_NS}}}stretch")
-        ET.SubElement(stretch, f"{{{_DRAWING_A_NS}}}fillRect")
-
-        sp_pr = ET.SubElement(pic, f"{{{_DRAWING_NS}}}spPr")
-        ET.SubElement(sp_pr, f"{{{_DRAWING_A_NS}}}xfrm")
-        prst_geom = ET.SubElement(sp_pr, f"{{{_DRAWING_A_NS}}}prstGeom", {"prst": "rect"})
-        ET.SubElement(prst_geom, f"{{{_DRAWING_A_NS}}}avLst")
-
-        ET.SubElement(anchor_elem, f"{{{_DRAWING_NS}}}clientData")
-
-        ET.SubElement(
-            drawing_rels_root,
-            "Relationship",
-            {
-                "Id": rel_id,
-                "Type": "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
-                "Target": f"../media/{filename}",
-            },
-        )
-
-    drawing_xml = ET.tostring(drawing_root, encoding="utf-8", xml_declaration=True)
-    drawing_rels_xml = ET.tostring(
-        drawing_rels_root, encoding="utf-8", xml_declaration=True
-    )
-
-    image_extensions = {filename.rsplit(".", 1)[-1].lower() for filename, _ in image_entries}
-    updated_content_types = _update_content_types(content_types_bytes, image_extensions)
-
-    # Add drawing reference to sheet xml
-    drawing_elem = ET.Element(f"{{{_SPREADSHEET_NS}}}drawing")
-    drawing_elem.set(f"{{{_REL_NS}}}id", sheet_rel_id)
-
-    children = list(sheet_root)
-
-    def _local_name(tag: str) -> str:
-        return tag.split("}", 1)[-1] if "}" in tag else tag
-
-    insert_index = len(children)
-    for index, child in enumerate(children):
-        if _local_name(child.tag) == "legacyDrawing":
-            insert_index = index
-            break
-    else:
-        last_drawing_index: int | None = None
-        for index, child in enumerate(children):
-            if _local_name(child.tag) == "drawing":
-                last_drawing_index = index + 1
-        if last_drawing_index is not None:
-            insert_index = last_drawing_index
-
-    if insert_index >= len(children):
-        sheet_root.append(drawing_elem)
-    else:
-        sheet_root.insert(insert_index, drawing_elem)
-    final_sheet = ET.tostring(sheet_root, encoding="utf-8", xml_declaration=True)
-
-    source_buffer.seek(0)
-    output_buffer = io.BytesIO()
-    with zipfile.ZipFile(source_buffer, "r") as source, zipfile.ZipFile(output_buffer, "w") as target:
-        for info in source.infolist():
-            data = source.read(info.filename)
-            if info.filename == _XLSX_SHEET_PATH:
-                data = final_sheet
-            elif info.filename == "xl/worksheets/_rels/sheet1.xml.rels":
-                data = updated_rels
-            elif info.filename == "[Content_Types].xml":
-                data = updated_content_types
-            target.writestr(info, data)
-
-        target.writestr("xl/drawings/drawing2.xml", drawing_xml)
-        target.writestr("xl/drawings/_rels/drawing2.xml.rels", drawing_rels_xml)
-        for filename, content in image_entries:
-            target.writestr(f"xl/media/{filename}", content)
-
-    return output_buffer.getvalue()
+        # 2) 폴백: 같은 행의 이웃 열(J, K, L, ...)에 수평 분산
+        #    - 겹침 회피, 다른 행을 침범하지 않음
+        #    - 열 너비는 첫 열(QoL)과 동일하게 맞춤
+        max_h_px = 0
+        for j, (img, w_px, h_px, _fn) in enumerate(sized_imgs):
+            target_col_idx = col_idx + j
+            letter = _index_to_column(target_col_idx)
+            # 가독성을 위해 열 너비를 동일하게 맞춤(선택)
+            ws.column_dimensions[letter].width = ws.column_dimensions[get_column_letter(col_idx)].width or 8.43
+            ws.add_image(img, f"{letter}{row}")
+            max_h_px = max(max_h_px, h_px)
+        ws.row_dimensions[row].height = max_h_px * 72.0 / 96.0
