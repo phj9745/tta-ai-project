@@ -213,6 +213,7 @@ class WorksheetPopulator:
         *,
         start_row: int,
         columns: Sequence[ColumnSpec],
+        preserve_dimension: bool = True,
     ) -> None:
         self._ns = {"s": SPREADSHEET_NS}
         self._root = ET.fromstring(sheet_bytes)
@@ -228,7 +229,9 @@ class WorksheetPopulator:
             spec.letter: spec for spec in self._column_specs if spec.letter
         }
 
+        self._preserve_dimension = preserve_dimension
         self._dimension = self._root.find("s:dimension", self._ns)
+        self._dimension_was_missing = self._dimension is None
         ref = ""
         if self._dimension is not None:
             ref = (self._dimension.get("ref") or "").strip()
@@ -405,11 +408,12 @@ class WorksheetPopulator:
         if last_row > self._dimension_end_row:
             self._dimension_end_row = last_row
 
-        if self._dimension is not None:
+        if self._dimension is not None and self._preserve_dimension:
             self._dimension.set(
                 "ref",
                 f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
             )
+        self._dimension_was_missing = self._dimension is None and self._dimension_was_missing
 
     def _merge_tag(self, name: str) -> str:
         return f"{{{SPREADSHEET_NS}}}{name}"
@@ -533,4 +537,7 @@ class WorksheetPopulator:
         )
 
     def to_bytes(self) -> bytes:
+        if not self._preserve_dimension and self._dimension is not None:
+            self._root.remove(self._dimension)
+            self._dimension = None
         return ET.tostring(self._root, encoding="utf-8", xml_declaration=True)

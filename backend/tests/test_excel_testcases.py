@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -13,6 +14,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.services.excel_templates import testcases
 from app.services.excel_templates.models import SPREADSHEET_NS
+from app.services.excel_templates.workbook import replace_sheet_bytes
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "excel_templates"
 TEMPLATE_PATH = BACKEND_ROOT / "template" / "나.설계" / "GS-B-XX-XXXX 테스트케이스.xlsx"
@@ -56,3 +58,17 @@ def test_populate_testcase_list_matches_fixture() -> None:
     assert cell_text("A", 7) == ""
     assert cell_text("B", 6) == "중분류B"
     assert cell_text("B", 7) == ""
+
+
+def test_populate_testcase_list_excludes_dimension() -> None:
+    template_bytes = TEMPLATE_PATH.read_bytes()
+    csv_text = (FIXTURE_DIR / "testcases.csv").read_text(encoding="utf-8")
+
+    result = testcases.populate_testcase_list(template_bytes, csv_text)
+
+    with zipfile.ZipFile(io.BytesIO(result), "r") as archive:
+        updated_sheet = archive.read("xl/worksheets/sheet1.xml")
+
+    ns = {"s": SPREADSHEET_NS}
+    updated_root = ET.fromstring(updated_sheet)
+    assert updated_root.find("s:dimension", ns) is None
