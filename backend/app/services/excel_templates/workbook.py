@@ -238,19 +238,6 @@ class WorksheetPopulator:
             if not ref:
                 raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
 
-            dimension_tag = f"{{{SPREADSHEET_NS}}}dimension"
-            if self._dimension is None:
-                self._dimension = ET.Element(dimension_tag)
-                inserted = False
-                for idx, child in enumerate(list(self._root)):
-                    if child.tag in {dimension_tag, f"{{{SPREADSHEET_NS}}}sheetData"}:
-                        self._root.insert(idx, self._dimension)
-                        inserted = True
-                        break
-                if not inserted:
-                    self._root.insert(0, self._dimension)
-            self._dimension.set("ref", ref)
-
         (
             self._dimension_start_col,
             self._dimension_start_row,
@@ -417,10 +404,12 @@ class WorksheetPopulator:
             last_row = self._start_row
         if last_row > self._dimension_end_row:
             self._dimension_end_row = last_row
-        self._dimension.set(
-            "ref",
-            f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
-        )
+
+        if self._dimension is not None:
+            self._dimension.set(
+                "ref",
+                f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
+            )
 
     def _merge_tag(self, name: str) -> str:
         return f"{{{SPREADSHEET_NS}}}{name}"
