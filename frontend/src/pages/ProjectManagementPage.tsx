@@ -1325,7 +1325,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         className="project-management-sidebar"
         aria-hidden={!isSidebarOpen}
       >
-        <div className="project-management-sidebar__inner-follow" >
         <div className="project-management-overview">
           <span className="project-management-overview__label">프로젝트</span>
           <strong className="project-management-overview__name">{projectName}</strong>
@@ -1350,14 +1349,12 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <span className="project-management-menu__label">{item.label}</span>
-                    <span className="project-management-menu__helper">{item.eyebrow}</span>
                   </button>
                 </li>
               )
             })}
           </ul>
         </nav>
-        </div>
       </aside>
 
       <button

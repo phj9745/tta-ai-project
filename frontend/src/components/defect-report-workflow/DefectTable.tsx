@@ -79,7 +79,7 @@ export function DefectTable({
     <section className="defect-workflow__section" aria-labelledby="defect-review">
       <div className="defect-workflow__section-heading">
         <h2 id="defect-review" className="defect-workflow__title">
-          2. 결함 검토 및 증적 첨부
+          결함 검토 및 증적 첨부
         </h2>
       </div>
       <p className="defect-workflow__helper">

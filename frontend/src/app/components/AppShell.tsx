@@ -1,4 +1,17 @@
-import { useCallback, useMemo, useState, type PropsWithChildren, type ReactNode } from 'react'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PropsWithChildren,
+  type ReactNode,
+} from 'react'
+
+type AppShellStyle = CSSProperties & {
+  '--app-shell-header-height': string
+}
 
 import { BackgroundTaskTray } from '../../components/layout/BackgroundTaskTray'
 import { AppShellHeaderContext } from './AppShellHeaderContext'
@@ -32,9 +45,32 @@ export function AppShell({
     .join(' ')
 
   const [leadingAction, setLeadingAction] = useState<ReactNode | null>(null)
+  const [headerHeight, setHeaderHeight] = useState(0)
+  const headerRef = useRef<HTMLElement | null>(null)
 
   const handleSetLeadingAction = useCallback((node: ReactNode | null) => {
     setLeadingAction(node)
+  }, [])
+
+  useLayoutEffect(() => {
+    const headerElement = headerRef.current
+    if (!headerElement) {
+      return
+    }
+
+    const updateHeaderHeight = () => {
+      const { height } = headerElement.getBoundingClientRect()
+      setHeaderHeight((prev) => (Math.abs(prev - height) > 0.5 ? height : prev))
+    }
+
+    updateHeaderHeight()
+
+    const resizeObserver = new ResizeObserver(updateHeaderHeight)
+    resizeObserver.observe(headerElement)
+
+    return () => {
+      resizeObserver.disconnect()
+    }
   }, [])
 
   const headerContextValue = useMemo(
@@ -44,10 +80,17 @@ export function AppShell({
     [handleSetLeadingAction],
   )
 
+  const shellStyle = useMemo<AppShellStyle>(
+    () => ({
+      '--app-shell-header-height': `${headerHeight}px`,
+    }),
+    [headerHeight],
+  )
+
   return (
     <AppShellHeaderContext.Provider value={headerContextValue}>
-      <div className="app-shell">
-        <header className="app-shell__header">
+      <div className="app-shell" style={shellStyle}>
+        <header ref={headerRef} className="app-shell__header">
           <div className="app-shell__header-left">
             {leadingAction ? (
               <div className="app-shell__leading-action">{leadingAction}</div>
@@ -59,16 +102,9 @@ export function AppShell({
               aria-label="프로젝트 선택 화면으로 이동"
             >
               <span className="app-shell__brand-mark" aria-hidden="true">
-                <span className="app-shell__brand-mark-glow" />
-                <span className="app-shell__brand-initials">TM</span>
+                <img src="/logo.png" alt="Testmate 로고" className="app-shell__brand-img" />
               </span>
-              <span className="app-shell__brand-wordmark">
-                <span className="app-shell__brand-text">
-                  <span className="app-shell__brand-primary">Test</span>
-                  <span className="app-shell__brand-highlight">Mate</span>
-                </span>
-                <span className="app-shell__brand-tagline">QA Workspace</span>
-              </span>
+              <span className="app-shell__brand-text">Testmate</span>
             </button>
           </div>
           <div className="app-shell__header-right">

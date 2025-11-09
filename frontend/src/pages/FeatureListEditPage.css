@@ -1,7 +1,5 @@
 .feature-list-editor {
-  margin: 32px auto 64px;
-  width: min(1200px, 100%);
-  padding: 0 20px;
+  width: min(1400px, 100%);
   display: flex;
   flex-direction: column;
   gap: 32px;
@@ -35,6 +33,32 @@
 
 .feature-list-editor .defect-workflow__table {
   min-width: 960px;
+  table-layout: fixed;
+}
+
+.feature-list-editor .defect-workflow__table th:nth-child(1),
+.feature-list-editor .defect-workflow__table td:nth-child(1) {
+  width: 20%;
+}
+
+.feature-list-editor .defect-workflow__table th:nth-child(2),
+.feature-list-editor .defect-workflow__table td:nth-child(2) {
+  width: 20%;
+}
+
+.feature-list-editor .defect-workflow__table th:nth-child(3),
+.feature-list-editor .defect-workflow__table td:nth-child(3) {
+  width: 20%;
+}
+
+.feature-list-editor .defect-workflow__table th:nth-child(4),
+.feature-list-editor .defect-workflow__table td:nth-child(4) {
+  width: 30%;
+}
+
+.feature-list-editor .defect-workflow__table th:nth-child(5),
+.feature-list-editor .defect-workflow__table td:nth-child(5) {
+  width: 10%;
 }
 
 .feature-list-editor .defect-workflow__table td[rowspan] {
