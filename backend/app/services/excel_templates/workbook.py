@@ -231,6 +231,7 @@ class WorksheetPopulator:
 
         self._preserve_dimension = preserve_dimension
         self._dimension = self._root.find("s:dimension", self._ns)
+        self._dimension_was_missing = self._dimension is None
         ref = ""
         if self._dimension is not None:
             ref = (self._dimension.get("ref") or "").strip()
@@ -412,6 +413,7 @@ class WorksheetPopulator:
                 "ref",
                 f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
             )
+        self._dimension_was_missing = self._dimension is None and self._dimension_was_missing
 
     def _merge_tag(self, name: str) -> str:
         return f"{{{SPREADSHEET_NS}}}{name}"
