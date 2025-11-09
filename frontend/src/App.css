@@ -1,5 +1,15 @@
+:root {
+  --viewport-height: 100vh;
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --viewport-height: 100dvh;
+  }
+}
+
 .app-shell {
-  min-height: 100vh;
+  min-height: var(--viewport-height);
   display: flex;
   flex-direction: column;
   background: linear-gradient(180deg, rgba(241, 245, 249, 0.82) 0%, rgba(226, 232, 240, 0.95) 100%);
@@ -377,6 +387,7 @@
   align-items: stretch;
   justify-content: center;
   padding: var(--app-shell-main-padding-y) var(--app-shell-main-padding-x);
+  min-height: 0;
 }
 
 .app-shell__footer {
@@ -1499,6 +1510,11 @@
 
 .project-management-page {
   --project-management-sidebar-width: 280px;
+  --project-management-available-height:
+    calc(
+      var(--viewport-height) - var(--app-shell-header-height, 0px) -
+        (2 * var(--app-shell-main-padding-y))
+    );
   position: relative;
   display: grid;
   grid-template-columns: var(--project-management-sidebar-width) minmax(0, 1fr);
@@ -1507,7 +1523,9 @@
   width: calc(100% + (2 * var(--app-shell-main-padding-x)));
   margin: calc(-1 * var(--app-shell-main-padding-y)) calc(-1 * var(--app-shell-main-padding-x));
   background: #f8fafc;
-  max-height: calc(100vh - (2 * var(--app-shell-main-padding-y)));
+  height: var(--project-management-available-height);
+  max-height: var(--project-management-available-height);
+  min-height: 0;
   overflow: hidden;
   transition: grid-template-columns 0.3s ease;
 }
@@ -1634,7 +1652,8 @@
   color: #e2e8f0;
   transition: transform 0.3s ease, opacity 0.3s ease;
   box-shadow: 1px 0 0 rgba(15, 23, 42, 0.4);
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
 }
 
 .project-management-page--sidebar-collapsed .project-management-sidebar {
@@ -1673,23 +1692,26 @@
 }
 
 .project-management-menu {
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .project-management-menu__list {
   margin: 0;
   padding: 0;
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: clamp(0.5rem, calc(var(--project-management-available-height) / 36), 1rem);
+  height: 100%;
 }
 
 .project-management-menu__item {
   border-radius: 14px;
   overflow: hidden;
+  display: flex;
 }
 
 .project-management-menu__button {
@@ -1697,8 +1719,12 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.35rem;
-  padding: 0.9rem 1rem;
+  justify-content: center;
+  gap: clamp(0.3rem, calc(var(--project-management-available-height) / 90), 0.6rem);
+  padding:
+    clamp(0.8rem, calc(var(--project-management-available-height) / 22), 1.2rem)
+    clamp(1rem, calc(var(--project-management-available-height) / 18), 1.4rem);
+  flex: 1 1 auto;
   border: none;
   border-radius: inherit;
   background: transparent;
