@@ -40,6 +40,13 @@ __all__ = [
 ]
 
 
+def _remove_dimension_tag(root: ET.Element) -> None:
+    namespace = {"main": SPREADSHEET_NS}
+    dimension = root.find("main:dimension", namespace)
+    if dimension is not None:
+        root.remove(dimension)
+
+
 def populate_defect_report(
     workbook_bytes: bytes,
     csv_text: str,
@@ -71,9 +78,14 @@ def populate_defect_report(
         sheet_bytes,
         start_row=start_row,
         columns=DEFECT_REPORT_COLUMNS,
+        preserve_dimension=False,
     )
     populator.populate(normalized_records)
     populated_sheet = populator.to_bytes()
+
+    populated_root = ET.fromstring(populated_sheet)
+    _remove_dimension_tag(populated_root)
+    populated_sheet = ET.tostring(populated_root, encoding="utf-8", xml_declaration=True)
 
     image_map = images or {}
     if not image_map:
@@ -234,6 +246,7 @@ def _inject_defect_images(
     column_letter: str,
 ) -> bytes:
     sheet_root = ET.fromstring(sheet_bytes)
+    _remove_dimension_tag(sheet_root)
     sheet_root, anchors, _ = _prepare_defect_image_anchors(
         sheet_root, row_positions, images_map, column_letter
     )

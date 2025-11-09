@@ -426,10 +426,12 @@ def test_populate_defect_report_injects_images_with_relationship_namespace() -> 
 
     with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
         drawing_xml = zf.read("xl/drawings/drawing2.xml")
+        sheet_xml = zf.read("xl/worksheets/sheet1.xml")
 
     assert b"<xdr:wsDr" in drawing_xml
     assert b"xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"" in drawing_xml
     assert b"r:embed=\"rId1\"" in drawing_xml
+    assert b"<dimension" not in sheet_xml
 
 
 def test_populate_defect_report_accepts_spaced_headers() -> None:
