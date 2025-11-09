@@ -1148,7 +1148,12 @@ class GoogleDriveService:
             raise HTTPException(status_code=422, detail="시험 합의서는 DOCX 또는 PDF 파일이어야 합니다.")
 
         agreement_bytes = await agreement_file.read()
-        metadata = extract_project_metadata(agreement_bytes, file_extension=extension)
+        metadata = extract_project_metadata(
+            agreement_bytes,
+            file_extension=extension,
+            pdf_engine="pypdf",          # "pdfminer"/"ocr"도 선택 가능
+            filename_hint=agreement_file.filename or "",
+        )
         project_name = build_project_folder_name(metadata)
         if not project_name:
             raise HTTPException(status_code=422, detail="생성할 프로젝트 이름을 결정할 수 없습니다.")

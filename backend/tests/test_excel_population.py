@@ -181,6 +181,68 @@ def test_populate_feature_list_sets_project_overview() -> None:
     assert _cell_text(root, ref) == overview_text
 
 
+def test_populate_feature_list_sanitizes_invalid_xml_characters() -> None:
+    template_path = Path("backend/template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    invalid_char = "\u000b"
+    csv_text = "\n".join(
+        [
+            "|".join(FEATURE_LIST_EXPECTED_HEADERS),
+            f"대1|중1|소1|기능{invalid_char}상세",
+        ]
+    )
+
+    overview_text = f"이 프로젝트는{invalid_char} 소개 문장"
+    updated = populate_feature_list(
+        template_bytes,
+        csv_text,
+        project_overview=overview_text,
+    )
+
+    root = _load_sheet(updated)
+
+    assert _cell_text(root, "D8") == "기능상세"
+
+    ref, value = extract_feature_list_overview(updated)
+    assert ref is not None
+    assert value == "이 프로젝트는 소개 문장"
+    assert _cell_text(root, ref) == "이 프로젝트는 소개 문장"
+
+
+def test_legacy_populate_feature_list_sanitizes_invalid_xml_characters() -> None:
+    template_path = Path("backend/template/가.계획/GS-B-XX-XXXX 기능리스트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    invalid_char = "\u000b"
+    csv_text = "\n".join(
+        [
+            "|".join(FEATURE_LIST_EXPECTED_HEADERS),
+            f"대1|중1|소1|기능{invalid_char}상세",
+        ]
+    )
+
+    overview_text = f"이 프로젝트는{invalid_char} 소개 문장"
+    updated = legacy_module.populate_feature_list(
+        template_bytes,
+        csv_text,
+        project_overview=overview_text,
+    )
+
+    with zipfile.ZipFile(io.BytesIO(updated), "r") as zf:
+        sheet_bytes = zf.read("xl/worksheets/sheet1.xml")
+
+    assert invalid_char.encode("utf-8") not in sheet_bytes
+    root = ET.fromstring(sheet_bytes)
+
+    assert _cell_text(root, "D8") == "기능상세"
+
+    ref, value = extract_feature_list_overview(updated)
+    assert ref is not None
+    assert value == "이 프로젝트는 소개 문장"
+    assert _cell_text(root, ref) == "이 프로젝트는 소개 문장"
+
+
 def test_populate_testcase_list_maps_columns() -> None:
     template_path = Path("backend/template/나.설계/GS-B-XX-XXXX 테스트케이스.xlsx")
     template_bytes = template_path.read_bytes()

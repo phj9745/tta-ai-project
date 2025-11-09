@@ -148,20 +148,49 @@ def _clear_cell(cell: ET.Element) -> None:
         cell.remove(child)
 
 
+def _sanitize_xml_text(value: str) -> str:
+    def is_allowed(codepoint: int) -> bool:
+        return (
+            codepoint in {0x9, 0xA, 0xD}
+            or 0x20 <= codepoint <= 0xD7FF
+            or 0xE000 <= codepoint <= 0xFFFD
+            or 0x10000 <= codepoint <= 0x10FFFF
+        )
+
+    return "".join(ch for ch in value if is_allowed(ord(ch)))
+
+
 def set_cell_text(cell: ET.Element, value: str) -> None:
     _clear_cell(cell)
-    cleaned = value.strip()
+    if value is None:
+        value = ""
+    sanitized_value = _sanitize_xml_text(value)
+    cleaned = sanitized_value.strip()
     if not cleaned:
         return
 
     cell.set("t", "inlineStr")
     is_elem = ET.SubElement(cell, f"{{{SPREADSHEET_NS}}}is")
     text_elem = ET.SubElement(is_elem, f"{{{SPREADSHEET_NS}}}t")
-    if cleaned != value or "\n" in value:
+    if cleaned != sanitized_value or "\n" in sanitized_value:
         text_elem.set(f"{{{XML_NS}}}space", "preserve")
-        text_elem.text = value
+        text_elem.text = sanitized_value
     else:
         text_elem.text = cleaned
+
+
+def _repair_workbook_bytes(xlsx_bytes: bytes) -> bytes:
+    """Attempt to run the legacy XLSX repair routine if it's available."""
+
+    try:  # Lazy import to avoid a hard dependency during tests.
+        from ..excel_templates import _repair_package  # type: ignore
+    except Exception:  # pragma: no cover - best-effort fallback
+        return xlsx_bytes
+
+    try:
+        return _repair_package(xlsx_bytes)
+    except Exception:  # pragma: no cover - legacy repair is defensive too
+        return xlsx_bytes
 
 
 def replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes:
@@ -174,7 +203,7 @@ def replace_sheet_bytes(workbook_bytes: bytes, new_sheet_bytes: bytes) -> bytes:
                 if info.filename == XLSX_SHEET_PATH:
                     data = new_sheet_bytes
                 target_zip.writestr(info, data)
-    return output_buffer.getvalue()
+    return _repair_workbook_bytes(output_buffer.getvalue())
 
 
 class WorksheetPopulator:
@@ -208,19 +237,6 @@ class WorksheetPopulator:
             ref = self._infer_dimension()
             if not ref:
                 raise ValueError("워크시트 범위 정보를 찾을 수 없습니다.")
-
-            dimension_tag = f"{{{SPREADSHEET_NS}}}dimension"
-            if self._dimension is None:
-                self._dimension = ET.Element(dimension_tag)
-                inserted = False
-                for idx, child in enumerate(list(self._root)):
-                    if child.tag in {dimension_tag, f"{{{SPREADSHEET_NS}}}sheetData"}:
-                        self._root.insert(idx, self._dimension)
-                        inserted = True
-                        break
-                if not inserted:
-                    self._root.insert(0, self._dimension)
-            self._dimension.set("ref", ref)
 
         (
             self._dimension_start_col,
@@ -388,10 +404,12 @@ class WorksheetPopulator:
             last_row = self._start_row
         if last_row > self._dimension_end_row:
             self._dimension_end_row = last_row
-        self._dimension.set(
-            "ref",
-            f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
-        )
+
+        if self._dimension is not None:
+            self._dimension.set(
+                "ref",
+                f"{self._dimension_start_col}{self._dimension_start_row}:{self._dimension_end_col}{self._dimension_end_row}",
+            )
 
     def _merge_tag(self, name: str) -> str:
         return f"{{{SPREADSHEET_NS}}}{name}"
