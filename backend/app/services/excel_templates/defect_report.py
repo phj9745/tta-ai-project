@@ -71,6 +71,7 @@ def populate_defect_report(
         sheet_bytes,
         start_row=start_row,
         columns=DEFECT_REPORT_COLUMNS,
+        preserve_dimension=False,
     )
     populator.populate(normalized_records)
     populated_sheet = populator.to_bytes()
