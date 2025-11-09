@@ -2,11 +2,14 @@ export type FileType =
   | 'pdf'
   | 'docx'
   | 'xlsx'
+  | 'xls'
   | 'txt'
   | 'jpg'
   | 'png'
   | 'csv'
   | 'html'
+  | 'mp4'
+  | 'mov'
 
 interface FileTypeInfo {
   label: string
@@ -36,6 +39,11 @@ export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
     ],
     extensions: ['xlsx'],
   },
+  xls: {
+    label: 'XLS',
+    accept: ['.xls', 'application/vnd.ms-excel'],
+    extensions: ['xls'],
+  },
   txt: {
     label: 'TXT',
     accept: ['.txt', 'text/plain'],
@@ -60,6 +68,16 @@ export const FILE_TYPE_OPTIONS: Record<FileType, FileTypeInfo> = {
     label: 'HTML',
     accept: ['.html', '.htm', 'text/html'],
     extensions: ['html', 'htm'],
+  },
+  mp4: {
+    label: 'MP4',
+    accept: ['.mp4', 'video/mp4'],
+    extensions: ['mp4'],
+  },
+  mov: {
+    label: 'MOV',
+    accept: ['.mov', 'video/quicktime'],
+    extensions: ['mov'],
   },
 }
 

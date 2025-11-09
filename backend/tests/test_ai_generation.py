@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 from types import MethodType, SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -41,10 +42,11 @@ class _StubFiles:
 class _StubResponses:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.output_text = "col1|col2\nvalue1|value2"
 
     def create(self, **kwargs: object) -> SimpleNamespace:
         self.calls.append(kwargs)
-        return SimpleNamespace(output_text="col1,col2\nvalue1,value2")
+        return SimpleNamespace(output_text=self.output_text)
 
 
 class _StubClient:
@@ -100,21 +102,53 @@ def _build_bad_request_error(message: str) -> BadRequestError:
     return BadRequestError(message=message, response=response, body=response.json())
 
 
-def _settings() -> Settings:
-    return Settings(
-        client_id="",
-        client_secret="",
-        redirect_uri="",
-        frontend_redirect_url="http://localhost",
-        tokens_path=Path("/tmp/tokens.db"),
-        openai_api_key="test-key",
-        openai_model="gpt-test",
-    )
+def _settings(**overrides: Any) -> Settings:
+    params: dict[str, Any] = {
+        "client_id": "",
+        "client_secret": "",
+        "redirect_uri": "",
+        "frontend_redirect_url": "http://localhost",
+        "tokens_path": Path("/tmp/tokens.db"),
+        "openai_api_key": "test-key",
+        "openai_model": "gpt-test",
+        "builtin_template_root": None,
+    }
+    params.update(overrides)
+    return Settings(**params)
 
 
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def test_locate_builtin_source_uses_override_directory(tmp_path: Path) -> None:
+    template_root = tmp_path / "builtin"
+    target_dir = template_root / "가.계획"
+    target_dir.mkdir(parents=True)
+    target_file = target_dir / "override-only.xlsx"
+    target_file.write_bytes(b"dummy")
+
+    service = AIGenerationService(_settings(builtin_template_root=template_root))
+
+    resolved, attempted = service._locate_builtin_source(
+        "template/가.계획/override-only.xlsx"
+    )
+
+    assert resolved == target_file
+    assert str(target_file) in {str(path) for path in attempted}
+
+
+def test_locate_builtin_source_accepts_direct_file_override(tmp_path: Path) -> None:
+    target_file = tmp_path / "override-only.xlsx"
+    target_file.write_bytes(b"dummy")
+
+    service = AIGenerationService(_settings(builtin_template_root=target_file))
+
+    resolved, attempted = service._locate_builtin_source("template/override-only.xlsx")
+
+    assert resolved == target_file
+    assert str(target_file) in {str(path) for path in attempted}
 
 
 @pytest.mark.anyio
@@ -205,7 +239,110 @@ async def test_generate_csv_attaches_files_and_cleans_up() -> None:
     # Temporary files should be cleaned up after the request completes.
     assert stub_client.files.deleted == ["file-1"]
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
+    assert result.project_overview == (
+        "이 프로그램은 value1 관련 프로그램이다.\n기능은\n- value2"
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_from_csv_row() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요|이 프로젝트는 테스트입니다.\n"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|기능 상세"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == (
+        "이 프로그램은 테스트 프로그램이다.\n기능은\n- 기능 상세"
+    )
+    assert result.csv_text == (
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|기능 상세"
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_with_colon_notation() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요:이 프로젝트는 콜론 형식을 따릅니다.\n"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|상세"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview-colon",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == (
+        "이 프로그램은 콜론 형식을 따르는 프로그램이다.\n기능은\n- 상세"
+    )
+    assert result.csv_text == (
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|상세"
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_csv_extracts_project_overview_from_followup_row() -> None:
+    service = AIGenerationService(_settings())
+    stub_client = _StubClient()
+    service._client = stub_client  # type: ignore[attr-defined]
+
+    stub_client.responses.output_text = (
+        "프로젝트 개요\n"
+        "이 프로젝트는 행이 나뉘어 제공됩니다.\n"
+        "대분류|중분류|소분류|기능 설명\n"
+        "대1|중1|소1|상세"
+    )
+
+    upload = UploadFile(
+        file=io.BytesIO(b"Document body"),
+        filename="요구사항.docx",
+        headers=Headers({"content-type": "application/msword"}),
+    )
+
+    result = await service.generate_csv(
+        project_id="proj-overview-followup",
+        menu_id="feature-list",
+        uploads=[upload],
+        metadata=[{"role": "required", "id": "user-manual", "label": "설명서"}],
+    )
+
+    assert result.project_overview == (
+        "이 프로그램은 행이 나뉘어 제공되는 프로그램이다.\n기능은\n- 상세"
+    )
+    assert result.csv_text == (
+        "대분류|중분류|소분류|기능 설명\n대1|중1|소1|상세"
+    )
 
 
 @pytest.mark.anyio
@@ -229,46 +366,13 @@ async def test_generate_csv_converts_required_csv_documents_to_pdf() -> None:
         metadata=metadata,
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
     assert [entry["name"] for entry in stub_client.files.created] == [
         "사용자_매뉴얼.pdf",
         "GS-B-XX-XXXX 기능리스트 v1.0.pdf",
     ]
     assert stub_client.files.created[0]["content"].startswith(b"%PDF")
-
-
-
-@pytest.mark.anyio
-async def test_generate_csv_includes_testcase_template() -> None:
-    service = AIGenerationService(_settings())
-    stub_client = _StubClient()
-    service._client = stub_client  # type: ignore[attr-defined]
-
-    upload = UploadFile(
-        file=io.BytesIO(b"Requirement body"),
-        filename="요구사항.docx",
-        headers=Headers({"content-type": "application/msword"}),
-    )
-
-    result = await service.generate_csv(
-        project_id="proj-testcase",
-        menu_id="testcase-generation",
-        uploads=[upload],
-        metadata=[{"role": "required", "id": "user-manual", "label": "사용자 설명서"}],
-    )
-
-    assert [entry["name"] for entry in stub_client.files.created] == [
-        "요구사항.pdf",
-        "GS-B-XX-XXXX 테스트케이스.pdf",
-    ]
-
-    template_upload = stub_client.files.created[1]
-    assert isinstance(template_upload["content"], bytes)
-    assert template_upload["content"].startswith(b"%PDF")
-
-    assert result.csv_text == "col1,col2\nvalue1,value2"
-
 
 @pytest.mark.anyio
 async def test_generate_csv_supports_modern_response_payload() -> None:
@@ -284,7 +388,7 @@ async def test_generate_csv_supports_modern_response_payload() -> None:
                     content=[
                         SimpleNamespace(
                             type="output_text",
-                            text={"value": "col1,col2\nvalue1,value2", "annotations": []},
+                            text={"value": "col1|col2\nvalue1|value2", "annotations": []},
                         )
                     ]
                 )
@@ -306,7 +410,7 @@ async def test_generate_csv_supports_modern_response_payload() -> None:
         metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
 
 @pytest.mark.anyio
@@ -349,7 +453,7 @@ async def test_generate_csv_normalizes_image_url_content(monkeypatch: pytest.Mon
         metadata=[{"role": "required", "id": "doc-1", "label": "주요 문서"}],
     )
 
-    assert result.csv_text == "col1,col2\nvalue1,value2"
+    assert result.csv_text == "col1|col2\nvalue1|value2"
 
     assert len(stub_client.responses.calls) == 1
     user_message = stub_client.responses.calls[0]["input"][1]

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from .config import Settings, load_settings
 from .services.ai_generation import AIGenerationService
+from .services.configuration_images import ConfigurationImageService
 from .services.prompt_config import PromptConfigService
 from .services.prompt_request_log import PromptRequestLogService
 from .services.google_drive import GoogleDriveService
 from .services.oauth import GoogleOAuthService
 from .services.security_report import SecurityReportService
+from .services.performance_report.service import PerformanceReportService
 from .token_store import TokenStorage
 from openai import OpenAI
 
@@ -31,11 +33,13 @@ class Container:
         api_key = self._settings.openai_api_key
         openai_client = OpenAI(api_key=api_key) if api_key else OpenAI()
         self._security_report_service = SecurityReportService(
-            self._drive_service,
-            self._prompt_config_service,
-            self._prompt_request_log_service,
-            openai_client,
+            drive_service=self._drive_service,
+            prompt_config_service=self._prompt_config_service,
+            prompt_request_log_service=self._prompt_request_log_service,
+            openai_client=openai_client,
         )
+        self._configuration_image_service = ConfigurationImageService(self._drive_service)
+        self._performance_report_service = PerformanceReportService(drive_service=self._drive_service)
 
     @property
     def settings(self) -> Settings:
@@ -68,3 +72,11 @@ class Container:
     @property
     def security_report_service(self) -> SecurityReportService:
         return self._security_report_service
+
+    @property
+    def configuration_image_service(self) -> ConfigurationImageService:
+        return self._configuration_image_service
+
+    @property
+    def performance_report_service(self) -> PerformanceReportService:
+        return self._performance_report_service

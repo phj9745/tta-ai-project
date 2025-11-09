@@ -14,7 +14,7 @@ interface ProjectCreationModalProps {
   backendUrl?: string
 }
 
-const DOCX_ONLY: FileType[] = ['docx']
+const AGREEMENT_FILE_TYPES: FileType[] = ['docx', 'pdf']
 
 export function ProjectCreationModal({
   open,
@@ -45,7 +45,7 @@ export function ProjectCreationModal({
     setSubmitError(null)
 
     if (files.length === 0) {
-      setFormError('최소 한 개의 PDF 파일을 업로드해주세요.')
+      setFormError('최소 한 개의 DOCX 또는 PDF 파일을 업로드해주세요.')
       return
     }
 
@@ -98,15 +98,15 @@ export function ProjectCreationModal({
       open={open}
       onClose={isSubmitting ? () => {} : onClose}
       title="새 프로젝트 생성"
-      description="PDF를 업로드하면 'GS-X-X-XXXX' 폴더와 필수 하위 폴더가 자동으로 만들어집니다."
+      description="시험 합의서를 업로드하면 시험 폴더와 하위 폴더가 자동으로 만들어집니다."
     >
       <form className="modal__form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
         <div className="modal__body">
           <p className="modal__helper-text">
-            업로드한 파일은 생성되는 프로젝트의 ‘0. 사전 자료’ 폴더에 저장됩니다.
+            업로드한 시험합의서는 생성되는 프로젝트 폴더에 저장됩니다.
           </p>
 
-          <FileUploader allowedTypes={DOCX_ONLY} files={files} onChange={setFiles} />
+          <FileUploader allowedTypes={AGREEMENT_FILE_TYPES} files={files} onChange={setFiles} />
 
           {formError && (
             <p className="modal__error" role="alert">

@@ -4,11 +4,13 @@ from fastapi import Depends, Request
 
 from .container import Container
 from .services.ai_generation import AIGenerationService
+from .services.configuration_images import ConfigurationImageService
 from .services.google_drive import GoogleDriveService
 from .services.prompt_config import PromptConfigService
 from .services.prompt_request_log import PromptRequestLogService
 from .services.oauth import GoogleOAuthService
 from .services.security_report import SecurityReportService
+from .services.performance_report.service import PerformanceReportService
 from .token_store import TokenStorage
 
 
@@ -53,3 +55,15 @@ def get_security_report_service(
     container: Container = Depends(get_container),
 ) -> SecurityReportService:
     return container.security_report_service
+
+
+def get_configuration_image_service(
+    container: Container = Depends(get_container),
+) -> ConfigurationImageService:
+    return container.configuration_image_service
+
+
+def get_performance_report_service(
+    container: Container = Depends(get_container),
+) -> PerformanceReportService:
+    return container.performance_report_service

@@ -10,7 +10,9 @@ import './AdminPromptsPage.css'
 
 type PromptCategory =
   | 'feature-list'
-  | 'testcase-generation'
+  | 'testcase-workflow-scenarios'
+  | 'testcase-workflow-rewrite'
+  | 'testcase-workflow-finalize'
   | 'defect-report'
   | 'security-report'
   | 'performance-report'
@@ -42,11 +44,14 @@ type PromptBuiltinContext = {
 }
 
 type PromptModelParameters = {
-  temperature: number
-  topP: number
   maxOutputTokens: number
   presencePenalty: number
   frequencyPenalty: number
+}
+
+type PromptResourcesConfig = {
+  judgementCriteria: string
+  outputExample: string
 }
 
 type PromptConfig = {
@@ -58,6 +63,7 @@ type PromptConfig = {
   scaffolding: PromptScaffolding
   attachmentDescriptorTemplate: string
   builtinContexts: PromptBuiltinContext[]
+  promptResources: PromptResourcesConfig | null
   modelParameters: PromptModelParameters
 }
 
@@ -97,7 +103,9 @@ type PromptRequestLogResponse = {
 function isPromptCategory(value: string): value is PromptCategory {
   return (
     value === 'feature-list' ||
-    value === 'testcase-generation' ||
+    value === 'testcase-workflow-scenarios' ||
+    value === 'testcase-workflow-rewrite' ||
+    value === 'testcase-workflow-finalize' ||
     value === 'defect-report' ||
     value === 'security-report' ||
     value === 'performance-report'
@@ -110,6 +118,9 @@ function cloneConfig(config: PromptConfig): PromptConfig {
     userPromptSections: config.userPromptSections.map((section) => ({ ...section })),
     scaffolding: { ...config.scaffolding },
     builtinContexts: config.builtinContexts.map((context) => ({ ...context })),
+    promptResources: config.promptResources
+      ? { ...config.promptResources }
+      : null,
     modelParameters: { ...config.modelParameters },
   }
 }
@@ -182,6 +193,17 @@ function buildPreview(config: PromptConfig): string {
   const warning = config.scaffolding.formatWarning.trim()
   if (warning) {
     parts.push(warning)
+  }
+
+  if (config.promptResources) {
+    const judgement = config.promptResources.judgementCriteria.trim()
+    const example = config.promptResources.outputExample.trim()
+    if (judgement) {
+      parts.push(`결함 판단 기준\n${judgement}`)
+    }
+    if (example) {
+      parts.push(`출력 예시\n${example}`)
+    }
   }
 
   return parts.join('\n\n').trim()
@@ -426,6 +448,32 @@ export function AdminPromptsPage() {
         [activeCategory]: {
           ...current,
           userPromptSections: nextSections,
+        },
+      }
+    })
+    setStatus({ type: 'idle', message: '' })
+  }
+
+  const handlePromptResourcesChange = <K extends keyof PromptResourcesConfig>(
+    field: K,
+    value: string,
+  ) => {
+    setConfigs((prev) => {
+      if (!prev) {
+        return prev
+      }
+      const current = prev[activeCategory]
+      if (!current.promptResources) {
+        return prev
+      }
+      return {
+        ...prev,
+        [activeCategory]: {
+          ...current,
+          promptResources: {
+            ...current.promptResources,
+            [field]: value,
+          },
         },
       }
     })
@@ -813,6 +861,38 @@ export function AdminPromptsPage() {
                   )}
                 </section>
 
+                {activeConfig.promptResources && (
+                  <section className="admin-prompts__group">
+                    <h3 className="admin-prompts__group-title">결함 리포트 참조 자료</h3>
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="judgementCriteria">
+                        결함 판단 기준
+                      </label>
+                      <textarea
+                        id="judgementCriteria"
+                        className="admin-prompts__textarea"
+                        value={activeConfig.promptResources.judgementCriteria}
+                        onChange={(event) =>
+                          handlePromptResourcesChange('judgementCriteria', event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="admin-prompts__field">
+                      <label className="admin-prompts__label" htmlFor="outputExample">
+                        출력 예시
+                      </label>
+                      <textarea
+                        id="outputExample"
+                        className="admin-prompts__textarea"
+                        value={activeConfig.promptResources.outputExample}
+                        onChange={(event) =>
+                          handlePromptResourcesChange('outputExample', event.target.value)
+                        }
+                      />
+                    </div>
+                  </section>
+                )}
+
                 <section className="admin-prompts__group">
                   <h3 className="admin-prompts__group-title">첨부 안내 문구</h3>
                   <div className="admin-prompts__field-grid">
@@ -972,24 +1052,6 @@ export function AdminPromptsPage() {
                 <section className="admin-prompts__group">
                   <h3 className="admin-prompts__group-title">모델 파라미터</h3>
                   <div className="admin-prompts__model-grid">
-                    <label className="admin-prompts__model-field">
-                      <span>Temperature</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={activeConfig.modelParameters.temperature}
-                        onChange={(event) => handleModelParameterChange('temperature', Number(event.target.value))}
-                      />
-                    </label>
-                    <label className="admin-prompts__model-field">
-                      <span>Top-p</span>
-                      <input
-                        type="number"
-                        step="0.05"
-                        value={activeConfig.modelParameters.topP}
-                        onChange={(event) => handleModelParameterChange('topP', Number(event.target.value))}
-                      />
-                    </label>
                     <label className="admin-prompts__model-field">
                       <span>Max Output Tokens</span>
                       <input

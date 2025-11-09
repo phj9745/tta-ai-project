@@ -21,6 +21,7 @@ class StoredTokens:
     token_type: str
     expires_in: int
     saved_at: datetime
+    id_token: Optional[str] = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "StoredTokens":
@@ -34,6 +35,7 @@ class StoredTokens:
             token_type=row["token_type"],
             expires_in=int(row["expires_in"]),
             saved_at=datetime.fromisoformat(row["saved_at"]),
+            id_token=row["id_token"] if "id_token" in row.keys() else None,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -43,6 +45,7 @@ class StoredTokens:
             "email": self.email,
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
+            "id_token": self.id_token,
             "scope": self.scope,
             "token_type": self.token_type,
             "expires_in": self.expires_in,
@@ -99,6 +102,7 @@ class TokenStorage:
                     email TEXT,
                     access_token TEXT NOT NULL,
                     refresh_token TEXT,
+                    id_token TEXT,
                     scope TEXT,
                     token_type TEXT,
                     expires_in INTEGER,
@@ -106,6 +110,11 @@ class TokenStorage:
                 )
                 """
             )
+            try:
+                conn.execute("ALTER TABLE google_tokens ADD COLUMN id_token TEXT")
+            except sqlite3.OperationalError:
+                # Column already exists in upgraded databases.
+                pass
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_google_tokens_email
@@ -150,6 +159,7 @@ class TokenStorage:
                         "email": payload.get("email"),
                         "access_token": payload["access_token"],
                         "refresh_token": payload.get("refresh_token"),
+                        "id_token": payload.get("id_token"),
                         "scope": payload.get("scope", ""),
                         "token_type": payload.get("token_type", "Bearer"),
                         "expires_in": int(payload.get("expires_in", 0)),
@@ -166,15 +176,16 @@ class TokenStorage:
             conn.executemany(
                 """
                 INSERT INTO google_tokens (
-                    google_id, display_name, email, access_token, refresh_token,
+                    google_id, display_name, email, access_token, refresh_token, id_token,
                     scope, token_type, expires_in, saved_at
-                ) VALUES (:google_id, :display_name, :email, :access_token, :refresh_token,
+                ) VALUES (:google_id, :display_name, :email, :access_token, :refresh_token, :id_token,
                           :scope, :token_type, :expires_in, :saved_at)
                 ON CONFLICT(google_id) DO UPDATE SET
                     display_name=excluded.display_name,
                     email=excluded.email,
                     access_token=excluded.access_token,
                     refresh_token=excluded.refresh_token,
+                    id_token=excluded.id_token,
                     scope=excluded.scope,
                     token_type=excluded.token_type,
                     expires_in=excluded.expires_in,
@@ -207,6 +218,7 @@ class TokenStorage:
             email=email.strip() if isinstance(email, str) else None,
             access_token=payload["access_token"],
             refresh_token=payload.get("refresh_token"),
+            id_token=payload.get("id_token"),
             scope=payload.get("scope", ""),
             token_type=payload.get("token_type", "Bearer"),
             expires_in=int(payload.get("expires_in", 0)),
@@ -217,14 +229,15 @@ class TokenStorage:
             conn.execute(
                 """
                 INSERT INTO google_tokens (
-                    google_id, display_name, email, access_token, refresh_token,
+                    google_id, display_name, email, access_token, refresh_token, id_token,
                     scope, token_type, expires_in, saved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(google_id) DO UPDATE SET
                     display_name=excluded.display_name,
                     email=excluded.email,
                     access_token=excluded.access_token,
                     refresh_token=excluded.refresh_token,
+                    id_token=excluded.id_token,
                     scope=excluded.scope,
                     token_type=excluded.token_type,
                     expires_in=excluded.expires_in,
@@ -236,6 +249,7 @@ class TokenStorage:
                     tokens.email,
                     tokens.access_token,
                     tokens.refresh_token,
+                    tokens.id_token,
                     tokens.scope,
                     tokens.token_type,
                     tokens.expires_in,

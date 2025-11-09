@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal
+from typing import Any, Dict, Iterable, List, Literal, Optional, Sequence
 import asyncio
 import csv
 import base64
@@ -16,7 +16,7 @@ import re
 import zipfile
 from pathlib import Path
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Literal, Mapping
 from xml.etree import ElementTree as ET
@@ -33,8 +33,16 @@ from openai import (
 )
 
 from ..config import Settings
+from .excel_templates import TESTCASE_EXPECTED_HEADERS
+from .excel_templates.utils import AI_CSV_DELIMITER
+from .excel_templates.feature_list import normalize_feature_list_records
 from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
-from .prompt_config import PromptBuiltinContext, PromptConfigService
+from .prompt_config import (
+    PromptBuiltinContext,
+    PromptConfig,
+    PromptConfigService,
+    PromptResourcesConfig,
+)
 from .prompt_request_log import PromptRequestLogService
 
 
@@ -52,6 +60,49 @@ class GeneratedCsv:
     csv_text: str
     defect_summary: List["DefectSummaryEntry"] | None = None
     defect_images: Dict[int, List[BufferedUpload]] | None = None
+    project_overview: str | None = None
+
+
+TESTCASE_SCENARIO_SYSTEM_PROMPT = (
+    "당신은 소프트웨어 QA 테스터입니다. 제공된 기능 설명과 참고 이미지를 바탕으로 "
+    "실행 가능한 테스트 시나리오 후보를 정리합니다."
+)
+
+TESTCASE_FINALIZE_SYSTEM_PROMPT = (
+    "당신은 소프트웨어 QA 테스터입니다. 기능별로 정리된 시나리오 요약을 바탕으로 "
+    "테스트케이스 표를 완성합니다."
+)
+
+TESTCASE_SCENARIO_INSTRUCTION_LINES = [
+    "각 시나리오는 '테스트 시나리오', '입력(사전조건 포함)', '기대 출력(사후조건 포함)' 키를 포함한 객체여야 합니다.",
+    '전체 응답은 {"scenarios": [...]} 형태의 JSON 한 개만 반환하고 JSON 외 텍스트는 추가하지 마세요.',
+    "'테스트 시나리오' 값은 테스트 목적을 한 문장으로 명확하게 설명해야 합니다.",
+    "'입력(사전조건 포함)' 값은 실제 예시 데이터를 포함한 단계 번호 목록을 '1. ...' 형식으로 작성하고 줄바꿈으로 구분하세요.",
+    "'기대 출력(사후조건 포함)' 값은 기대되는 시스템 반응을 한 문장으로 요약하세요.",
+    "중복되거나 의미가 겹치는 시나리오는 피하세요.",
+]
+
+TESTCASE_REWRITE_INSTRUCTION_LINES = [
+    "아래 JSON 형식으로만 응답하세요.",
+    '{"reply": "요약 또는 변경 이유", "scenarios": [{"테스트 시나리오": "...", "입력(사전조건 포함)": "...", "기대 출력(사후조건 포함)": "..."}, ...]}',
+    "scenarios 배열 길이는 최소 1개 이상이어야 하며 가능하면 현재 개수와 동일하게 유지하세요.",
+    "각 항목은 한글 레이블을 그대로 사용하고 줄바꿈은 그대로 유지하세요.",
+    "reply는 1~3문장으로 변경 사항을 요약하세요.",
+]
+
+TESTCASE_FINALIZE_INSTRUCTION_LINES = [
+    "위 시나리오를 모두 포함하여 테스트케이스를 작성하세요.",
+    "각 열은 파이프(|) 기호로 구분합니다.",
+    "각 소분류 순서에 따라 테스트 케이스 ID 접두사를 TC-XXX-YYY 형식(예: TC-001-001)으로 부여하고 XXX는 소분류 그룹 번호(1부터 시작), YYY는 그룹 내 순번(1부터 시작)으로 3자리 숫자로 작성하세요.",
+    "'테스트 시나리오' 열은 '모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인'처럼 간결하고 자연스러운 한 문장으로 작성하세요.",
+    "'입력(사전조건 포함)' 열은 실제 예시값을 포함한 단계 번호 목록을 작성하고 각 단계는 '1. ...' 형식으로 시작하며 줄바꿈으로 구분하세요.",
+    "'기대 출력(사후조건 포함)' 열은 기대 결과를 한 문장으로 요약하고 안내 문구나 불필요한 설명을 추가하지 마세요.",
+    "테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과와 비고는 비워 두세요.",
+    "여러 줄이 필요한 열은 CSV 규칙에 맞게 큰따옴표로 감싸고 실제 줄바꿈 문자(엔터)를 사용하세요.",
+    "아래 예시 형식을 참고하세요. 각 열은 파이프(|)로 구분됩니다.",
+    "  TC-001-001 | 모든 입력필드에 유효한 값을 입력하여 기업이 정상적으로 생성되는지 확인 | \"1. 모든 입력필드에 유효한 값 입력\\n기업명: test\\n기업코드: TEST1\\n대표명: 홍길동\\n직급: 과장\\n주소: 서울특별시 마포구\\n연락처: 010-1234-5678\\n이메일: test1@gmail.com\\n팩스 번호: 02-123-4567\\n설명: 테스트\\n2. '생성' 버튼 클릭\" | 기업이 정상적으로 생성됨 | 미실행 |  | ",
+    "CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
+]
 
 
 @dataclass
@@ -87,6 +138,19 @@ class DefectSummaryEntry:
     original_text: str
     polished_text: str
     attachments: List[DefectSummaryAttachment]
+
+
+@dataclass(frozen=True)
+class DefectConversationTurn:
+    role: Literal["user", "assistant"]
+    text: str
+
+
+@dataclass(frozen=True)
+class DefectPromptResources:
+    judgement_criteria: str | None = None
+    output_example: str | None = None
+    conversation: List[DefectConversationTurn] = field(default_factory=list)
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +251,15 @@ class AIGenerationService:
             return "image"
 
         return "file"
+
+    @staticmethod
+    def _render_prompt_template(
+        template: str, replacements: Mapping[str, str]
+    ) -> str:
+        result = template or ""
+        for key, value in replacements.items():
+            result = result.replace(f"{{{{{key}}}}}", value)
+        return result
 
     @classmethod
     def _normalize_upload_for_openai(cls, upload: BufferedUpload) -> BufferedUpload:
@@ -368,6 +441,7 @@ class AIGenerationService:
         *,
         project_id: str,
         entries: List[Dict[str, str]],
+        feature_context: str = "",
     ) -> List[NormalizedDefect]:
         if not entries:
             raise HTTPException(status_code=422, detail="정제할 결함 항목이 없습니다.")
@@ -389,13 +463,127 @@ class AIGenerationService:
         if not bullet_lines:
             raise HTTPException(status_code=422, detail="결함 항목에서 내용을 찾을 수 없습니다.")
 
-        user_prompt = (
+        context_prompt = ""
+        stripped_context = feature_context.strip()
+        if stripped_context:
+            context_prompt = (
+                "프로그램의 기능리스트 요약입니다. 결함을 다듬을 때 해당 기능의 목적과 범위를 고려하세요.\n"
+                f"{stripped_context}\n\n"
+            )
+
+        base_prompt = (
             "다음 결함 설명을 공문서에 맞는 문장으로 다듬어 주세요.\n"
             "- 결과는 입력 순서를 유지한 번호 매기기 형식으로 작성하세요.\n"
             "- 각 줄은 '번호. 정제된 문장' 형태여야 합니다.\n"
-            "- 존댓말 어미를 사용하고 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
+            "- 한 문장 또는 한 문단으로 간결하게 정리하세요.\n"
+            "- 문장 내 설명은 존댓말을 사용하되 마지막은 '…않음', '…오류'와 같은 명사형 표현으로 정리하고 '다.'로 끝내지 마세요.\n"
             "- 번호 목록 이외의 설명이나 부가 문장은 작성하지 마세요.\n\n"
-            "입력 결함 목록:\n"
+        )
+        guide_examples = (
+            "다음은 결함 요약 표현 가이드 예시입니다. 표현을 다듬을 때 어조와 형식을 참고하세요.\n"
+            "AAA 기능이 제공되지 않음\n"
+            "AAA 기능 오류\n"
+            "데이터 분석 기능이 동작하지 않음\n"
+            "‘시용자 조회’ 버튼 클릭 시 오류 메시지가 포함된 웹 페이지(’404 에러’)가 출력되고 기능이 실행되지 않음\n"
+            "가상 사용자 100명이 동시에 SMS API를 호출하여 SMS로 OTP 전송 기능 실행 시, 100건의 SMS가 발신되어야 하지만 약 96건의 SMS가 잘못 발신됨\n"
+            "보안 메일을 예약 메일로 발송한 경우, 보안 메일로 발송되지 않음\n"
+            "배포 마법사 기능이 동작하지 않음\n"
+            "특정 번호판(화물차, 오토바이) 인식 기능이 동작하지 않음\n"
+            "SYN Flooding 공격 시, 해당 공격이 탐지되지 않음\n"
+            "개인별 인사정보 조회 결과(3건)와 직원별 전체 인사정보 조회 시 표시되는 개인별 인사정보 조회 결과(5건)가 상이함\n"
+            "MY API 호출 시, ‘BBB’라는 값이 반환 되어야 하지만 ‘CCC’라는 값으로 잘못 반환됨\n"
+            "이벤트 로그 조회 기능이 동작하지 않음\n"
+            "메일 목록에서 다수의 메일을 선택하고 ‘선택 삭제’ 버튼 클릭 시, 1개의 메일만 잘못 삭제됨\n"
+            "제품 범위에 해당하지 않은 기능(’AI 분석’)이 불필요하게 제공됨\n"
+            "게시글 변경 기능을 제공하지 않아, 게시글을 수정하기 위해서는 게시글을 삭제하고 다시 생성해야함\n"
+            "‘파일 첨부’ 기능이 제공되어야 하지만 해당 기능이 누락됨\n"
+            "기능 실행 시 소요시간이 약 60초로 길게 소요됨\n"
+            "CPU 사용률이 99%까지 올라가고 정상 상태로 복귀되지 않음\n"
+            "부하 감소 후 메모리가 반환되지 않음\n"
+            "삽입된 데이터 스토리지 용량 보다 100배 이상의 추가 스토리지 용량이 비정상적으로 요구됨\n"
+            "100명의 사용자가 동시에 검색 기능 실행 시 평균 소요시간 약 20초 이상으로 길게 소요됨\n"
+            "프로그램이 오피스 프로그램과 충돌하여 실행되지 않음\n"
+            "기상청 API를 연동하여 날씨 정보가 대시보드에 표시되어야 하지만 표시되지 않음\n"
+            "제품의 주요 사용 목적이 매뉴얼에 제공되지 않음\n"
+            "프로그램에서는 AAA 기능이 제공되지만 매뉴얼에서는 해당 기능에 대한 설명이 기술되어 있지 않음\n"
+            "‘내용을 수정할 수 없다’라는 잘못된 안내 메시지를 출력함\n"
+            "‘문서미리보기’의 ‘개발형태’가 화면마다 다르게 표시됨\n"
+            "API명이 getDATA, set_data 등과 같이 비일관적인 규칙으로 명명됨\n"
+            "대시보드 위젯 추가 시 일부 글자가 잘려서 표시됨\n"
+            "매뉴얼에는 IP 카메라와 연동하여 실시간 영상 조회를 하는 것으로 기술되어 있지만 실제 프로그램에서는 연동이 불가능함\n"
+            "진행 상태바가 제공되지 않아 암호화 진행 상태를 알 수 없음\n"
+            "‘등록이 완료되었습니다’ 대신 ‘수정되었습니다’라는 잘못된 안내 메시지가 제공됨\n"
+            "‘중복체크’ 버튼 클릭 시 잘못된 안내 메시지가 제공됨\n"
+            "사용자 이메일을 입력하지 않아도 사용자 등록이 가능함\n"
+            "필수 입력 항목 표시가 제공되지 않음\n"
+            "‘전체 삭제’ 기능 실행 시 오조작 방지를 위한 메시지가 제공되지 않음\n"
+            "언어를 영어로 변경하였지만 일부 메뉴가 한글로 표시됨\n"
+            "청소 예약을 삭제하는 경우 프로그램이 비정상 중지되고 스케줄이 삭제되지 않음\n"
+            "유효하지 않는 QR 코드 스캔 시 앱이 비정상 종료됨\n"
+            "Active 서버 비정상 종료 시 Standby 서버로 Fail-over 되지 않음\n"
+            "데이터 복구 시도 시 일부 데이터만 복구됨\n"
+            "리포지토리 DB 백업 및 복구 방법이 매뉴얼에 제공되지 않음\n"
+            "아이디/비밀번호가 txt 파일로 저장되어 비인가자가 열람 가능함\n"
+            "비밀번호가 특수문자(*)로 표시되지 않고 평문으로 표시됨\n"
+            "잘못된 비밀번호를 입력하여도 로그인이 가능함\n"
+            "유효한 관리자 계정 정보로 로그인하였지만 로그인되지 않음\n"
+            "로그인 하지 않은 상태에서 관리자 페이지에 직접 접근 가능함\n"
+            "‘허용 IP’ 설정 저장 후 접속 제어가 정상 동작하지 않음\n"
+            "로그아웃 기능이 동작하지 않아 로그인 상태로 유지됨\n"
+            "‘세션 타임 아웃’ 기능이 설정된 시간 이후에도 동작하지 않음\n"
+            "비인가 권한으로 ‘정책 설정’ 기능이 실행 가능함\n"
+            "관리자 2명이 동시에 로그인 가능함\n"
+            "사용자 개인정보(주민등록번호 등)가 암호화되지 않고 평문으로 저장됨\n"
+            "웹 브라우저에서 입력된 비밀번호가 암호화되지 않고 평문으로 전송됨\n"
+            "비밀번호가 데이터베이스에 평문으로 저장됨\n"
+            "사용자 비밀번호가 취약한 암호화 알고리즘(MD5)으로 저장됨\n"
+            "솔트 값 없이 단방향 암호화되어 평문 추적이 가능함\n"
+            "비밀번호가 AES-256 등 대칭키 알고리즘으로 잘못 암호화됨\n"
+            "비밀번호 입력필드에 SQL문 입력 시 권한이 없는 사용자 ID로 로그인이 가능함\n"
+            "게시글 제목에 스크립트를 입력하면 해당 스크립트가 실행됨\n"
+            "실행 가능한 스크립트 파일 업로드가 가능함\n"
+            "비밀번호가 암호화되지 않은 프로토콜(HTTP)로 전송됨\n"
+            "응답 헤더 및 오류 페이지에 내부 시스템 정보가 표시됨\n"
+            "최신 버전의 Apache HTTP Server를 사용하지 않음\n"
+            "업데이트 서버로부터 다운로드 시 파일 무결성 검사를 수행하지 않음\n"
+            "데이터 백업 및 복구 방법이 매뉴얼에 제공되지 않음\n"
+            "전자서명 기능이 제공되지 않음\n"
+            "사용자 로그인 등 중요 이벤트가 감사로그에 기록되지 않음\n"
+            "사용자 감사로그 백업 방법이 매뉴얼에 제공되지 않음\n"
+            "매뉴얼에서는 생체인증이 제공된다고 되어 있으나 실제로는 로그인 인증만 제공됨\n"
+            "비밀번호 설정 시 3자리 길이의 짧은 문자열로 설정이 가능함\n"
+            "비밀번호 확인 입력필드와 달라도 변경이 가능함\n"
+            "비밀번호 변경 시 기존 비밀번호 확인 과정 없이 변경 가능함\n"
+            "잘못된 비밀번호를 5회 이상 입력해도 계정이 잠기지 않음\n"
+            "프로그램 재실행 후 로그인 시도가 가능함\n"
+            "관리자 기본 비밀번호 변경 요구 기능이 제공되지 않음\n"
+            "개인정보 수정 시 재인증 절차 없이 수정 가능함\n"
+            "문제 원인을 진단할 수 있는 정보(로그)가 제공되지 않음\n"
+            "DBMS 포트 번호 변경 후 연결 시 오류 발생\n"
+            "DBMS 연결 여부 확인 기능이 동작하지 않음\n"
+            "Windows 환경에서는 동작하지만 Linux 환경에서는 동작하지 않음\n"
+            "프로그램 설치 매뉴얼이 제공되지 않음\n"
+            "설치 경로 설정 기능이 제공되지 않음\n"
+            "이전 버전에서 제공된 기능이 제공되지 않지만 이에 대한 설명이 매뉴얼에 제공되지 않음\n"
+            "제품설명서(브로슈어)가 제공되지 않음\n"
+            "기능 정보가 매뉴얼에 제공되지 않음\n"
+            "제품 구동을 위한 최소 혹은 권장 장비 사양 정보가 매뉴얼에 제공되지 않음\n"
+            "타 제품과 연동되지만 연동제품 정보가 매뉴얼에 제공되지 않음\n"
+            "보편적으로 사용되지 않는 용어 및 약어에 대한 정보가 매뉴얼에 제공되지 않음\n"
+            "데이터 백업 및 복구 절차에 대한 정보가 매뉴얼에 제공되지 않음\n"
+            "프로그램 사용 권한에 따른 접근 제어 정보가 매뉴얼에 제공되지 않음\n"
+            "프로그램 운영 로그 저장 위치 정보가 매뉴얼에 제공되지 않음\n"
+            "제품 설치 방법 및 절차에 대한 정보가 매뉴얼에 제공되지 않음\n"
+            "시험 제품은 ‘AAA v1.0’이나 프로그램과 매뉴얼에 버전이 명시되어 있지 않음\n"
+            "제품을 이용하여 수행할 수 있는 업무에 대한 정보가 제공되지 않음\n"
+            "제품의 공급자 정보가 매뉴얼에 제공되지 않음\n"
+            "제품 운영을 위한 지원 정보(고객지원 센터 연락처 등)가 매뉴얼에 제공되지 않음\n\n"
+        )
+        user_prompt = (
+            base_prompt
+            + guide_examples
+            + (context_prompt or "")
+            + "입력 결함 목록:\n"
             + "\n".join(bullet_lines)
         )
 
@@ -409,9 +597,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=600,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -572,9 +758,7 @@ class AIGenerationService:
                 client.responses.create,
                 model=self._settings.openai_model,
                 input=messages,
-                temperature=0.2,
-                top_p=0.9,
-                max_output_tokens=400,
+                max_output_tokens=10000,
             )
         except RateLimitError as exc:
             detail = self._format_openai_error(exc)
@@ -640,6 +824,992 @@ class AIGenerationService:
         if fence_match:
             cleaned = fence_match.group(1).strip()
         return cleaned
+
+    @staticmethod
+    def _sanitize_json(text: str) -> str:
+        cleaned = text.strip()
+        fence_match = re.search(r"```(?:json)?\s*(.*?)```", cleaned, re.DOTALL | re.IGNORECASE)
+        if fence_match:
+            cleaned = fence_match.group(1).strip()
+        return cleaned
+
+    async def suggest_testcase_scenarios(
+        self,
+        *,
+        project_id: str,
+        major_category: str,
+        middle_category: str,
+        minor_category: str,
+        feature_description: str,
+        project_overview: str,
+        scenario_count: int,
+        attachments: Sequence[UploadFile],
+    ) -> List[Dict[str, str]]:
+        normalized_count = max(1, min(5, scenario_count))
+        buffered_uploads: List[BufferedUpload] = []
+        metadata_entries: List[Dict[str, Any]] = []
+
+        for index, upload in enumerate(attachments, start=1):
+            try:
+                content = await upload.read()
+            finally:
+                await upload.close()
+
+            name = upload.filename or f"attachment-{index}"
+            buffered_uploads.append(
+                BufferedUpload(
+                    name=name,
+                    content=content,
+                    content_type=upload.content_type,
+                )
+            )
+            metadata_entries.append(
+                {
+                    "label": f"{minor_category or '소분류'} 참고 자료 {index}",
+                    "role": "additional",
+                }
+            )
+
+        contexts: List[UploadContext] = [
+            UploadContext(upload=upload, metadata=metadata)
+            for upload, metadata in zip(buffered_uploads, metadata_entries)
+        ]
+
+        client = self._get_client()
+        uploaded_records: List[tuple[str, bool]] = []
+        attachments_payload: List[AttachmentMetadata] = []
+
+        try:
+            for context in contexts:
+                kind = self._attachment_kind(context.upload)
+                if kind == "image":
+                    attachments_payload.append(
+                        {
+                            "kind": "image",
+                            "image_url": self._image_data_url(context.upload),
+                        }
+                    )
+                else:
+                    file_id = await self._upload_openai_file(client, context)
+                    uploaded_records.append((file_id, False))
+                    attachments_payload.append({"kind": kind, "file_id": file_id})
+
+            feature_lines = [
+                f"대분류: {major_category or '-'}",
+                f"중분류: {middle_category or '-'}",
+                f"소분류: {minor_category or '-'}",
+            ]
+            description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
+            overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+
+            try:
+                prompt_config = self._prompt_config_service.get_runtime_prompt(
+                    "testcase-workflow-scenarios"
+                )
+            except KeyError:
+                prompt_config = None
+
+            system_prompt = (
+                prompt_config.system_prompt.strip()
+                if prompt_config and prompt_config.system_prompt.strip()
+                else TESTCASE_SCENARIO_SYSTEM_PROMPT
+            )
+
+            template = (
+                prompt_config.user_prompt.strip()
+                if prompt_config and prompt_config.user_prompt.strip()
+                else (
+                    "다음 기능에 대해 {{scenario_count}}개의 테스트 시나리오 후보를 JSON으로 작성해 주세요.\n"
+                    "프로젝트 개요:\n{{project_overview}}\n\n"
+                    "기능 분류:\n{{feature_classification}}\n\n"
+                    "기능 설명:\n{{feature_description}}"
+                )
+            )
+
+            section_blocks: List[str] = []
+            if prompt_config:
+                for section in prompt_config.user_prompt_sections:
+                    if not section.enabled:
+                        continue
+                    label = section.label.strip()
+                    content = section.content.strip()
+                    if label and content:
+                        section_blocks.append(f"{label}\n{content}")
+                    elif label or content:
+                        section_blocks.append(label or content)
+            if not section_blocks:
+                fallback_instructions = "\n".join(
+                    f"- {line}" for line in TESTCASE_SCENARIO_INSTRUCTION_LINES
+                )
+                section_blocks.append(f"지시사항:\n{fallback_instructions}")
+
+            instruction_block = "\n\n".join(
+                part for part in section_blocks if part.strip()
+            ).strip()
+
+            replacements = {
+                "project_overview": overview_text,
+                "feature_classification": "\n".join(feature_lines),
+                "feature_description": description_text,
+                "scenario_count": str(normalized_count),
+                "instruction_block": instruction_block,
+            }
+
+            rendered_prompt = self._render_prompt_template(template, replacements).strip()
+            if instruction_block and "{{instruction_block}}" not in template:
+                user_prompt = "\n\n".join(
+                    part for part in [rendered_prompt, instruction_block] if part
+                ).strip()
+            else:
+                user_prompt = rendered_prompt
+
+            model_params = prompt_config.model_parameters if prompt_config else None
+            temperature = getattr(model_params, "temperature", 0.2)
+            top_p = getattr(model_params, "top_p", 0.9)
+            max_output_tokens = getattr(model_params, "max_output_tokens", 800)
+
+            messages = [
+                OpenAIMessageBuilder.text_message("system", system_prompt),
+                OpenAIMessageBuilder.text_message(
+                    "user",
+                    user_prompt,
+                    attachments=attachments_payload if attachments_payload else None,
+                ),
+            ]
+
+            normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+
+            try:
+                response = await asyncio.to_thread(
+                    client.responses.create,
+                    model=self._settings.openai_model,
+                    input=normalized_messages,
+                    max_output_tokens=10000,
+                )
+            except RateLimitError as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "OpenAI 사용량 한도를 초과했습니다. "
+                        "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                        f" ({detail})"
+                    ),
+                ) from exc
+            except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+                detail = self._format_openai_error(exc)
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                ) from exc
+            except Exception as exc:  # pragma: no cover - 안전망
+                logger.exception(
+                    "Unexpected error while requesting scenario suggestions",
+                    extra={"project_id": project_id},
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="테스트 시나리오를 생성하는 중 예기치 않은 오류가 발생했습니다.",
+                ) from exc
+
+            response_text = self._extract_response_text(response) or ""
+            cleaned = self._sanitize_json(response_text)
+
+            if self._request_log_service is not None:
+                summary_lines = [
+                    f"대분류: {major_category or '-'}",
+                    f"중분류: {middle_category or '-'}",
+                    f"소분류: {minor_category or '-'}",
+                    f"요청 시나리오 수: {normalized_count}",
+                ]
+                if attachments_payload:
+                    summary_lines.append(f"첨부 자료: {len(attachments_payload)}개")
+
+                try:
+                    self._request_log_service.record_request(
+                        project_id=project_id,
+                        menu_id="testcase-workflow-scenarios",
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        context_summary="\n".join(summary_lines),
+                        response_text=cleaned or response_text,
+                    )
+                except Exception:  # pragma: no cover - logging must not fail request
+                    logger.exception(
+                        "Failed to record prompt request log",
+                        extra={
+                            "project_id": project_id,
+                            "menu_id": "testcase-workflow-scenarios",
+                        },
+                    )
+            try:
+                payload = json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+                ) from exc
+
+            scenarios_raw: Any
+            if isinstance(payload, dict):
+                scenarios_raw = payload.get("scenarios")
+            else:
+                scenarios_raw = payload
+
+            if not isinstance(scenarios_raw, Sequence):
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답에서 시나리오 목록을 찾을 수 없습니다.",
+                )
+
+            normalized: List[Dict[str, str]] = []
+            for entry in scenarios_raw:
+                if not isinstance(entry, Mapping):
+                    continue
+                scenario_text = str(
+                    entry.get("테스트 시나리오")
+                    or entry.get("scenario")
+                    or ""
+                ).strip()
+                input_text = str(
+                    entry.get("입력(사전조건 포함)")
+                    or entry.get("input")
+                    or ""
+                ).strip()
+                expected_text = str(
+                    entry.get("기대 출력(사후조건 포함)")
+                    or entry.get("expected")
+                    or ""
+                ).strip()
+                if not scenario_text:
+                    continue
+                normalized.append(
+                    {
+                        "scenario": scenario_text,
+                        "input": input_text,
+                        "expected": expected_text,
+                    }
+                )
+
+            if not normalized:
+                raise HTTPException(
+                    status_code=502,
+                    detail="OpenAI 응답에서 유효한 테스트 시나리오를 찾을 수 없습니다.",
+                )
+
+            return normalized
+        finally:
+            if uploaded_records:
+                await self._cleanup_openai_files(client, uploaded_records)
+
+    async def rewrite_testcase_scenarios(
+        self,
+        *,
+        project_id: str,
+        project_overview: str,
+        major_category: str,
+        middle_category: str,
+        minor_category: str,
+        feature_description: str,
+        scenarios: Sequence[Mapping[str, Any]],
+        instructions: str,
+        conversation: Sequence[Mapping[str, str]] | None = None,
+    ) -> Dict[str, Any]:
+        normalized_instructions = (instructions or "").strip()
+        if not normalized_instructions:
+            raise HTTPException(status_code=422, detail="변경 요청 내용을 입력해 주세요.")
+
+        normalized_scenarios: List[Dict[str, str]] = []
+        for entry in scenarios:
+            if not isinstance(entry, Mapping):
+                continue
+            scenario_text = str(
+                entry.get("scenario")
+                or entry.get("테스트 시나리오")
+                or ""
+            ).strip()
+            input_text = str(
+                entry.get("input")
+                or entry.get("입력(사전조건 포함)")
+                or ""
+            ).strip()
+            expected_text = str(
+                entry.get("expected")
+                or entry.get("기대 출력(사후조건 포함)")
+                or ""
+            ).strip()
+            if not scenario_text:
+                continue
+            normalized_scenarios.append(
+                {
+                    "scenario": scenario_text,
+                    "input": input_text,
+                    "expected": expected_text,
+                }
+            )
+
+        if not normalized_scenarios:
+            raise HTTPException(status_code=422, detail="수정할 테스트케이스가 없습니다.")
+
+        scenario_lines: List[str] = []
+        for index, entry in enumerate(normalized_scenarios, start=1):
+            scenario_lines.append(f"{index}. 테스트 시나리오: {entry['scenario']}")
+            scenario_lines.append(
+                "   입력(사전조건 포함): "
+                + (entry["input"] or "-")
+            )
+            scenario_lines.append(
+                "   기대 출력(사후조건 포함): "
+                + (entry["expected"] or "-")
+            )
+
+        overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+        feature_lines = [
+            f"대분류: {major_category or '-'}",
+            f"중분류: {middle_category or '-'}",
+            f"소분류: {minor_category or '-'}",
+        ]
+        description_text = feature_description.strip() or "(기능 설명이 제공되지 않았습니다.)"
+
+        try:
+            prompt_config = self._prompt_config_service.get_runtime_prompt(
+                "testcase-workflow-rewrite"
+            )
+        except KeyError:
+            prompt_config = None
+
+        system_prompt = (
+            prompt_config.system_prompt.strip()
+            if prompt_config and prompt_config.system_prompt.strip()
+            else (
+                "당신은 소프트웨어 테스트 전문가입니다. "
+                "사용자의 테스트케이스를 개선하고 명확하게 다듬어 주세요."
+            )
+        )
+
+        template = (
+            prompt_config.user_prompt.strip()
+            if prompt_config and prompt_config.user_prompt.strip()
+            else (
+                "프로젝트 개요:\n{{project_overview}}\n\n"
+                "기능 분류:\n{{feature_classification}}\n\n"
+                "기능 설명:\n{{feature_description}}\n\n"
+                "현재 테스트케이스:\n{{current_scenarios}}\n\n"
+                "사용자 요청:\n{{user_request}}"
+            )
+        )
+
+        section_blocks: List[str] = []
+        if prompt_config:
+            for section in prompt_config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label = section.label.strip()
+                content = section.content.strip()
+                if label and content:
+                    section_blocks.append(f"{label}\n{content}")
+                elif label or content:
+                    section_blocks.append(label or content)
+        if not section_blocks:
+            fallback_instructions = "\n".join(
+                f"- {line}" for line in TESTCASE_REWRITE_INSTRUCTION_LINES
+            )
+            section_blocks.append(f"응답 형식 지침:\n{fallback_instructions}")
+
+        instruction_block = "\n\n".join(
+            part for part in section_blocks if part.strip()
+        ).strip()
+
+        replacements = {
+            "project_overview": overview_text,
+            "feature_classification": "\n".join(feature_lines),
+            "feature_description": description_text,
+            "current_scenarios": "\n".join(scenario_lines),
+            "user_request": normalized_instructions,
+            "instruction_block": instruction_block,
+        }
+
+        rendered_prompt = self._render_prompt_template(template, replacements).strip()
+        if instruction_block and "{{instruction_block}}" not in template:
+            user_prompt = "\n\n".join(
+                part for part in [rendered_prompt, instruction_block] if part
+            ).strip()
+        else:
+            user_prompt = rendered_prompt
+
+        model_params = prompt_config.model_parameters if prompt_config else None
+        temperature = getattr(model_params, "temperature", 0.2)
+        top_p = getattr(model_params, "top_p", 0.9)
+        max_output_tokens = getattr(model_params, "max_output_tokens", 900)
+
+        messages = [OpenAIMessageBuilder.text_message("system", system_prompt)]
+
+        if conversation:
+            for entry in conversation:
+                role = entry.get("role")
+                text = str(entry.get("text") or "").strip()
+                if role not in {"user", "assistant"}:
+                    continue
+                if not text:
+                    continue
+                messages.append(OpenAIMessageBuilder.text_message(str(role), text))
+
+        messages.append(OpenAIMessageBuilder.text_message("user", user_prompt))
+
+        client = self._get_client()
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=messages,
+                max_output_tokens=10000,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while requesting testcase rewrite",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "testcase-workflow-rewrite",
+                },
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="테스트케이스를 다시 작성하는 중 예기치 않은 오류가 발생했습니다.",
+            ) from exc
+
+        response_text = self._extract_response_text(response) or ""
+        cleaned = self._sanitize_json(response_text)
+
+        if self._request_log_service is not None:
+            summary_lines = [
+                f"대분류: {major_category or '-'}",
+                f"중분류: {middle_category or '-'}",
+                f"소분류: {minor_category or '-'}",
+                f"테스트케이스 수: {len(normalized_scenarios)}",
+            ]
+
+            request_snippet = normalized_instructions
+            if len(request_snippet) > 120:
+                request_snippet = request_snippet[:117].rstrip() + "..."
+            if request_snippet:
+                summary_lines.append(f"사용자 요청: {request_snippet}")
+
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="testcase-workflow-rewrite",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary="\n".join(summary_lines),
+                    response_text=cleaned or response_text,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={
+                        "project_id": project_id,
+                        "menu_id": "testcase-workflow-rewrite",
+                    },
+                )
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+            ) from exc
+
+        reply_text = ""
+        scenarios_payload: Any = []
+
+        if isinstance(payload, Mapping):
+            reply_text = str(
+                payload.get("reply")
+                or payload.get("message")
+                or ""
+            ).strip()
+            scenarios_payload = payload.get("scenarios")
+        else:
+            scenarios_payload = payload
+
+        if not isinstance(scenarios_payload, Sequence):
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답에서 수정된 테스트케이스를 찾을 수 없습니다.",
+            )
+
+        normalized_results: List[Dict[str, str]] = []
+        for entry in scenarios_payload:
+            if not isinstance(entry, Mapping):
+                continue
+            scenario_text = str(
+                entry.get("테스트 시나리오")
+                or entry.get("scenario")
+                or ""
+            ).strip()
+            input_text = str(
+                entry.get("입력(사전조건 포함)")
+                or entry.get("input")
+                or ""
+            ).strip()
+            expected_text = str(
+                entry.get("기대 출력(사후조건 포함)")
+                or entry.get("expected")
+                or ""
+            ).strip()
+            if not scenario_text:
+                continue
+            normalized_results.append(
+                {
+                    "scenario": scenario_text,
+                    "input": input_text,
+                    "expected": expected_text,
+                }
+            )
+
+        if not normalized_results:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI 응답에서 유효한 테스트케이스를 찾을 수 없습니다.",
+            )
+
+        return {
+            "reply": reply_text,
+            "scenarios": normalized_results,
+        }
+
+    async def generate_testcases_from_scenarios(
+        self,
+        *,
+        project_id: str,
+        project_overview: str,
+        groups: Sequence[Mapping[str, Any]],
+    ) -> GeneratedCsv:
+        if not groups:
+            raise HTTPException(status_code=422, detail="생성할 시나리오가 제공되지 않았습니다.")
+
+        summary_blocks: List[str] = []
+        total_scenarios = 0
+
+        for group in groups:
+            if not isinstance(group, Mapping):
+                continue
+            major = str(group.get("majorCategory") or "").strip()
+            middle = str(group.get("middleCategory") or "").strip()
+            minor = str(group.get("minorCategory") or "").strip()
+            description = str(group.get("featureDescription") or "").strip()
+            scenarios = group.get("scenarios")
+            if not isinstance(scenarios, Sequence):
+                continue
+
+            scenario_lines: List[str] = []
+            for index, entry in enumerate(scenarios, start=1):
+                if not isinstance(entry, Mapping):
+                    continue
+                scenario_text = str(entry.get("scenario") or "").strip()
+                input_text = str(entry.get("input") or "").strip()
+                expected_text = str(entry.get("expected") or "").strip()
+                if not scenario_text:
+                    continue
+                total_scenarios += 1
+                scenario_lines.append(
+                    "\n".join(
+                        [
+                            f"{index}. 시나리오: {scenario_text}",
+                            f"   입력: {input_text or '-'}",
+                            f"   기대 출력: {expected_text or '-'}",
+                        ]
+                    )
+                )
+
+            if not scenario_lines:
+                continue
+
+            block_parts = [
+                f"대분류: {major or '-'}",
+                f"중분류: {middle or '-'}",
+                f"소분류: {minor or '-'}",
+            ]
+            if description:
+                block_parts.append(f"기능 설명: {description}")
+            block_parts.append("시나리오:")
+            block_parts.extend(scenario_lines)
+            summary_blocks.append("\n".join(block_parts))
+
+        if not summary_blocks or total_scenarios == 0:
+            raise HTTPException(status_code=422, detail="시나리오 요약이 비어 있습니다.")
+
+        summary_text = "\n\n".join(summary_blocks)
+        overview_text = project_overview.strip() or "(프로젝트 개요가 제공되지 않았습니다.)"
+        headers_text = ", ".join(TESTCASE_EXPECTED_HEADERS)
+
+        try:
+            prompt_config = self._prompt_config_service.get_runtime_prompt(
+                "testcase-workflow-finalize"
+            )
+        except KeyError:
+            prompt_config = None
+
+        system_prompt = (
+            prompt_config.system_prompt.strip()
+            if prompt_config and prompt_config.system_prompt.strip()
+            else TESTCASE_FINALIZE_SYSTEM_PROMPT
+        )
+
+        template = (
+            prompt_config.user_prompt.strip()
+            if prompt_config and prompt_config.user_prompt.strip()
+            else (
+                "프로젝트 개요:\n{{project_overview}}\n\n"
+                "기능별 시나리오 요약:\n{{scenario_summary}}\n\n"
+                "CSV 열은 {{csv_headers}} 순서를 따릅니다."
+            )
+        )
+
+        section_blocks: List[str] = []
+        if prompt_config:
+            for section in prompt_config.user_prompt_sections:
+                if not section.enabled:
+                    continue
+                label = section.label.strip()
+                content = section.content.strip()
+                if label and content:
+                    section_blocks.append(f"{label}\n{content}")
+                elif label or content:
+                    section_blocks.append(label or content)
+        if not section_blocks:
+            fallback_instructions = "\n".join(
+                f"- {line}" for line in TESTCASE_FINALIZE_INSTRUCTION_LINES
+            )
+            section_blocks.append(f"작성 지침:\n- CSV 열은 {headers_text} 순서를 따릅니다.\n{fallback_instructions}")
+
+        instruction_block = "\n\n".join(
+            part for part in section_blocks if part.strip()
+        ).strip()
+
+        replacements = {
+            "project_overview": overview_text,
+            "scenario_summary": summary_text,
+            "csv_headers": headers_text,
+            "instruction_block": instruction_block,
+        }
+
+        rendered_prompt = self._render_prompt_template(template, replacements).strip()
+        if instruction_block and "{{instruction_block}}" not in template:
+            user_prompt = "\n\n".join(
+                part for part in [rendered_prompt, instruction_block] if part
+            ).strip()
+        else:
+            user_prompt = rendered_prompt
+
+        model_params = prompt_config.model_parameters if prompt_config else None
+        temperature = getattr(model_params, "temperature", 0.2)
+        top_p = getattr(model_params, "top_p", 0.9)
+        max_output_tokens = getattr(model_params, "max_output_tokens", 1800)
+
+        client = self._get_client()
+        messages = [
+            OpenAIMessageBuilder.text_message("system", system_prompt),
+            OpenAIMessageBuilder.text_message("user", user_prompt),
+        ]
+
+        normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+
+        try:
+            response = await asyncio.to_thread(
+                client.responses.create,
+                model=self._settings.openai_model,
+                input=normalized_messages,
+                max_output_tokens=10000,
+            )
+        except RateLimitError as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
+                    f" ({detail})"
+                ),
+            ) from exc
+        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
+            detail = self._format_openai_error(exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+            ) from exc
+        except Exception as exc:  # pragma: no cover - 안전망
+            logger.exception(
+                "Unexpected error while finalising testcases",
+                extra={
+                    "project_id": project_id,
+                    "menu_id": "testcase-workflow-finalize",
+                },
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="테스트케이스를 완성하는 중 예기치 않은 오류가 발생했습니다.",
+            ) from exc
+
+        response_text = self._extract_response_text(response) or ""
+        sanitized = self._sanitize_csv(response_text)
+        if not sanitized:
+            raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+
+        if self._request_log_service is not None:
+            summary_lines = [
+                f"프로젝트 개요 길이: {len(overview_text)}자",
+                f"요약 블록 수: {len(summary_blocks)}",
+                f"총 시나리오 수: {total_scenarios}",
+            ]
+
+            try:
+                self._request_log_service.record_request(
+                    project_id=project_id,
+                    menu_id="testcase-workflow-finalize",
+                    system_prompt=system_prompt,
+                    user_prompt=user_prompt,
+                    context_summary="\n".join(summary_lines),
+                    response_text=sanitized,
+                )
+            except Exception:  # pragma: no cover - logging must not fail request
+                logger.exception(
+                    "Failed to record prompt request log",
+                    extra={
+                        "project_id": project_id,
+                        "menu_id": "testcase-workflow-finalize",
+                    },
+                )
+
+        encoded = sanitized.encode("utf-8-sig")
+        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        safe_project = re.sub(r"[^A-Za-z0-9_-]+", "_", project_id)
+        filename = f"{safe_project}_testcase_workflow_{timestamp}.csv"
+
+        return GeneratedCsv(
+            filename=filename,
+            content=encoded,
+            csv_text=sanitized,
+        )
+
+    @staticmethod
+    def _extract_feature_list_project_overview(
+        csv_text: str,
+    ) -> tuple[str, str | None]:
+        project_overview: str | None = None
+        rows_to_keep: list[list[str]] = []
+        awaiting_overview_value = False
+
+        stream = io.StringIO(csv_text)
+        reader = csv.reader(stream, delimiter=AI_CSV_DELIMITER)
+
+        for raw_row in reader:
+            row = [cell.strip() for cell in raw_row]
+
+            if not any(row):
+                # Skip completely empty rows altogether.
+                continue
+
+            if awaiting_overview_value and project_overview is None:
+                candidate_indexes = [idx for idx, cell in enumerate(row) if cell]
+                if len(candidate_indexes) == 1:
+                    candidate = row[candidate_indexes[0]].strip()
+                    if candidate:
+                        project_overview = candidate
+                        awaiting_overview_value = False
+                        continue
+                awaiting_overview_value = False
+
+            if project_overview is None and row:
+                first_cell = row[0].lstrip("\ufeff").strip()
+                colon_match = re.match(
+                    r"^(?:프로젝트\s*)?개요\s*[:：\-]\s*(.+)$",
+                    first_cell,
+                    re.IGNORECASE,
+                )
+                if colon_match:
+                    candidate = colon_match.group(1).strip()
+                    if candidate:
+                        project_overview = candidate
+                        continue
+
+                normalized_key = re.sub(r"\s+", "", first_cell.lower())
+                if normalized_key in {"프로젝트개요", "개요"}:
+                    remainder = next((cell for cell in row[1:] if cell), "").strip()
+                    if remainder:
+                        project_overview = remainder
+                        continue
+                    awaiting_overview_value = True
+                    continue
+
+            rows_to_keep.append(raw_row)
+
+        if project_overview is None:
+            fallback_match = re.search(
+                r"(?:^|\n)\s*(?:프로젝트\s*)?개요\s*(?:[:：\-]\s*)?(.+)",
+                csv_text,
+            )
+            if fallback_match:
+                project_overview = fallback_match.group(1).strip()
+
+        if not rows_to_keep:
+            return "", project_overview
+
+        output = io.StringIO()
+        writer = csv.writer(output, lineterminator="\n", delimiter=AI_CSV_DELIMITER)
+        for row in rows_to_keep:
+            writer.writerow(row)
+        return output.getvalue().strip(), project_overview
+
+    @staticmethod
+    def _format_feature_list_program_overview(
+        records: Sequence[Mapping[str, str]],
+        raw_overview: str | None,
+        *,
+        max_features: int = 6,
+    ) -> str:
+        def _clean_descriptor(value: str | None) -> str:
+            if value is None:
+                return ""
+
+            text = str(value).strip()
+            if not text:
+                return ""
+
+            text = re.sub(r"^(?:프로젝트|프로그램)\s*개요[:：\-]?\s*", "", text, flags=re.IGNORECASE)
+            text = text.replace("\r", " ").replace("\n", " ")
+            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"^이\s*(?:프로그램|프로젝트)\s*는\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"[.。．]+$", "", text).strip()
+
+            replacements = [
+                ("입니다", ""),
+                ("이다", ""),
+                ("합니다", "하는"),
+                ("됩니다", "되는"),
+                ("구성됩니다", "구성되는"),
+                ("제공합니다", "제공하는"),
+                ("제공됩니다", "제공되는"),
+                ("포함합니다", "포함하는"),
+                ("포함됩니다", "포함되는"),
+                ("지원합니다", "지원하는"),
+                ("지원됩니다", "지원되는"),
+                ("운영됩니다", "운영되는"),
+                ("연동됩니다", "연동되는"),
+                ("실행됩니다", "실행되는"),
+                ("따릅니다", "따르는"),
+            ]
+
+            for suffix, replacement in replacements:
+                if text.endswith(suffix):
+                    text = text[: -len(suffix)] + replacement
+                    break
+
+            text = text.strip()
+            if text.endswith("다"):
+                text = text[:-1].strip()
+            if text.endswith("요"):
+                text = text[:-1].strip()
+
+            return text.strip()
+
+        def _fallback_descriptor(entries: Sequence[Mapping[str, str]]) -> str:
+            for key in ("대분류", "중분류", "소분류"):
+                seen: set[str] = set()
+                ordered: list[str] = []
+                for entry in entries:
+                    candidate = str(entry.get(key, "") or "").strip()
+                    if not candidate:
+                        continue
+                    normalized = re.sub(r"\s+", " ", candidate)
+                    if normalized and normalized not in seen:
+                        seen.add(normalized)
+                        ordered.append(normalized)
+                if ordered:
+                    if len(ordered) == 1:
+                        return f"{ordered[0]} 관련"
+                    joined = ", ".join(ordered[:3])
+                    return f"{joined} 관련"
+            return "주요 업무를 지원하는"
+
+        def _compose_sentence(descriptor: str) -> str:
+            descriptor = re.sub(r"\s+", " ", descriptor).strip()
+            if not descriptor:
+                descriptor = "주요 업무를 지원하는"
+
+            suffix_candidates = (
+                "프로그램",
+                "시스템",
+                "플랫폼",
+                "솔루션",
+                "서비스",
+                "애플리케이션",
+                "앱",
+            )
+
+            if any(descriptor.endswith(suffix) for suffix in suffix_candidates):
+                body = descriptor
+            else:
+                body = f"{descriptor} 프로그램"
+
+            sentence = f"이 프로그램은 {body}이다."
+            sentence = re.sub(r"\s+", " ", sentence).strip()
+            if not sentence.endswith("."):
+                sentence += "."
+            return sentence
+
+        def _collect_feature_summaries(entries: Sequence[Mapping[str, str]]) -> list[str]:
+            summaries: list[str] = []
+            seen: set[str] = set()
+            for entry in entries:
+                for key in ("기능 설명", "소분류", "중분류", "대분류"):
+                    raw_value = entry.get(key, "")
+                    if not raw_value:
+                        continue
+                    candidate = re.sub(r"\s+", " ", str(raw_value).strip())
+                    if not candidate:
+                        continue
+                    if candidate in seen:
+                        continue
+                    seen.add(candidate)
+                    summaries.append(candidate)
+                    break
+                if len(summaries) >= max_features:
+                    break
+
+            if not summaries:
+                summaries.append("주요 업무를 지원하는 기능")
+
+            return summaries
+
+        descriptor = _clean_descriptor(raw_overview)
+        if not descriptor:
+            descriptor = _fallback_descriptor(records)
+
+        first_line = _compose_sentence(descriptor)
+        features = _collect_feature_summaries(records)
+
+        lines = [first_line, "기능은"]
+        lines.extend(f"- {feature}" for feature in features)
+        return "\n".join(lines)
 
     def _convert_required_documents_to_pdf(
         self,
@@ -890,7 +2060,7 @@ class AIGenerationService:
                 defect_prompt_section,
                 defect_summary_entries,
                 defect_image_map,
-            ) = self._prepare_defect_report_contexts(contexts)
+            ) = self._prepare_defect_report_contexts(contexts, prompt_config)
 
         client = self._get_client()
         uploaded_file_records: List[tuple[str, bool]] = []
@@ -1016,11 +2186,7 @@ class AIGenerationService:
                     "model": self._settings.openai_model,
                     "input": normalized_messages,
                 }
-
-                if params.temperature is not None:
-                    response_kwargs["temperature"] = params.temperature
-                if params.top_p is not None:
-                    response_kwargs["top_p"] = params.top_p
+                
                 if params.max_output_tokens is not None:
                     response_kwargs["max_output_tokens"] = (
                         params.max_output_tokens
@@ -1107,6 +2273,17 @@ class AIGenerationService:
                 raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
 
             sanitized = self._sanitize_csv(response_text)
+            project_overview: str | None = None
+            if menu_id == "feature-list" and sanitized:
+                sanitized, raw_project_overview = self._extract_feature_list_project_overview(
+                    sanitized
+                )
+                records = normalize_feature_list_records(sanitized)
+                project_overview = self._format_feature_list_program_overview(
+                    records,
+                    raw_project_overview,
+                )
+
             if not sanitized:
                 raise HTTPException(status_code=502, detail="생성된 CSV 내용이 비어 있습니다.")
 
@@ -1121,6 +2298,7 @@ class AIGenerationService:
                 csv_text=sanitized,
                 defect_summary=defect_summary_entries,
                 defect_images=dict(defect_image_map) if defect_image_map else None,
+                project_overview=project_overview,
             )
         finally:
             if uploaded_file_records:
@@ -1252,7 +2430,7 @@ class AIGenerationService:
         return f"data:{media_type};base64,{encoded}"
 
     def _prepare_defect_report_contexts(
-        self, contexts: List[UploadContext]
+        self, contexts: List[UploadContext], prompt_config: PromptConfig
     ) -> tuple[
         List[UploadContext],
         str | None,
@@ -1260,7 +2438,7 @@ class AIGenerationService:
         Dict[int, List[BufferedUpload]],
     ]:
         summary_entries: List[DefectSummaryEntry] | None = None
-        prompt_section: str | None = None
+        prompt_resources: DefectPromptResources | None = None
         image_map: Dict[int, List[BufferedUpload]] = defaultdict(list)
         filtered_contexts: List[UploadContext] = []
 
@@ -1282,19 +2460,73 @@ class AIGenerationService:
             )
 
             if is_json_upload:
-                if summary_entries is None:
-                    parsed = self._parse_defect_summary_upload(upload)
-                    if parsed:
-                        summary_entries = parsed
-                        prompt_section = self._format_defect_prompt_section(parsed)
+                parsed_entries, parsed_resources = self._parse_defect_summary_upload(upload)
+                if summary_entries is None and parsed_entries:
+                    summary_entries = parsed_entries
+                if prompt_resources is None and parsed_resources:
+                    prompt_resources = parsed_resources
                 continue
 
             filtered_contexts.append(context)
 
+        prompt_resources = self._merge_defect_prompt_resources(
+            prompt_resources, prompt_config.prompt_resources
+        )
+
+        prompt_section: str | None = None
+        if (summary_entries and len(summary_entries) > 0) or prompt_resources:
+            prompt_section = self._format_defect_prompt_section(
+                summary_entries or [], prompt_resources
+            )
+
         return filtered_contexts, prompt_section, summary_entries, image_map
 
     @staticmethod
-    def _parse_defect_summary_upload(upload: BufferedUpload) -> List[DefectSummaryEntry]:
+    def _merge_defect_prompt_resources(
+        parsed: DefectPromptResources | None,
+        config_resources: PromptResourcesConfig | None,
+    ) -> DefectPromptResources | None:
+        if parsed is None and config_resources is None:
+            return None
+
+        config_judgement = (
+            config_resources.judgement_criteria.strip()
+            if config_resources and config_resources.judgement_criteria
+            else ""
+        )
+        config_example = (
+            config_resources.output_example.strip()
+            if config_resources and config_resources.output_example
+            else ""
+        )
+
+        parsed_judgement = (
+            parsed.judgement_criteria.strip()
+            if parsed and parsed.judgement_criteria
+            else ""
+        )
+        parsed_example = (
+            parsed.output_example.strip() if parsed and parsed.output_example else ""
+        )
+
+        conversation = list(parsed.conversation) if parsed else []
+
+        judgement = parsed_judgement or config_judgement
+        example = parsed_example or config_example
+
+        if not judgement and not example and not conversation:
+            return None
+
+        return DefectPromptResources(
+            judgement_criteria=judgement or None,
+            output_example=example or None,
+            conversation=conversation,
+        )
+
+    @staticmethod
+    def _parse_defect_summary_upload(
+        upload: BufferedUpload,
+    ) -> tuple[List[DefectSummaryEntry], DefectPromptResources | None]:
         try:
             decoded = upload.content.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -1303,11 +2535,11 @@ class AIGenerationService:
         try:
             payload = json.loads(decoded)
         except json.JSONDecodeError:
-            return []
+            return [], None
 
         defects = payload.get("defects") if isinstance(payload, dict) else None
         if not isinstance(defects, list):
-            return []
+            defects = []
 
         entries: List[DefectSummaryEntry] = []
         for item in defects:
@@ -1348,25 +2580,94 @@ class AIGenerationService:
                 )
             )
 
-        return entries
+        resources_payload = (
+            payload.get("promptResources") if isinstance(payload, dict) else None
+        )
+        prompt_resources: DefectPromptResources | None = None
+        if isinstance(resources_payload, dict):
+            judgement_raw = resources_payload.get("judgementCriteria")
+            judgement = judgement_raw.strip() if isinstance(judgement_raw, str) else None
+            example_raw = resources_payload.get("outputExample")
+            output_example = example_raw.strip() if isinstance(example_raw, str) else None
+
+            conversation_raw = resources_payload.get("conversation")
+            conversation: List[DefectConversationTurn] = []
+            if isinstance(conversation_raw, list):
+                for entry in conversation_raw:
+                    if not isinstance(entry, dict):
+                        continue
+                    role = entry.get("role")
+                    text_raw = entry.get("text")
+                    if role not in ("user", "assistant") or not isinstance(text_raw, str):
+                        continue
+                    text = text_raw.strip()
+                    if not text:
+                        continue
+                    conversation.append(DefectConversationTurn(role=role, text=text))
+
+            if judgement or output_example or conversation:
+                prompt_resources = DefectPromptResources(
+                    judgement_criteria=judgement,
+                    output_example=output_example,
+                    conversation=conversation,
+                )
+
+        return entries, prompt_resources
 
     @staticmethod
-    def _format_defect_prompt_section(entries: List[DefectSummaryEntry]) -> str | None:
-        if not entries:
+    def _format_defect_prompt_section(
+        entries: List[DefectSummaryEntry],
+        resources: DefectPromptResources | None = None,
+    ) -> str | None:
+        lines: List[str] = []
+
+        if entries:
+            lines.append("정제된 결함 목록")
+            lines.append("")
+            for entry in sorted(entries, key=lambda item: item.index):
+                polished = entry.polished_text or "-"
+                lines.append(f"{entry.index}. {polished}")
+                if entry.original_text:
+                    lines.append(f"   - 원문: {entry.original_text}")
+                if entry.attachments:
+                    names = ", ".join(att.file_name for att in entry.attachments)
+                    lines.append(f"   - 첨부 이미지: {names}")
+
+        if resources:
+            def add_section(title: str, body: str | List[str]) -> None:
+                if isinstance(body, list):
+                    content_lines = [line for line in body if line.strip()]
+                else:
+                    text = body.strip()
+                    if not text:
+                        return
+                    content_lines = [text]
+                if not content_lines:
+                    return
+                if lines and lines[-1] != "":
+                    lines.append("")
+                lines.append(title)
+                lines.append("")
+                lines.extend(content_lines)
+
+            if resources.judgement_criteria:
+                add_section("결함 판단 기준", resources.judgement_criteria)
+            if resources.output_example:
+                add_section("출력 예시", resources.output_example)
+            if resources.conversation:
+                conversation_lines: List[str] = []
+                for index, turn in enumerate(resources.conversation, start=1):
+                    text = turn.text.strip()
+                    if not text:
+                        continue
+                    speaker = "사용자" if turn.role == "user" else "GPT"
+                    conversation_lines.append(f"{index}. {speaker}: {text}")
+                add_section("이전 대화", conversation_lines)
+
+        if not lines:
             return None
 
-        lines: List[str] = ["정제된 결함 목록", ""]
-        for entry in sorted(entries, key=lambda item: item.index):
-            polished = entry.polished_text or "-"
-            lines.append(f"{entry.index}. {polished}")
-            if entry.original_text:
-                lines.append(f"   - 원문: {entry.original_text}")
-            if entry.attachments:
-                names = ", ".join(att.file_name for att in entry.attachments)
-                lines.append(f"   - 첨부 이미지: {names}")
-            lines.append("")
-
-        return "\n".join(line for line in lines if line is not None).strip()
+        return "\n".join(lines).strip()
 
     def _builtin_attachment_contexts(
         self, menu_id: str, builtin_contexts: List[PromptBuiltinContext]
@@ -1387,11 +2688,136 @@ class AIGenerationService:
             contexts.append(UploadContext(upload=upload, metadata=metadata))
         return contexts
 
+    def _locate_builtin_source(self, path_hint: str) -> tuple[Path | None, List[Path]]:
+        """Resolve the on-disk path for a builtin attachment.
+
+        Historically the API server has been executed from different working
+        directories (package install, repo checkout, Docker image).  In those
+        environments the template assets may live under either the backend
+        package directory (e.g. ``backend/template``) or directly under the
+        application root (``/app/template`` inside the container).  The
+        original implementation assumed a single location which caused
+        ``FileNotFoundError`` when the active runtime layout differed,
+        surfacing to the user as “내장 XLSX 템플릿을 찾을 수 없습니다.”.
+
+        To make the lookup resilient we try several sensible base paths and
+        keep track of the attempted locations for diagnostics.
+        """
+
+        attempted: List[Path] = []
+        requested = Path(path_hint)
+
+        def _candidate(path: Path) -> Optional[Path]:
+            resolved = path if path.is_absolute() else path.resolve()
+            attempted.append(resolved)
+            if resolved.exists() and resolved.is_file():
+                return resolved
+            return None
+
+        if requested.is_absolute():
+            resolved = _candidate(requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        override_root = getattr(self._settings, "builtin_template_root", None)
+        if override_root:
+            override_path = Path(override_root)
+
+            if override_path.is_file():
+                resolved = _candidate(override_path)
+                if resolved is not None:
+                    return resolved, attempted
+
+            relative_variants: List[Path] = []
+
+            if str(requested):
+                relative_variants.append(requested)
+
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = None
+            if relative_to_template and str(relative_to_template):
+                relative_variants.append(relative_to_template)
+
+            parts = list(requested.parts)
+            if parts and parts[0] == "backend":
+                relative_variants.append(Path(*parts[1:]))
+                if len(parts) > 1 and parts[1] == "template":
+                    relative_variants.append(Path(*parts[2:]))
+
+            seen: set[Path] = set()
+            ordered_variants: List[Path] = []
+            for variant in relative_variants:
+                variant_str = str(variant)
+                if not variant_str or variant_str == ".":
+                    continue
+                if variant in seen:
+                    continue
+                seen.add(variant)
+                ordered_variants.append(variant)
+
+            if override_path.is_dir():
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+            else:
+                for variant in ordered_variants:
+                    resolved = _candidate(override_path.parent / variant)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        base_path = Path(__file__).resolve().parents[2]
+        resolved = _candidate(base_path / requested)
+        if resolved is not None:
+            return resolved, attempted
+
+        repo_root = base_path.parent
+        if repo_root != base_path:
+            resolved = _candidate(repo_root / requested)
+            if resolved is not None:
+                return resolved, attempted
+
+        template_root = base_path / "template"
+        if template_root.exists():
+            try:
+                relative_to_template = requested.relative_to(Path("template"))
+            except ValueError:
+                relative_to_template = requested
+
+            resolved = _candidate(template_root / relative_to_template)
+            if resolved is not None:
+                return resolved, attempted
+
+            # As a last resort search by filename inside the template tree so
+            # renamed folders (e.g. when the repo is vendored) still resolve.
+            if requested.name:
+                for match in template_root.rglob(requested.name):
+                    resolved = _candidate(match)
+                    if resolved is not None:
+                        return resolved, attempted
+
+        return None, attempted
+
     def _load_builtin_upload(
         self, menu_id: str, builtin: PromptBuiltinContext
     ) -> BufferedUpload:
-        base_path = Path(__file__).resolve().parents[2]
-        source_path = (base_path / builtin.source_path).resolve()
+        source_path, attempted_paths = self._locate_builtin_source(builtin.source_path)
+        if source_path is None:
+            logger.error(
+                "내장 컨텍스트 파일을 찾을 수 없습니다.",
+                extra={
+                    "menu_id": menu_id,
+                    "path": builtin.source_path,
+                    "label": builtin.label,
+                    "attempted_paths": [str(path) for path in attempted_paths],
+                },
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="내장 컨텍스트 파일을 찾을 수 없습니다.",
+            )
         if builtin.render_mode == "xlsx-to-pdf":
             return self._load_xlsx_as_pdf(menu_id, source_path, builtin.label)
 
