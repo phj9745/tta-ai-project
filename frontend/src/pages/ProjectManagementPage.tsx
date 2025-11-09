@@ -1,4 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ActivityIcon,
+  BugIcon,
+  ImageIcon,
+  ListIcon,
+  ShieldCheckIcon,
+  ScrollTextIcon,
+  type LucideIcon,
+} from 'lucide-react'
 
 import { FileUploader } from '../components/FileUploader'
 import { ALL_FILE_TYPES, type FileType } from '../components/fileUploaderTypes'
@@ -38,6 +47,7 @@ type FileMetadataEntry =
 interface MenuItemContent {
   id: MenuItemId
   label: string
+  icon: LucideIcon
   eyebrow: string
   title: string
   description: string
@@ -177,6 +187,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'configuration-images',
     label: '형상 이미지 추출',
+    icon: ImageIcon,
     eyebrow: '형상 관리',
     title: '형상 이미지 추출',
     description:
@@ -197,6 +208,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'feature-list',
     label: '기능리스트',
+    icon: ListIcon,
     eyebrow: '계획',
     title: '기능리스트 생성',
     description:
@@ -227,6 +239,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'testcase-generation',
     label: '테스트케이스',
+    icon: ScrollTextIcon,
     eyebrow: '설계',
     title: '테스트케이스 생성',
     description:
@@ -257,6 +270,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'defect-report',
     label: '결함리포트',
+    icon: BugIcon,
     eyebrow: '수행',
     title: '결함리포트 생성',
     description:
@@ -271,6 +285,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'security-report',
     label: '보안성 결함리포트',
+    icon: ShieldCheckIcon,
     eyebrow: '수행',
     title: '보안성 결함리포트 생성',
     description:
@@ -285,6 +300,7 @@ const MENU_ITEMS: MenuItemContent[] = [
   {
     id: 'performance-report',
     label: '성능시험 리포트',
+    icon: ActivityIcon,
     eyebrow: '수행',
     title: '성능시험 리포트 생성',
     description:
@@ -1334,6 +1350,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           <ul className="project-management-menu__list">
             {MENU_ITEMS.map((item) => {
               const isActive = activeItem === item.id
+              const Icon = item.icon
 
               return (
                 <li
@@ -1348,7 +1365,13 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     onClick={() => handleSelectMenuItem(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                   >
-                    <span className="project-management-menu__label">{item.label}</span>
+                    <span className="project-management-menu__icon" aria-hidden="true">
+                      <Icon size={20} strokeWidth={2} />
+                    </span>
+                    <span className="project-management-menu__text">
+                      <span className="project-management-menu__label">{item.label}</span>
+                      <span className="project-management-menu__eyebrow">{item.eyebrow}</span>
+                    </span>
                   </button>
                 </li>
               )
