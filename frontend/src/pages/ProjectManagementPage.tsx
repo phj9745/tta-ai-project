@@ -1349,7 +1349,6 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <span className="project-management-menu__label">{item.label}</span>
-                    <span className="project-management-menu__helper">{item.eyebrow}</span>
                   </button>
                 </li>
               )
