@@ -371,7 +371,7 @@
 
 .app-shell__main {
   --app-shell-main-padding-x: clamp(1.5rem, 4vw, 3.5rem);
-  /* --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem); */
+  --app-shell-main-padding-y: clamp(2rem, 4vw, 4rem);
   flex: 1;
   display: flex;
   align-items: stretch;
@@ -2833,7 +2833,6 @@
   width: 100%;
   min-width: 900px;
   border-collapse: collapse;
-  table-layout: fixed;
 }
 
 .defect-workflow__table th,
@@ -2860,23 +2859,6 @@
   font-weight: 700;
   color: #334155;
   z-index: 1;
-}
-
-.defect-workflow__table th:nth-child(1),
-.defect-workflow__table td:nth-child(1) { width: 20%; }
-
-.defect-workflow__table th:nth-child(2),
-.defect-workflow__table td:nth-child(2) { width: 20%; }
-
-.defect-workflow__table th:nth-child(3),
-.defect-workflow__table td:nth-child(3) { width: 20%; }
-
-.defect-workflow__table th:nth-child(4),
-.defect-workflow__table td:nth-child(4) { width: 30%; }
-
-.defect-workflow__table th:nth-child(5),
-.defect-workflow__table td:nth-child(5) {
-  width: 10%;
 }
 
 .defect-workflow__cell-button {
