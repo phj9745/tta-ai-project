@@ -12,6 +12,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.excel_templates import defect_report
+from app.services.excel_templates.models import SPREADSHEET_NS
 from app.services.excel_templates.utils import AI_CSV_DELIMITER
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "excel_templates"
@@ -30,17 +31,50 @@ def test_populate_defect_report_matches_fixture() -> None:
     assert hashlib.sha256(result).hexdigest() == expected_hash
 
 
-def test_populate_defect_report_excludes_dimension() -> None:
+def test_populate_defect_report_restores_missing_dimension() -> None:
     template_bytes = TEMPLATE_PATH.read_bytes()
     csv_text = (FIXTURE_DIR / "defect_report.csv").read_text(encoding="utf-8")
     if AI_CSV_DELIMITER != ",":
         csv_text = csv_text.replace(",", AI_CSV_DELIMITER)
 
-    result = defect_report.populate_defect_report(template_bytes, csv_text)
+    stripped_buffer = io.BytesIO()
+    original_dimension_ref: str | None = None
+    with zipfile.ZipFile(io.BytesIO(template_bytes), "r") as source, zipfile.ZipFile(
+        stripped_buffer, "w"
+    ) as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                root = ET.fromstring(data)
+                ns = {"s": SPREADSHEET_NS}
+                dimension = root.find("s:dimension", ns)
+                if dimension is not None:
+                    original_dimension_ref = dimension.get("ref")
+                    root.remove(dimension)
+                data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+            target.writestr(info, data)
+
+    assert original_dimension_ref is not None
+    stripped_template = stripped_buffer.getvalue()
+    result = defect_report.populate_defect_report(stripped_template, csv_text)
 
     with zipfile.ZipFile(io.BytesIO(result), "r") as archive:
-        sheet_xml = archive.read("xl/worksheets/sheet1.xml")
+        updated_sheet = archive.read("xl/worksheets/sheet1.xml")
 
     ns = {"s": SPREADSHEET_NS}
-    root = ET.fromstring(sheet_xml)
-    assert root.find("s:dimension", ns) is None
+    updated_root = ET.fromstring(updated_sheet)
+    dimension = updated_root.find("s:dimension", ns)
+    assert dimension is not None, "Expected <dimension> to be restored"
+    assert dimension.get("ref") == original_dimension_ref
+
+    children = list(updated_root)
+    dimension_index = next(
+        (idx for idx, child in enumerate(children) if child.tag == f"{{{SPREADSHEET_NS}}}dimension"),
+        None,
+    )
+    sheet_data_index = next(
+        (idx for idx, child in enumerate(children) if child.tag == f"{{{SPREADSHEET_NS}}}sheetData"),
+        None,
+    )
+    assert dimension_index is not None and sheet_data_index is not None
+    assert dimension_index < sheet_data_index
