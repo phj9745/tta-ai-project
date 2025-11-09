@@ -82,7 +82,7 @@ export function AppShell({
 
   const shellStyle = useMemo<AppShellStyle>(
     () => ({
-      '--app-shell-header-height': `-${headerHeight}px`,
+      '--app-shell-header-height': `${headerHeight}px`,
     }),
     [headerHeight],
   )

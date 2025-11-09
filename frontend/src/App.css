@@ -1512,7 +1512,7 @@
   --project-management-sidebar-width: 280px;
   --project-management-available-height:
     calc(
-      var(--viewport-height) - var(--app-shell-header-height, 0px) -
+      var(--viewport-height) - var(--app-shell-header-height, 0px) +
         (2 * var(--app-shell-main-padding-y))
     );
   position: relative;
