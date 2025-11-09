@@ -1646,8 +1646,9 @@
   transition: transform 0.3s ease, opacity 0.3s ease;
   border-right: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow: inset -1px 0 0 rgba(15, 23, 42, 0.55), 6px 0 24px rgba(15, 23, 42, 0.28);
-  min-height: 0;
-  height: 100%;
+  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
 }
 
 .project-management-page--sidebar-collapsed .project-management-sidebar {
