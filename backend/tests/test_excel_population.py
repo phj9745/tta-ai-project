@@ -434,6 +434,35 @@ def test_populate_defect_report_injects_images_with_relationship_namespace() -> 
     assert b"<dimension" not in sheet_xml
 
 
+def test_populate_defect_report_removes_dimension_tag() -> None:
+    template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
+    template_bytes = template_path.read_bytes()
+
+    header = "|".join(DEFECT_REPORT_EXPECTED_HEADERS)
+    row = "|".join(
+        [
+            "1",
+            "Windows",
+            "요약",
+            "High",
+            "Frequent",
+            "품질",
+            "설명",
+            "응답",
+            "수정",
+            "비고",
+        ]
+    )
+    csv_text = f"{header}\n{row}"
+
+    workbook_bytes = populate_defect_report(template_bytes, csv_text)
+
+    with zipfile.ZipFile(io.BytesIO(workbook_bytes), "r") as zf:
+        sheet_xml = zf.read("xl/worksheets/sheet1.xml")
+
+    assert b"<dimension" not in sheet_xml
+
+
 def test_populate_defect_report_accepts_spaced_headers() -> None:
     template_path = Path("backend/template/다.수행/GS-B-2X-XXXX 결함리포트 v1.0.xlsx")
     template_bytes = template_path.read_bytes()
