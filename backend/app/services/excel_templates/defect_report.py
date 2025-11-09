@@ -67,7 +67,11 @@ def populate_defect_report(
                 entry["비고"] = append_attachment_note(entry.get("비고"), note_names)
         normalized_records.append(entry)
 
-    populator = WorksheetPopulator(sheet_bytes, start_row=start_row, columns=DEFECT_REPORT_COLUMNS)
+    populator = WorksheetPopulator(
+        sheet_bytes,
+        start_row=start_row,
+        columns=DEFECT_REPORT_COLUMNS,
+    )
     populator.populate(normalized_records)
     populated_sheet = populator.to_bytes()
 

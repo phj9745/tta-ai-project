@@ -9,6 +9,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from app.services.excel_templates import defect_report
+from app.services.excel_templates.utils import AI_CSV_DELIMITER
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "data" / "excel_templates"
 TEMPLATE_PATH = BACKEND_ROOT / "template" / "다.수행" / "GS-B-2X-XXXX 결함리포트 v1.0.xlsx"
@@ -17,6 +18,8 @@ TEMPLATE_PATH = BACKEND_ROOT / "template" / "다.수행" / "GS-B-2X-XXXX 결함�
 def test_populate_defect_report_matches_fixture() -> None:
     template_bytes = TEMPLATE_PATH.read_bytes()
     csv_text = (FIXTURE_DIR / "defect_report.csv").read_text(encoding="utf-8")
+    if AI_CSV_DELIMITER != ",":
+        csv_text = csv_text.replace(",", AI_CSV_DELIMITER)
     expected_hash = (FIXTURE_DIR / "defect_report_expected.sha256").read_text().strip()
 
     result = defect_report.populate_defect_report(template_bytes, csv_text)
