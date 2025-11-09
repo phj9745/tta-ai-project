@@ -31,14 +31,14 @@ def test_populate_defect_report_matches_fixture() -> None:
     assert hashlib.sha256(result).hexdigest() == expected_hash
 
 
-def test_populate_defect_report_restores_missing_dimension() -> None:
+def test_populate_defect_report_does_not_inject_dimension() -> None:
     template_bytes = TEMPLATE_PATH.read_bytes()
     csv_text = (FIXTURE_DIR / "defect_report.csv").read_text(encoding="utf-8")
     if AI_CSV_DELIMITER != ",":
         csv_text = csv_text.replace(",", AI_CSV_DELIMITER)
 
     stripped_buffer = io.BytesIO()
-    original_dimension_ref: str | None = None
+    dimension_tag = f"{{{SPREADSHEET_NS}}}dimension"
     with zipfile.ZipFile(io.BytesIO(template_bytes), "r") as source, zipfile.ZipFile(
         stripped_buffer, "w"
     ) as target:
@@ -46,35 +46,18 @@ def test_populate_defect_report_restores_missing_dimension() -> None:
             data = source.read(info.filename)
             if info.filename == "xl/worksheets/sheet1.xml":
                 root = ET.fromstring(data)
-                ns = {"s": SPREADSHEET_NS}
-                dimension = root.find("s:dimension", ns)
+                dimension = root.find(dimension_tag)
                 if dimension is not None:
-                    original_dimension_ref = dimension.get("ref")
                     root.remove(dimension)
                 data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
             target.writestr(info, data)
 
-    assert original_dimension_ref is not None
     stripped_template = stripped_buffer.getvalue()
     result = defect_report.populate_defect_report(stripped_template, csv_text)
 
     with zipfile.ZipFile(io.BytesIO(result), "r") as archive:
         updated_sheet = archive.read("xl/worksheets/sheet1.xml")
 
-    ns = {"s": SPREADSHEET_NS}
     updated_root = ET.fromstring(updated_sheet)
-    dimension = updated_root.find("s:dimension", ns)
-    assert dimension is not None, "Expected <dimension> to be restored"
-    assert dimension.get("ref") == original_dimension_ref
-
-    children = list(updated_root)
-    dimension_index = next(
-        (idx for idx, child in enumerate(children) if child.tag == f"{{{SPREADSHEET_NS}}}dimension"),
-        None,
-    )
-    sheet_data_index = next(
-        (idx for idx, child in enumerate(children) if child.tag == f"{{{SPREADSHEET_NS}}}sheetData"),
-        None,
-    )
-    assert dimension_index is not None and sheet_data_index is not None
-    assert dimension_index < sheet_data_index
+    dimension = updated_root.find(dimension_tag)
+    assert dimension is None, "<dimension> should not be injected"

@@ -231,7 +231,6 @@ class WorksheetPopulator:
 
         self._preserve_dimension = preserve_dimension
         self._dimension = self._root.find("s:dimension", self._ns)
-        self._dimension_inferred_ref: str | None = None
         ref = ""
         if self._dimension is not None:
             ref = (self._dimension.get("ref") or "").strip()
@@ -541,30 +540,15 @@ class WorksheetPopulator:
             f"{self._dimension_end_col}{self._dimension_end_row}"
         )
 
-    def _insert_before_sheet_data(self, element: ET.Element) -> None:
-        for idx, child in enumerate(list(self._root)):
-            if child.tag == self._tag("sheetData"):
-                self._root.insert(idx, element)
-                return
-        self._root.insert(0, element)
-
     def _update_dimension_metadata(self) -> None:
-        latest_ref = self._latest_dimension_ref()
-        self._dimension_inferred_ref = latest_ref
-
         if not self._preserve_dimension:
             return
 
-        if self._dimension is not None:
-            self._dimension.set("ref", latest_ref)
+        if self._dimension is None:
             return
 
-        if not self._dimension_inferred_ref:
-            return
-
-        dimension = ET.Element(self._tag("dimension"), {"ref": latest_ref})
-        self._insert_before_sheet_data(dimension)
-        self._dimension = dimension
+        latest_ref = self._latest_dimension_ref()
+        self._dimension.set("ref", latest_ref)
 
     def to_bytes(self) -> bytes:
         self._update_dimension_metadata()
