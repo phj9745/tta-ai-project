@@ -1640,7 +1640,7 @@
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
-  padding: 2.5rem 2rem;
+  padding: 0 2rem;
   background: #0f172a;
   color: #e2e8f0;
   transition: transform 0.3s ease, opacity 0.3s ease;
@@ -1719,11 +1719,10 @@
     clamp(1rem, calc(var(--project-management-available-height) / 18), 1.4rem);
   flex: 1 1 auto;
   border: none;
-  border-radius: inherit;
   background: transparent;
   color: rgba(226, 232, 240, 0.75);
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
@@ -2168,7 +2167,7 @@
   }
 
   .project-management-sidebar {
-    padding: 2.25rem 1.75rem;
+    padding: 0, 2rem
   }
 }
 
