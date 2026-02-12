@@ -4,7 +4,7 @@ echo "Doppler Secrets(환경변수) 다운로드"
 doppler secrets download --project tta-ai-project --config dev --format env --no-file > ./backend/.env
 
 # 2. 프론트엔드 시크릿 다운로드
-doppler secrets download --project tta-ai-project --config dev --format env --no-file > ./frontend/.env
+doppler secrets download --project tta-ai-project --config dev --format env --no-file | grep "^VITE_" > ./frontend/.env
 
 echo ".env 파일 갱신 완료!"
 
