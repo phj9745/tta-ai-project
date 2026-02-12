@@ -20,8 +20,8 @@ class Settings:
     redirect_uri: str
     frontend_redirect_url: str
     tokens_path: Path
-    openai_api_key: str
-    openai_model: str
+    anthropic_api_key: str
+    ai_model: str
     builtin_template_root: Optional[Path] = None
 
     @property
@@ -49,7 +49,7 @@ def load_settings() -> Settings:
         redirect_uri=os.getenv("GOOGLE_REDIRECT_URI", ""),
         frontend_redirect_url=os.getenv("FRONTEND_REDIRECT_URL", "http://localhost:5173/"),
         tokens_path=Path(tokens_env) if tokens_env else default_tokens_path,
-        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-        openai_model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
+        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+        ai_model=os.getenv("AI_MODEL", "claude-haiku-4-5-20251001"),
         builtin_template_root=template_root,
     )

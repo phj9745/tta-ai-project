@@ -10,7 +10,7 @@ from .services.oauth import GoogleOAuthService
 from .services.security_report import SecurityReportService
 from .services.performance_report.service import PerformanceReportService
 from .token_store import TokenStorage
-from openai import OpenAI
+from anthropic import Anthropic
 
 
 class Container:
@@ -30,13 +30,13 @@ class Container:
         self._ai_generation_service = AIGenerationService(
             self._settings, self._prompt_config_service, self._prompt_request_log_service
         )
-        api_key = self._settings.openai_api_key
-        openai_client = OpenAI(api_key=api_key) if api_key else OpenAI()
+        api_key = self._settings.anthropic_api_key
+        ai_client = Anthropic(api_key=api_key) if api_key else Anthropic()
         self._security_report_service = SecurityReportService(
             drive_service=self._drive_service,
             prompt_config_service=self._prompt_config_service,
             prompt_request_log_service=self._prompt_request_log_service,
-            openai_client=openai_client,
+            ai_client=ai_client,
         )
         self._configuration_image_service = ConfigurationImageService(self._drive_service)
         self._performance_report_service = PerformanceReportService(drive_service=self._drive_service)

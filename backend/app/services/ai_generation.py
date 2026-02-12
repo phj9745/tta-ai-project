@@ -23,11 +23,11 @@ from xml.etree import ElementTree as ET
 
 from fastapi import HTTPException, UploadFile
 from docx import Document
-from openai import (
+from anthropic import (
+    Anthropic,
+    AnthropicError,
     APIError,
-    BadRequestError,
-    OpenAI,
-    OpenAIError,
+    AuthenticationError,
     PermissionDeniedError,
     RateLimitError,
 )
@@ -36,7 +36,7 @@ from ..config import Settings
 from .excel_templates import TESTCASE_EXPECTED_HEADERS
 from .excel_templates.utils import AI_CSV_DELIMITER
 from .excel_templates.feature_list import normalize_feature_list_records
-from .openai_payload import AttachmentMetadata, OpenAIMessageBuilder
+from .ai_payload import AttachmentMetadata, AIMessageBuilder
 from .prompt_config import (
     PromptBuiltinContext,
     PromptConfig,
@@ -167,15 +167,15 @@ class AIGenerationService:
             storage_path = settings.tokens_path.with_name("prompt_configs.json")
             prompt_config_service = PromptConfigService(storage_path)
         self._prompt_config_service = prompt_config_service
-        self._client: OpenAI | None = None
+        self._client: Anthropic | None = None
         self._request_log_service = request_log_service
 
-    def _get_client(self) -> OpenAI:
+    def _get_client(self) -> Anthropic:
         if self._client is None:
-            api_key = self._settings.openai_api_key
+            api_key = self._settings.anthropic_api_key
             if not api_key:
-                raise HTTPException(status_code=500, detail="OpenAI API 키가 설정되어 있지 않습니다.")
-            self._client = OpenAI(api_key=api_key)
+                raise HTTPException(status_code=500, detail="Anthropic API 키가 설정되어 있지 않습니다.")
+            self._client = Anthropic(api_key=api_key)
         return self._client
 
     @staticmethod
@@ -262,7 +262,7 @@ class AIGenerationService:
         return result
 
     @classmethod
-    def _normalize_upload_for_openai(cls, upload: BufferedUpload) -> BufferedUpload:
+    def _normalize_upload_for_ai(cls, upload: BufferedUpload) -> BufferedUpload:
         content_type = (upload.content_type or "").split(";")[0].strip().lower()
         extension = Path(upload.name).suffix.lower()
         if extension in {".html", ".htm"} or content_type == "text/html":
@@ -309,12 +309,12 @@ class AIGenerationService:
         )
 
     @classmethod
-    def _prepare_contexts_for_openai(
+    def _prepare_contexts_for_ai(
         cls, contexts: Iterable[UploadContext]
     ) -> List[UploadContext]:
         prepared: List[UploadContext] = []
         for context in contexts:
-            normalized_upload = cls._normalize_upload_for_openai(context.upload)
+            normalized_upload = cls._normalize_upload_for_ai(context.upload)
             if normalized_upload is context.upload:
                 prepared.append(context)
             else:
@@ -383,47 +383,8 @@ class AIGenerationService:
             )
         return previews
 
-    async def _upload_openai_file(self, client: OpenAI, context: UploadContext) -> str:
-        upload = context.upload
-        stream = io.BytesIO(upload.content)
-        try:
-            created = await asyncio.to_thread(
-                client.files.create,
-                file=(upload.name, stream),
-                purpose="assistants",
-            )
-        except (APIError, OpenAIError) as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"OpenAI 파일 업로드 중 오류가 발생했습니다: {exc}",
-            ) from exc
-        except Exception as exc:  # pragma: no cover - 안전망
-            logger.exception(
-                "Unexpected error uploading file to OpenAI",
-                extra={"file_name": upload.name},
-            )
-            raise HTTPException(
-                status_code=502,
-                detail="OpenAI 파일 업로드 중 예기치 않은 오류가 발생했습니다.",
-            ) from exc
-
-        file_id = getattr(created, "id", None)
-        if not file_id and hasattr(created, "get"):
-            try:
-                file_id = created.get("id")  # type: ignore[call-arg]
-            except Exception:  # pragma: no cover - dict-like guard
-                file_id = None
-
-        if not isinstance(file_id, str) or not file_id:
-            raise HTTPException(
-                status_code=502,
-                detail="OpenAI 파일 업로드 응답에 file_id가 없습니다.",
-            )
-
-        return file_id
-
-    async def _cleanup_openai_files(
-        self, client: OpenAI, file_records: Iterable[tuple[str, bool]]
+    async def _cleanup_ai_files(
+        self, client: Anthropic, file_records: Iterable[tuple[str, bool]]
     ) -> None:
         for file_id, skip_cleanup in file_records:
             if skip_cleanup:
@@ -432,7 +393,7 @@ class AIGenerationService:
                 await asyncio.to_thread(client.files.delete, file_id=file_id)
             except Exception as exc:  # pragma: no cover - 로그 목적
                 logger.warning(
-                    "Failed to delete temporary OpenAI file",
+                    "Failed to delete temporary AI file",
                     extra={"file_id": file_id, "error": str(exc)},
                 )
 
@@ -588,43 +549,52 @@ class AIGenerationService:
         )
 
         messages = [
-            OpenAIMessageBuilder.text_message("system", system_prompt),
-            OpenAIMessageBuilder.text_message("user", user_prompt),
+            AIMessageBuilder.text_message("system", system_prompt),
+            AIMessageBuilder.text_message("user", user_prompt),
         ]
+
+        system_text: str | None = None
+        user_messages: List[Dict[str, str]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = str(msg.get("content", ""))
+            else:
+                user_messages.append(msg)
 
         try:
             response = await asyncio.to_thread(
-                client.responses.create,
-                model=self._settings.openai_model,
-                input=messages,
-                max_output_tokens=10000,
+                client.messages.create,
+                model=self._settings.ai_model,
+                system=system_text,
+                messages=user_messages,
+                max_tokens=10000,
             )
         except RateLimitError as exc:
-            detail = self._format_openai_error(exc)
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "Anthropic 사용량 한도를 초과했습니다. "
                     "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                     f" ({detail})"
                 ),
             ) from exc
-        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-            detail = self._format_openai_error(exc)
+        except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
             ) from exc
         except Exception as exc:  # pragma: no cover - 안전망
             logger.exception(
-                "Unexpected error while requesting OpenAI response",
+                "Unexpected error while requesting Anthropic response",
                 extra={"project_id": project_id, "menu_id": "defect-report-formalize"},
             )
             message = str(exc).strip()
             detail = (
-                "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                "Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
                 if not message
-                else f"OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
+                else f"Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
             )
             raise HTTPException(status_code=502, detail=detail) from exc
 
@@ -647,7 +617,7 @@ class AIGenerationService:
                 )
 
         if not response_text:
-            raise HTTPException(status_code=502, detail="OpenAI 응답에서 번호 목록을 찾을 수 없습니다.")
+            raise HTTPException(status_code=502, detail="Anthropic 응답에서 번호 목록을 찾을 수 없습니다.")
 
         polished_by_index: Dict[int, str] = {}
         numbered_pattern = re.compile(
@@ -749,36 +719,45 @@ class AIGenerationService:
 
         client = self._get_client()
         messages = [
-            OpenAIMessageBuilder.text_message("system", system_prompt),
-            OpenAIMessageBuilder.text_message("user", user_prompt),
+            AIMessageBuilder.text_message("system", system_prompt),
+            AIMessageBuilder.text_message("user", user_prompt),
         ]
+
+        system_text: str | None = None
+        user_messages: List[Dict[str, str]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = str(msg.get("content", ""))
+            else:
+                user_messages.append(msg)
 
         try:
             response = await asyncio.to_thread(
-                client.responses.create,
-                model=self._settings.openai_model,
-                input=messages,
-                max_output_tokens=10000,
+                client.messages.create,
+                model=self._settings.ai_model,
+                system=system_text,
+                messages=user_messages,
+                max_tokens=10000,
             )
         except RateLimitError as exc:
-            detail = self._format_openai_error(exc)
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "Anthropic 사용량 한도를 초과했습니다. "
                     "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                     f" ({detail})"
                 ),
             ) from exc
-        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-            detail = self._format_openai_error(exc)
+        except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
             ) from exc
         except Exception as exc:  # pragma: no cover - 안전망
             logger.exception(
-                "Unexpected error while requesting OpenAI response",
+                "Unexpected error while requesting Anthropic response",
                 extra={
                     "project_id": project_id,
                     "menu_id": "defect-report-rewrite",
@@ -787,9 +766,9 @@ class AIGenerationService:
             )
             message = str(exc).strip()
             detail = (
-                "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                "Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
                 if not message
-                else f"OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
+                else f"Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: {message}"
             )
             raise HTTPException(status_code=502, detail=detail) from exc
 
@@ -813,7 +792,7 @@ class AIGenerationService:
 
         updated_value = response_text.strip()
         if not updated_value:
-            raise HTTPException(status_code=502, detail="OpenAI 응답에서 수정된 텍스트를 찾을 수 없습니다.")
+            raise HTTPException(status_code=502, detail="Anthropic 응답에서 수정된 텍스트를 찾을 수 없습니다.")
 
         return updated_value
 
@@ -885,14 +864,26 @@ class AIGenerationService:
                 if kind == "image":
                     attachments_payload.append(
                         {
-                            "kind": "image",
-                            "image_url": self._image_data_url(context.upload),
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": context.upload.content_type or "image/png",
+                                "data": base64.b64encode(context.upload.content).decode("utf-8"),
+                            },
                         }
                     )
                 else:
-                    file_id = await self._upload_openai_file(client, context)
-                    uploaded_records.append((file_id, False))
-                    attachments_payload.append({"kind": kind, "file_id": file_id})
+                    # PDF 등의 문서는 Anthropic document 블록으로 직접 임베딩
+                    attachments_payload.append(
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": base64.b64encode(context.upload.content).decode("utf-8"),
+                            },
+                        }
+                    )
 
             feature_lines = [
                 f"대분류: {major_category or '-'}",
@@ -969,38 +960,47 @@ class AIGenerationService:
             max_output_tokens = getattr(model_params, "max_output_tokens", 800)
 
             messages = [
-                OpenAIMessageBuilder.text_message("system", system_prompt),
-                OpenAIMessageBuilder.text_message(
+                AIMessageBuilder.text_message("system", system_prompt),
+                AIMessageBuilder.text_message(
                     "user",
                     user_prompt,
                     attachments=attachments_payload if attachments_payload else None,
                 ),
             ]
 
-            normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+            normalized_messages = AIMessageBuilder.normalize_messages(messages)
+
+            system_text: str | None = None
+            user_messages: List[Dict[str, str]] = []
+            for msg in messages:
+                if msg.get("role") == "system":
+                    system_text = str(msg.get("content", ""))
+                else:
+                    user_messages.append(msg)
 
             try:
                 response = await asyncio.to_thread(
-                    client.responses.create,
-                    model=self._settings.openai_model,
-                    input=normalized_messages,
-                    max_output_tokens=10000,
+                    client.messages.create,
+                    model=self._settings.ai_model,
+                    system=system_text,
+                    messages=user_messages,
+                    max_tokens=10000,
                 )
             except RateLimitError as exc:
-                detail = self._format_openai_error(exc)
+                detail = self._format_ai_error(exc)
                 raise HTTPException(
                     status_code=429,
                     detail=(
-                        "OpenAI 사용량 한도를 초과했습니다. "
+                        "Anthropic 사용량 한도를 초과했습니다. "
                         "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                         f" ({detail})"
                     ),
                 ) from exc
-            except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-                detail = self._format_openai_error(exc)
+            except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+                detail = self._format_ai_error(exc)
                 raise HTTPException(
                     status_code=502,
-                    detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                    detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
                 ) from exc
             except Exception as exc:  # pragma: no cover - 안전망
                 logger.exception(
@@ -1047,7 +1047,7 @@ class AIGenerationService:
             except json.JSONDecodeError as exc:
                 raise HTTPException(
                     status_code=502,
-                    detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+                    detail="Anthropic 응답을 JSON으로 해석하지 못했습니다.",
                 ) from exc
 
             scenarios_raw: Any
@@ -1059,7 +1059,7 @@ class AIGenerationService:
             if not isinstance(scenarios_raw, Sequence):
                 raise HTTPException(
                     status_code=502,
-                    detail="OpenAI 응답에서 시나리오 목록을 찾을 수 없습니다.",
+                    detail="Anthropic 응답에서 시나리오 목록을 찾을 수 없습니다.",
                 )
 
             normalized: List[Dict[str, str]] = []
@@ -1091,16 +1091,15 @@ class AIGenerationService:
                     }
                 )
 
-            if not normalized:
-                raise HTTPException(
-                    status_code=502,
-                    detail="OpenAI 응답에서 유효한 테스트 시나리오를 찾을 수 없습니다.",
-                )
-
-            return normalized
+            if normalized:
+                return normalized
+            raise HTTPException(
+                status_code=502,
+                detail="Anthropic 응답에서 유효한 테스트 시나리오를 찾을 수 없습니다.",
+            )
         finally:
-            if uploaded_records:
-                await self._cleanup_openai_files(client, uploaded_records)
+            # Anthropic은 임베딩 방식을 사용하므로 별도의 파일 삭제가 필요 없음
+            pass
 
     async def rewrite_testcase_scenarios(
         self,
@@ -1242,7 +1241,7 @@ class AIGenerationService:
         top_p = getattr(model_params, "top_p", 0.9)
         max_output_tokens = getattr(model_params, "max_output_tokens", 900)
 
-        messages = [OpenAIMessageBuilder.text_message("system", system_prompt)]
+        messages = [AIMessageBuilder.text_message("system", system_prompt)]
 
         if conversation:
             for entry in conversation:
@@ -1252,34 +1251,43 @@ class AIGenerationService:
                     continue
                 if not text:
                     continue
-                messages.append(OpenAIMessageBuilder.text_message(str(role), text))
+                messages.append(AIMessageBuilder.text_message(str(role), text))
 
-        messages.append(OpenAIMessageBuilder.text_message("user", user_prompt))
+        messages.append(AIMessageBuilder.text_message("user", user_prompt))
 
         client = self._get_client()
 
+        system_text: str | None = None
+        user_messages: List[Dict[str, str]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = str(msg.get("content", ""))
+            else:
+                user_messages.append(msg)
+
         try:
             response = await asyncio.to_thread(
-                client.responses.create,
-                model=self._settings.openai_model,
-                input=messages,
-                max_output_tokens=10000,
+                client.messages.create,
+                model=self._settings.ai_model,
+                system=system_text,
+                messages=user_messages,
+                max_tokens=10000,
             )
         except RateLimitError as exc:
-            detail = self._format_openai_error(exc)
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "Anthropic 사용량 한도를 초과했습니다. "
                     "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                     f" ({detail})"
                 ),
             ) from exc
-        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-            detail = self._format_openai_error(exc)
+        except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
             ) from exc
         except Exception as exc:  # pragma: no cover - 안전망
             logger.exception(
@@ -1334,7 +1342,7 @@ class AIGenerationService:
         except json.JSONDecodeError as exc:
             raise HTTPException(
                 status_code=502,
-                detail="OpenAI 응답을 JSON으로 해석하지 못했습니다.",
+                detail="Anthropic 응답을 JSON으로 해석하지 못했습니다.",
             ) from exc
 
         reply_text = ""
@@ -1353,7 +1361,7 @@ class AIGenerationService:
         if not isinstance(scenarios_payload, Sequence):
             raise HTTPException(
                 status_code=502,
-                detail="OpenAI 응답에서 수정된 테스트케이스를 찾을 수 없습니다.",
+                detail="Anthropic 응답에서 수정된 테스트케이스를 찾을 수 없습니다.",
             )
 
         normalized_results: List[Dict[str, str]] = []
@@ -1388,7 +1396,7 @@ class AIGenerationService:
         if not normalized_results:
             raise HTTPException(
                 status_code=502,
-                detail="OpenAI 응답에서 유효한 테스트케이스를 찾을 수 없습니다.",
+                detail="Anthropic 응답에서 유효한 테스트케이스를 찾을 수 없습니다.",
             )
 
         return {
@@ -1527,34 +1535,43 @@ class AIGenerationService:
 
         client = self._get_client()
         messages = [
-            OpenAIMessageBuilder.text_message("system", system_prompt),
-            OpenAIMessageBuilder.text_message("user", user_prompt),
+            AIMessageBuilder.text_message("system", system_prompt),
+            AIMessageBuilder.text_message("user", user_prompt),
         ]
 
-        normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+        normalized_messages = AIMessageBuilder.normalize_messages(messages)
+
+        system_text: str | None = None
+        user_messages: List[Dict[str, str]] = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_text = str(msg.get("content", ""))
+            else:
+                user_messages.append(msg)
 
         try:
             response = await asyncio.to_thread(
-                client.responses.create,
-                model=self._settings.openai_model,
-                input=normalized_messages,
-                max_output_tokens=10000,
+                client.messages.create,
+                model=self._settings.ai_model,
+                system=system_text,
+                messages=user_messages,
+                max_tokens=10000,
             )
         except RateLimitError as exc:
-            detail = self._format_openai_error(exc)
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=429,
                 detail=(
-                    "OpenAI 사용량 한도를 초과했습니다. "
+                    "Anthropic 사용량 한도를 초과했습니다. "
                     "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                     f" ({detail})"
                 ),
             ) from exc
-        except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-            detail = self._format_openai_error(exc)
+        except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+            detail = self._format_ai_error(exc)
             raise HTTPException(
                 status_code=502,
-                detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
             ) from exc
         except Exception as exc:  # pragma: no cover - 안전망
             logger.exception(
@@ -1572,7 +1589,7 @@ class AIGenerationService:
         response_text = self._extract_response_text(response) or ""
         sanitized = self._sanitize_csv(response_text)
         if not sanitized:
-            raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+            raise HTTPException(status_code=502, detail="Anthropic 응답에서 CSV를 찾을 수 없습니다.")
 
         if self._request_log_service is not None:
             summary_lines = [
@@ -2094,22 +2111,17 @@ class AIGenerationService:
 
             for context in contexts:
                 kind = self._attachment_kind(context.upload)
-                if kind == "image":
-                    image_url = self._image_data_url(context.upload)
-                    uploaded_attachments.append(
-                        {
-                            "kind": "image",
-                            "image_url": image_url,
-                        }
-                    )
-                    continue
-
-                file_id = await self._upload_openai_file(client, context)
-                metadata_entry = context.metadata or {}
-                skip_cleanup = bool(metadata_entry.get("skip_cleanup"))
-                uploaded_file_records.append((file_id, skip_cleanup))
+                media_type = context.upload.content_type or "application/octet-stream"
+                if kind == "image" and not media_type.startswith("image/"):
+                    media_type = "image/jpeg" # fallback
+                
                 uploaded_attachments.append(
-                    {"file_id": file_id, "kind": kind}
+                    {
+                        "kind": kind,
+                        "content": context.upload.content,
+                        "media_type": media_type,
+                        "name": context.upload.name,
+                    }
                 )
 
             user_prompt_parts: List[str] = []
@@ -2158,17 +2170,17 @@ class AIGenerationService:
             user_prompt = "\n\n".join(part for part in user_prompt_parts if part.strip())
 
             messages = [
-                OpenAIMessageBuilder.text_message(
+                AIMessageBuilder.text_message(
                     "system", prompt_config.system_prompt
                 ),
-                OpenAIMessageBuilder.text_message(
+                AIMessageBuilder.text_message(
                     "user",
                     user_prompt,
                     attachments=uploaded_attachments,
                 ),
             ]
 
-            normalized_messages = OpenAIMessageBuilder.normalize_messages(messages)
+            normalized_messages = AIMessageBuilder.normalize_messages(messages)
 
             logger.info(
                 "AI generation prompt assembled",
@@ -2183,7 +2195,7 @@ class AIGenerationService:
             params = prompt_config.model_parameters
             try:
                 response_kwargs: dict[str, object] = {
-                    "model": self._settings.openai_model,
+                    "model": self._settings.ai_model,
                     "input": normalized_messages,
                 }
                 
@@ -2192,9 +2204,8 @@ class AIGenerationService:
                         params.max_output_tokens
                     )
 
-                # The Responses API currently rejects presence/frequency penalties.
-                # Until OpenAI adds support we simply omit them from the request to
-                # avoid TypeError crashes while still honouring other tunables.
+                # Anthropic API는 presence_penalty 등을 지원하지 않거나 형식이 다르므로
+                # 여기서 단순히 무시하거나 필요 시 처리합니다.
                 if params.presence_penalty not in (None, 0):
                     logger.warning(
                         "Presence penalty is not supported by the Responses API; "
@@ -2216,39 +2227,45 @@ class AIGenerationService:
                         },
                     )
 
+                system_prompt = next((m["content"][0]["text"] for m in messages if m["role"] == "system"), None)
+                actual_messages = [m for m in messages if m["role"] != "system"]
+
                 response = await asyncio.to_thread(
-                    client.responses.create,
-                    **response_kwargs,
+                    client.messages.create,
+                    model=self._settings.ai_model,
+                    system=system_prompt,
+                    messages=actual_messages,
+                    max_tokens=10000,
                 )
             except RateLimitError as exc:
-                detail = self._format_openai_error(exc)
+                detail = self._format_ai_error(exc)
                 raise HTTPException(
                     status_code=429,
                     detail=(
-                        "OpenAI 사용량 한도를 초과했습니다. "
+                        "Anthropic 사용량 한도를 초과했습니다. "
                         "관리자에게 문의하거나 잠시 후 다시 시도해 주세요."
                         f" ({detail})"
                     ),
                 ) from exc
-            except (PermissionDeniedError, BadRequestError, APIError, OpenAIError) as exc:
-                detail = self._format_openai_error(exc)
+            except (PermissionDeniedError, AuthenticationError, APIError, AnthropicError) as exc:
+                detail = self._format_ai_error(exc)
                 raise HTTPException(
                     status_code=502,
-                    detail=f"OpenAI 호출 중 오류가 발생했습니다: {detail}",
+                    detail=f"Anthropic 호출 중 오류가 발생했습니다: {detail}",
                 ) from exc
             except Exception as exc:  # pragma: no cover - 안전망
                 logger.exception(
-                    "Unexpected error while requesting OpenAI response",
+                    "Unexpected error while requesting Anthropic response",
                     extra={"project_id": project_id, "menu_id": menu_id},
                 )
                 message = str(exc).strip()
                 if message:
                     detail = (
-                        "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: "
+                        "Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다: "
                         f"{message}"
                     )
                 else:
-                    detail = "OpenAI 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
+                    detail = "Anthropic 응답을 가져오는 중 예기치 않은 오류가 발생했습니다."
                 raise HTTPException(status_code=502, detail=detail) from exc
 
             response_text = self._extract_response_text(response) or ""
@@ -2270,7 +2287,7 @@ class AIGenerationService:
                     )
 
             if not response_text:
-                raise HTTPException(status_code=502, detail="OpenAI 응답에서 CSV를 찾을 수 없습니다.")
+                raise HTTPException(status_code=502, detail="Anthropic 응답에서 CSV를 찾을 수 없습니다.")
 
             sanitized = self._sanitize_csv(response_text)
             project_overview: str | None = None
@@ -2302,116 +2319,37 @@ class AIGenerationService:
             )
         finally:
             if uploaded_file_records:
-                await self._cleanup_openai_files(client, uploaded_file_records)
+                await self._cleanup_ai_files(client, uploaded_file_records)
 
     @staticmethod
-    def _format_openai_error(exc: OpenAIError) -> str:
+    def _format_ai_error(exc: AnthropicError) -> str:
         message = str(exc).strip()
         details: List[str] = []
         if message:
             details.append(message)
 
-        body = getattr(exc, "body", None)
-        if isinstance(body, dict):
-            error = body.get("error")
-            candidates: List[str] = []
-            if isinstance(error, dict):
-                for key in ("message", "code", "type"):
-                    value = error.get(key)
-                    if isinstance(value, str) and value.strip():
-                        candidates.append(value.strip())
-            elif isinstance(error, str) and error.strip():
-                candidates.append(error.strip())
-
-            for value in candidates:
-                if value not in details:
-                    details.append(value)
-
-        if not details:
-            details.append(exc.__class__.__name__)
-
-        return "; ".join(details)
+        # Anthropic errors might have different structure,
+        # but basic str representation is often enough.
+        # We'll try to find more details if possible.
+        return message
 
     @staticmethod
     def _extract_response_text(response: Any) -> str | None:
-        """Best-effort extraction of the text payload from the Responses API."""
+        """Anthropic Message 객체에서 텍스트를 추출합니다."""
+        if hasattr(response, "content") and isinstance(response.content, list):
+            for part in response.content:
+                if hasattr(part, "text"):
+                    return str(part.text).strip()
+                if isinstance(part, dict) and part.get("type") == "text":
+                    return str(part.get("text", "")).strip()
 
-        def _is_non_empty_text(value: object) -> bool:
-            return isinstance(value, str) and bool(value.strip())
-
-        text_candidate = getattr(response, "output_text", None)
-        if _is_non_empty_text(text_candidate):
-            return str(text_candidate)
-
-        containers: List[object] = []
-        for attr in ("output", "outputs", "data", "messages"):
-            candidate = getattr(response, attr, None)
-            if candidate:
-                containers.append(candidate)
-
+        # Fallback for dict-like response
         if isinstance(response, dict):
-            for key in ("output", "outputs", "data", "messages"):
-                candidate = response.get(key)
-                if candidate:
-                    containers.append(candidate)
-
-        for container in containers:
-            if isinstance(container, (list, tuple)):
-                text = AIGenerationService._extract_from_content(container)
-                if text:
-                    return text
-            elif isinstance(container, dict):
-                content = container.get("content")
-                if content:
-                    normalized = content if isinstance(content, (list, tuple)) else [content]
-                    text = AIGenerationService._extract_from_content(normalized)
-                    if text:
-                        return text
-            else:
-                content = getattr(container, "content", None)
-                if content:
-                    normalized = content if isinstance(content, (list, tuple)) else [content]
-                    text = AIGenerationService._extract_from_content(normalized)
-                    if text:
-                        return text
-
-        return None
-
-    @staticmethod
-    def _extract_from_content(items: Iterable[object]) -> str | None:
-        for item in items:
-            content = None
-            if isinstance(item, dict):
-                content = item.get("content")
-            else:
-                content = getattr(item, "content", None)
-
-            if not content or isinstance(content, (str, bytes)):
-                continue
-
-            for part in content:
-                part_type = None
-                text_value = None
-                if isinstance(part, dict):
-                    part_type = part.get("type")
-                    text_value = part.get("text")
-                else:
-                    part_type = getattr(part, "type", None)
-                    text_value = getattr(part, "text", None)
-
-                if part_type in {"output_text", "text", "input_text"} and text_value is not None:
-                    extracted = text_value
-                    if isinstance(text_value, dict):
-                        extracted = text_value.get("value")
-                    elif hasattr(text_value, "get"):
-                        try:
-                            extracted = text_value.get("value")  # type: ignore[attr-defined]
-                        except Exception:  # pragma: no cover - defensive
-                            extracted = text_value
-
-                    text_str = str(extracted).strip() if extracted is not None else ""
-                    if text_str:
-                        return text_str
+            content = response.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        return str(part.get("text", "")).strip()
 
         return None
 

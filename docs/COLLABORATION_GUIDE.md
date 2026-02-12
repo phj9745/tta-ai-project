@@ -6,7 +6,7 @@
 
 - **Frontend**: React + TypeScript + Vite 기반 단일 페이지 애플리케이션. `App.tsx`에서 인증 상태와 경로에 따라 페이지를 렌더링하며 상단 `AppShell`을 통해 드라이브/프롬프트/로그아웃 액션을 제공합니다.【F:frontend/src/App.tsx†L1-L37】
 - **Backend**: FastAPI. `create_app()`에서 CORS 설정 및 라우터를 묶고, 의존성 컨테이너를 `app.state.container`에 보관합니다.【F:backend/app/application.py†L1-L38】
-- **데이터/외부 연동**: Google OAuth & Drive, OpenAI Responses API. 환경변수는 `Settings` 데이터클래스로 로드하며 토큰/프롬프트 파일 경로도 여기서 설정합니다.【F:backend/app/config.py†L1-L46】【F:backend/app/container.py†L1-L57】
+- **데이터/외부 연동**: Google OAuth & Drive, Anthropic API. 환경변수는 `Settings` 데이터클래스로 로드하며 토큰/프롬프트 파일 경로도 여기서 설정합니다.【F:backend/app/config.py†L1-L46】【F:backend/app/container.py†L1-L57】
 
 ## 2. 주요 디렉터리 맵
 
@@ -34,7 +34,7 @@ root
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | Google OAuth 인증 정보 | `backend/app/config.py` | 
 | `FRONTEND_REDIRECT_URL` | 로그인 이후 리다이렉트 경로(CORS 기준) | `backend/app/config.py` |
 | `GOOGLE_TOKEN_DB_PATH` | 발급 토큰 SQLite/JSON 경로 | `backend/app/config.py` |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | OpenAI Responses API 설정 | `backend/app/config.py` |
+| `ANTHROPIC_API_KEY`, `AI_MODEL` | Anthropic API 설정 | `backend/app/config.py` |
 | `BUILTIN_TEMPLATE_ROOT` | 내장 프롬프트/템플릿 커스텀 루트 (선택) | `backend/app/config.py` |
 
 - 기본값은 `.env` 없이도 동작하도록 정의되어 있지만, 실제 환경에서는 `backend/.env` 파일(또는 배포 비밀)에 위 항목을 채워야 합니다.
@@ -72,7 +72,7 @@ root
 - 엑셀 출력은 `services/excel_templates` 하위 모듈에서 처리하며, 표준 양식(`template/`)을 로드해 채워 넣습니다.【F:backend/app/routes/drive.py†L89-L113】
 
 ### 5.2 프롬프트 관리 & AI 호출
-- `AIGenerationService`는 OpenAI API 호출과 프롬프트 구성/로그 기록을 담당합니다.【F:backend/app/container.py†L25-L57】
+- `AIGenerationService`는 Anthropic API 호출과 프롬프트 구성/로그 기록을 담당합니다.【F:backend/app/container.py†L25-L57】
 - 관리자 화면에서 저장한 프롬프트 설정은 `PromptConfigService`가 `prompt_configs.json`으로 직렬화합니다.【F:backend/app/container.py†L19-L29】
 - 최근 요청 로그는 `PromptRequestLogService`가 `prompt_requests.log` 파일에 Append 합니다.【F:backend/app/container.py†L27-L35】
 
@@ -114,6 +114,6 @@ root
 
 - FastAPI 문서: https://fastapi.tiangolo.com/
 - Google Drive API: https://developers.google.com/drive
-- OpenAI Responses API: https://platform.openai.com/docs/guides/realtime
+- Anthropic API: https://docs.anthropic.com/claude/reference/messages_post
 
 필요한 정보가 누락되었거나 갱신이 필요한 경우, 이 문서를 업데이트한 뒤 팀원들에게 공유해주세요.

@@ -7,7 +7,7 @@ import re
 from typing import Any, Dict, Iterable, List, Tuple
 
 from fastapi import HTTPException
-from openai import OpenAI
+from anthropic import Anthropic
 
 from ..ai_generation import AIGenerationService
 from ..prompt_config import PromptConfig, PromptConfigService
@@ -28,11 +28,11 @@ class SecurityReportAI:
         self,
         prompt_config_service: PromptConfigService,
         prompt_request_log_service: PromptRequestLogService | None,
-        openai_client: OpenAI,
+        ai_client: Anthropic,
     ) -> None:
         self._prompt_config_service = prompt_config_service
         self._prompt_request_log_service = prompt_request_log_service
-        self._openai_client = openai_client
+        self._ai_client = ai_client
 
     async def fill_template_field(
         self,
@@ -46,7 +46,7 @@ class SecurityReportAI:
             return template
         if not _has_placeholders(template):
             if self._prompt_request_log_service is not None and project_id:
-                await self._call_openai_for_json(
+                await self._call_ai_for_json(
                     prompt_id="security-template-fill",
                     finding=finding,
                     placeholders=None,
@@ -59,7 +59,7 @@ class SecurityReportAI:
         filled, remaining = _replace_known_placeholders(template, placeholder_values)
         if not remaining:
             if self._prompt_request_log_service is not None and project_id:
-                await self._call_openai_for_json(
+                await self._call_ai_for_json(
                     prompt_id="security-template-fill",
                     finding=finding,
                     placeholders=remaining,
@@ -69,7 +69,7 @@ class SecurityReportAI:
                 )
             return filled
 
-        prompt_payload = await self._call_openai_for_json(
+        prompt_payload = await self._call_ai_for_json(
             prompt_id="security-template-fill",
             finding=finding,
             placeholders=remaining,
@@ -92,7 +92,7 @@ class SecurityReportAI:
         project_id: str,
         placeholder_values: Dict[str, str],
     ) -> Dict[str, Any]:
-        return await self._call_openai_for_json(
+        return await self._call_ai_for_json(
             prompt_id="security-new-finding",
             finding=finding,
             placeholders=None,
@@ -100,7 +100,7 @@ class SecurityReportAI:
             project_id=project_id,
         )
 
-    async def _call_openai_for_json(
+    async def _call_ai_for_json(
         self,
         *,
         prompt_id: str,
@@ -148,14 +148,24 @@ class SecurityReportAI:
         if log_only:
             return {}
 
+        system_text: str | None = None
+        user_messages: List[Dict[str, str]] = []
+        for msg in prompts:
+            if msg.get("role") == "system":
+                system_text = str(msg.get("content", ""))
+            else:
+                user_messages.append(msg)
+
         try:
             response = await asyncio.to_thread(
-                self._openai_client.responses.create,
-                model="gpt-5-mini",
-                input=prompts,
+                self._ai_client.messages.create,
+                model="claude-haiku-4-5-20251001",
+                system=system_text,
+                messages=user_messages,
+                max_tokens=4000,
             )
-        except Exception as exc:  # pragma: no cover - OpenAI client failure
-            logger.exception("OpenAI call failed for prompt %s", prompt_id)
+        except Exception as exc:  # pragma: no cover - Anthropic client failure
+            logger.exception("Anthropic call failed for prompt %s", prompt_id)
             return {}
 
         if not response:
@@ -446,5 +456,5 @@ def _safe_json_loads(payload: str) -> Dict[str, Any]:
     try:
         return json.loads(payload)
     except json.JSONDecodeError:
-        logger.warning("Failed to decode JSON payload from OpenAI response.")
+        logger.warning("Failed to decode JSON payload from Anthropic response.")
         return {}

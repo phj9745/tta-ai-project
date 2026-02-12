@@ -70,7 +70,7 @@ Google Drive와 연동된 프로젝트를 생성·선택·관리할 수 있습�
 
   * `menu_id=defect-report`로 동일 엔드포인트를 호출할 때 정제된 행 데이터를 함께 전송합니다.
   * `FormData`에는 `rows`(행 목록 JSON)와 `attachment_names`(결함 순번·첨부 파일명 JSON) 필드가 포함됩니다.
-  * 백엔드는 `rows` 필드를 감지하면 OpenAI 호출을 건너뛰고 곧바로 Google 스프레드시트를 업데이트합니다.
+  * 백엔드는 `rows` 필드를 감지하면 Anthropic 호출을 건너뛰고 곧바로 Google 스프레드시트를 업데이트합니다.
 * **CSV 다운로드**
 
   * AI 생성 결과를 CSV 파일로 저장
@@ -131,7 +131,7 @@ Google Drive와 연동된 프로젝트를 생성·선택·관리할 수 있습�
 | **Auth**          | Google OAuth 2.0        |
 | **Backend 연동**    | FastAPI REST API        |
 | **Storage**       | Google Drive API        |
-| **AI Generation** | OpenAI Responses API    |
+| **AI Generation** | Anthropic Claude Haiku  |
 | **UI Framework**  | Tailwind CSS            |
 
 ---

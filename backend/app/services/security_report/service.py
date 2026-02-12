@@ -6,7 +6,7 @@ from typing import Dict, Mapping, Protocol, Sequence
 import pandas as pd
 from bs4 import BeautifulSoup
 from fastapi import HTTPException, UploadFile
-from openai import OpenAI
+from anthropic import Anthropic
 
 from ..ai_generation import GeneratedCsv
 from ..prompt_config import PromptConfigService
@@ -48,13 +48,13 @@ class SecurityReportService:
         drive_service: DriveServicePort,
         prompt_config_service: PromptConfigService,
         prompt_request_log_service: PromptRequestLogService | None,
-        openai_client: OpenAI,
+        ai_client: Anthropic,
     ) -> None:
         self._drive_service = drive_service
         self._ai = SecurityReportAI(
             prompt_config_service=prompt_config_service,
             prompt_request_log_service=prompt_request_log_service,
-            openai_client=openai_client,
+            ai_client=ai_client,
         )
 
     async def generate_csv_report(

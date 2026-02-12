@@ -14,10 +14,7 @@ from fastapi import HTTPException
 from docx import Document
 from pypdf import PdfReader
 
-try:
-    from openai import OpenAI  # openai-python v1 클라이언트
-except Exception:  # pragma: no cover
-    OpenAI = None  # type: ignore
+from anthropic import Anthropic, AnthropicError
 
 # --- 외부로 노출되는 정규식(기존 코드와 동일한 인터페이스) ---
 # 공백/대시 삽입 변형 허용 (예: "G S - B - 12 - 3456")
@@ -80,7 +77,7 @@ def extract_project_metadata(
     if not text.strip():
         raise HTTPException(status_code=422, detail="문서에서 텍스트를 추출하지 못했습니다.")
 
-    data = _call_gpt_structured(text)
+    data = _call_anthropic_structured(text)
 
     # 정규화 & 보정
     exam = _tighten_exam_number(data.get("exam_number", ""))
@@ -270,15 +267,11 @@ _JSON_KEYS = [
 ]
 
 
-def _get_openai_client() -> OpenAI:
-    if OpenAI is None:  # pragma: no cover
-        raise HTTPException(status_code=500, detail="openai 패키지가 설치되어 있지 않습니다.")
-    api_key = os.getenv("OPENAI_API_KEY")
+def _get_anthropic_client() -> Anthropic:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY가 설정되어 있지 않습니다.")
-    base = os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_API_BASE")
-    # openai v1 클라이언트는 base_url 인자를 사용
-    return OpenAI(api_key=api_key, base_url=base) if base else OpenAI(api_key=api_key)
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY가 설정되어 있지 않습니다.")
+    return Anthropic(api_key=api_key)
 
 
 def _extract_json_safely(s: str) -> dict:
@@ -337,13 +330,10 @@ def _ensure_shape(d: dict) -> dict:
     return out
 
 
-def _call_gpt_structured(text: str) -> Dict:
-    """
-    1) Chat Completions + JSON 모드 (response_format={"type":"json_object"})
-    2) Responses API(일반 텍스트) → 'JSON만 출력' 지시 → 안전 파싱
-    """
-    client = _get_openai_client()
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # 환경에서 주입 권장
+def _call_anthropic_structured(text: str) -> Dict:
+    """Anthropic Messages API를 사용하여 구조화된 데이터 추출."""
+    client = _get_anthropic_client()
+    model = os.getenv("AI_MODEL", "claude-haiku-4-5-20251001")
 
     sys_prompt = _SYS
     user_prompt = (
@@ -353,78 +343,25 @@ def _call_gpt_structured(text: str) -> Dict:
         f"{text[:150_000]}"
     )
 
-    # --- 1) Chat Completions JSON 모드 시도 ---
     try:
-        if hasattr(client, "chat") and hasattr(client.chat, "completions"):
-            resp = client.chat.completions.create(
-                model=model,
-                temperature=0.0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=400,
-            )
-            content = (resp.choices[0].message.content or "").strip()
-            data = _extract_json_safely(content)
-            if data:
-                return _ensure_shape(data)
-    except Exception:
-        # JSON 모드 미지원, 또는 엔드포인트/모델에서 예외 → 폴백으로 진행
-        pass
-
-    # --- 2) Responses API(일반 텍스트) + 안전 파싱 ---
-    try:
-        resp = client.responses.create(
+        resp = client.messages.create(
             model=model,
-            temperature=0.0,
-            max_output_tokens=400,
-            input=[
-                {"role": "system", "content": sys_prompt + "\n지시: JSON만 출력(설명 금지)."},
+            system=sys_prompt,
+            messages=[
                 {"role": "user", "content": user_prompt},
             ],
+            max_tokens=1000,
+            temperature=0.0,
         )
 
-        # 가능한 모든 경로에서 텍스트를 수거
-        text_out: Optional[str] = None
+        content = ""
+        if resp.content and len(resp.content) > 0:
+             content = resp.content[0].text
 
-        # 2-1) 공식 output_text
-        if text_out is None:
-            text_out = getattr(resp, "output_text", None)
-
-        # 2-2) output -> content -> (type/text/value)
-        if not (isinstance(text_out, str) and text_out.strip()):
-            out = getattr(resp, "output", None)
-            if isinstance(out, list) and out:
-                try:
-                    parts = getattr(out[0], "content", None) or out[0].get("content")  # type: ignore[attr-defined]
-                    if isinstance(parts, list) and parts:
-                        # part dict or object 호환
-                        p0 = parts[0]
-                        ptype = getattr(p0, "type", None) or (p0.get("type") if isinstance(p0, dict) else None)
-                        if ptype in ("output_text", "text", "input_text"):
-                            text_out = (
-                                getattr(p0, "text", None)
-                                or (p0.get("text") if isinstance(p0, dict) else None)
-                                or getattr(p0, "value", None)
-                                or (p0.get("value") if isinstance(p0, dict) else None)
-                            )
-                except Exception:
-                    pass
-
-        # 2-3) choices -> message -> content 스타일
-        if not (isinstance(text_out, str) and text_out.strip()):
-            choices = getattr(resp, "choices", None)
-            if isinstance(choices, list) and choices:
-                msg = getattr(choices[0], "message", None) or {}
-                text_out = getattr(msg, "content", None) or (msg.get("content") if isinstance(msg, dict) else None)
-
-        content = (text_out or "").strip()
         data = _extract_json_safely(content)
         if data:
             return _ensure_shape(data)
 
         raise RuntimeError("모델 응답에서 JSON을 파싱하지 못했습니다.")
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"GPT 추출 실패: {e}")
+        raise HTTPException(status_code=502, detail=f"Anthropic 추출 실패: {e}")
