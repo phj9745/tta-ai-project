@@ -1,11 +1,14 @@
 export const DEFAULT_BACKEND_URL = 'http://localhost:8000'
 
-const BACKEND_URL_KEY = 'VITE_BACKEND_URL'
-
 export function getBackendUrl(): string {
-  const envValue = (import.meta.env as Record<string, unknown>)[BACKEND_URL_KEY]
-  if (typeof envValue === 'string' && envValue.trim().length > 0) {
-    return envValue.trim().replace(/\/$/, '')
+  // Try multiple common environment variable names
+  const keys = ['VITE_BACKEND_URL', 'VITE_API_BASE_URL']
+
+  for (const key of keys) {
+    const value = (import.meta as any).env?.[key]
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim().replace(/\/$/, '')
+    }
   }
 
   return DEFAULT_BACKEND_URL
