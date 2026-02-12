@@ -1,0 +1,6 @@
+setup:
+  project: tta-ai-project
+  config: dev
+
+# This file tells the Doppler CLI which project and config to use for this directory.
+# After installing Doppler CLI, team members just run `doppler setup` once.
