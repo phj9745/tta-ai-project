@@ -1,38 +1,50 @@
-# General
+# General / OS
 .DS_Store
 *.log
 *.tmp
 *.local
 *.lock
 *.sqlite3
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# Python
+# Git / Environment
+.env
+.env.*
+.env.local
+
+# Python / Backend
 __pycache__/
 *.py[cod]
 *.so
 .venv/
 venv/
-.env
-.env.*
 .eggs/
 *.egg-info/
 .mypy_cache/
 .pytest_cache/
 .coverage
 htmlcov/
-dist/
 build/
-
-# FastAPI/Backend
 backend/app/google_tokens.db
 backend/app/google_tokens.json
 
 # Node / Frontend
 node_modules/
 frontend/node_modules/
+dist/
 frontend/dist/
+frontend/dist-ssr/
 coverage/
 .vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
 # SSL Certificates
 certs/
@@ -40,4 +52,4 @@ certs/
 # IDEs and tooling
 .idea/
 .vscode/
-*.swp
+!.vscode/extensions.json
