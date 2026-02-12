@@ -45,5 +45,27 @@ doppler secrets download --no-confirm --format env > .env
 3. 새로운 KEY=VALUE를 추가하고 저장(Save)합니다.
 4. 팀원들은 별도 작업 없이 다음 `doppler run` 실행 시 자동으로 최신 값을 사용하게 됩니다.
 
-## 4. 서버(생산) 환경 적용
-서버에서는 **서비스 토큰(Service Token)**을 발급받아 `DOPPLER_TOKEN` 환경변수만 설정해주면 안전하게 값을 가져올 수 있습니다.
+## 4. 서버(Production) 환경 적용 - 가장 쉬운 방법 (방식 A)
+
+서버에서는 보안을 위해 `doppler login` 대신 **Service Token**을 사용합니다.
+
+### (A) 서비스 토큰 발급
+1. [Doppler 대시보드](https://dashboard.doppler.com/) -> 프로젝트 선택 -> `dev` 설정 클릭.
+2. 좌측 메뉴의 **[Access]** 클릭 -> **[Service Tokens]** -> **[Generate]** 클릭.
+3. 생성된 토큰(`dp.pt.xxxx...`)을 복사해둡니다.
+
+### (B) 서버 환경 변수 설정 (최초 1회)
+서버의 WSL 터미널(또는 OS)에 토큰을 등록합니다.
+```bash
+# .bashrc 등에 추가하여 자동 로드되게 하거나, 현재 세션에 설정
+export DOPPLER_TOKEN="방금_복사한_토큰_값"
+```
+
+### (C) 한 줄 배포 명령어
+이제 서버에서 배포할 때는 아래 명령어만 치면 됩니다. (파일 수정 필요 없음!)
+```bash
+# 1. Doppler에서 최신 키를 가져와서 .env 생성 + 2. 도커 컴포즈 실행
+doppler secrets download --no-confirm --format env > .env && docker compose up -d --build
+```
+> [!TIP]
+> 이제 대시보드에서 키를 바꾸고 서버에서 위 명령어만 다시 치면, 즉시 최신 키가 반영된 서버가 뜹니다!
