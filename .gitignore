@@ -34,6 +34,9 @@ frontend/dist/
 coverage/
 .vite/
 
+# SSL Certificates
+certs/
+
 # IDEs and tooling
 .idea/
 .vscode/
