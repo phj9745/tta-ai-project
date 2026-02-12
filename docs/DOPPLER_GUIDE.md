@@ -6,14 +6,17 @@
 
 ### (A) Doppler CLI 설치
 *   **Windows (PowerShell)**:
-    ```powershell
-    iwr -useb ""https://docs.doppler.com/install.ps1"" | iex
-    ```
+    winget install doppler.doppler
+
 *   **macOS**: `brew install dopplerhq/cli/doppler`
+
 *   **Linux (Ubuntu/WSL)**:
-    ```bash
-    (curl -Ls https://cli.doppler.com/install.sh || wget -qO- https://cli.doppler.com/install.sh) | sudo sh
-    ```
+    sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg
+    curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | sudo gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg
+
+    echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/doppler-cli.list
+
+    sudo apt-get update && sudo apt-get install doppler
 
 ### (B) 로그인 및 프로젝트 연결
 터미널에서 프로젝트 루트 디렉토리로 이동한 후 실행하세요:
@@ -36,7 +39,7 @@ doppler setup
 ### (B) .env 파일이 꼭 필요한 경우 (Legacy/Docker용)
 만약 `.env` 파일 형태로 물리적으로 추출해야 한다면 아래 명령어를 쓰세요 (단, Git에 올리지 않도록 주의!):
 ```bash
-doppler secrets download --no-confirm --format env > .env
+doppler secrets download --project tta-ai-project --config dev --format env > .env
 ```
 
 ## 3. 새로운 환경 변수 추가
@@ -64,8 +67,12 @@ export DOPPLER_TOKEN="방금_복사한_토큰_값"
 ### (C) 한 줄 배포 명령어
 이제 서버에서 배포할 때는 아래 명령어만 치면 됩니다. (파일 수정 필요 없음!)
 ```bash
-# 1. Doppler에서 최신 키를 가져와서 .env 생성 + 2. 도커 컴포즈 실행
-doppler secrets download --no-confirm --format env > .env && docker compose up -d --build
+# 1. Doppler에서 최신 키를 가져와서 .env 생성
+doppler secrets download --project tta-ai-project --config dev --format env --no-file > ./backend/.env
+doppler secrets download --project tta-ai-project --config dev --format env --no-file > ./frontend/.env
+
+# 2. 도커 컴포즈 실행
+docker compose up --build
 ```
 > [!TIP]
 > 이제 대시보드에서 키를 바꾸고 서버에서 위 명령어만 다시 치면, 즉시 최신 키가 반영된 서버가 뜹니다!
