@@ -17,7 +17,7 @@ services:
     build:
       context: ./frontend
     environment:
-      - VITE_API_BASE_URL=http://210.96.71.138/api
+      - VITE_API_BASE_URL=http://210.96.71.138.nip.io/api
     ports:
       - "5173:5173"
     depends_on:
