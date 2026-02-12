@@ -38,3 +38,6 @@ coverage/
 .idea/
 .vscode/
 *.swp
+
+# Nginx
+nginx/nginx.conf
