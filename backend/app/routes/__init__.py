@@ -1,5 +1,3 @@
-from .auth import router as auth_router
-from .drive import router as drive_router
-from .prompts import router as prompt_router
+from .testcases import router as testcase_router
 
-__all__ = ["auth_router", "drive_router", "prompt_router"]
+__all__ = ["testcase_router"]
