@@ -14,6 +14,30 @@ type Row = {
   note: string
 }
 
+const API_CANDIDATES = ['/api/testcases', '/testcases']
+
+async function fetchWithFallback(path: '/generate' | '/export', init: RequestInit) {
+  const base = getBackendUrl()
+  let lastError: Error | null = null
+
+  for (const prefix of API_CANDIDATES) {
+    try {
+      const response = await fetch(`${base}${prefix}${path}`, init)
+      if (response.status === 404) {
+        continue
+      }
+      return response
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error('요청 실패')
+    }
+  }
+
+  if (lastError) {
+    throw lastError
+  }
+  throw new Error('API 경로를 찾을 수 없습니다.')
+}
+
 export function TestcaseQuickPage() {
   const [files, setFiles] = useState<File[]>([])
   const [overview, setOverview] = useState('')
@@ -33,14 +57,16 @@ export function TestcaseQuickPage() {
     form.append('project_overview', overview)
 
     try {
-      const response = await fetch(`${getBackendUrl()}/api/testcases/generate`, {
+      const response = await fetchWithFallback('/generate', {
         method: 'POST',
         body: form,
       })
+
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload?.detail ?? '테스트케이스 생성에 실패했습니다.')
       }
+
       const payload = (await response.json()) as { rows: Row[] }
       setRows(payload.rows ?? [])
     } catch (e) {
@@ -53,7 +79,7 @@ export function TestcaseQuickPage() {
   const handleExport = async () => {
     if (!rows.length) return
 
-    const response = await fetch(`${getBackendUrl()}/api/testcases/export`, {
+    const response = await fetchWithFallback('/export', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rows }),
@@ -76,47 +102,96 @@ export function TestcaseQuickPage() {
 
   return (
     <div className="quick-page">
-      <h1>테스트케이스 빠른 생성</h1>
-      <p>문서를 업로드하면 기능 분석부터 테스트케이스 문서 생성까지 한 번에 처리합니다.</p>
-      <textarea
-        placeholder="프로젝트 개요(선택)"
-        value={overview}
-        onChange={(event) => setOverview(event.target.value)}
-      />
-      <input
-        type="file"
-        multiple
-        accept=".pdf,.docx,.xlsx,.csv"
-        onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
-      />
-      <button onClick={handleGenerate} disabled={!canGenerate}>
-        {loading ? '생성 중...' : '테스트케이스 생성'}
-      </button>
-      <button onClick={handleExport} disabled={!rows.length || loading}>
-        엑셀 다운로드
-      </button>
-      {error ? <p className="error">{error}</p> : null}
+      <section className="hero">
+        <p className="hero__eyebrow">TESTCASE ONLY</p>
+        <h1>문서 업로드 한 번으로 테스트케이스 생성</h1>
+        <p className="hero__subtitle">
+          사용자 매뉴얼/기능정의서 같은 문서를 올리면, 기능 분석부터 테스트케이스 표 작성까지 한 번에 수행합니다.
+        </p>
+      </section>
 
-      {rows.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th>대분류</th><th>중분류</th><th>소분류</th><th>ID</th><th>시나리오</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={`${row.testcaseId}-${index}`}>
-                <td>{row.majorCategory}</td>
-                <td>{row.middleCategory}</td>
-                <td>{row.minorCategory}</td>
-                <td>{row.testcaseId}</td>
-                <td>{row.scenario}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : null}
+      <section className="card guide-card">
+        <h2>어떤 문서를 올리면 되나요?</h2>
+        <ul>
+          <li>
+            <strong>필수(최소 1개):</strong> 사용자 매뉴얼, 기능정의서, 요구사항 명세서
+          </li>
+          <li>
+            <strong>추가(선택):</strong> 기존 기능리스트, 화면 정의서, 정책 문서
+          </li>
+          <li>
+            <strong>지원 형식:</strong> PDF, DOCX, XLSX, CSV
+          </li>
+        </ul>
+      </section>
+
+      <section className="card form-card">
+        <label className="field-label" htmlFor="overview">프로젝트 개요 (선택)</label>
+        <textarea
+          id="overview"
+          placeholder="예) 전자결재 웹서비스, 결재 상신/승인/반려/이력조회 기능 중심"
+          value={overview}
+          onChange={(event) => setOverview(event.target.value)}
+        />
+
+        <label className="field-label" htmlFor="docs">참고 문서 업로드</label>
+        <input
+          id="docs"
+          type="file"
+          multiple
+          accept=".pdf,.docx,.xlsx,.csv"
+          onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+        />
+
+        <p className="file-count">선택된 파일: {files.length}개</p>
+
+        <div className="actions">
+          <button className="btn btn--primary" onClick={handleGenerate} disabled={!canGenerate}>
+            {loading ? '생성 중...' : '테스트케이스 생성'}
+          </button>
+          <button className="btn btn--ghost" onClick={handleExport} disabled={!rows.length || loading}>
+            엑셀 다운로드
+          </button>
+        </div>
+
+        {error ? <p className="error">{error}</p> : null}
+      </section>
+
+      <section className="card result-card">
+        <div className="result-header">
+          <h2>생성 결과</h2>
+          <span>{rows.length}건</span>
+        </div>
+
+        {rows.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>대분류</th>
+                  <th>중분류</th>
+                  <th>소분류</th>
+                  <th>ID</th>
+                  <th>시나리오</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr key={`${row.testcaseId}-${index}`}>
+                    <td>{row.majorCategory || '-'}</td>
+                    <td>{row.middleCategory || '-'}</td>
+                    <td>{row.minorCategory || '-'}</td>
+                    <td>{row.testcaseId || '-'}</td>
+                    <td>{row.scenario || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="empty">문서를 업로드하고 [테스트케이스 생성]을 눌러주세요.</p>
+        )}
+      </section>
     </div>
   )
 }

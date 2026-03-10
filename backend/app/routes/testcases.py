@@ -14,7 +14,7 @@ from ..services.excel_templates import testcases
 from ..services.excel_templates.models import TESTCASE_EXPECTED_HEADERS
 from ..services.excel_templates.utils import parse_csv_records
 
-router = APIRouter(prefix="/api/testcases", tags=["testcases"])
+router = APIRouter(tags=["testcases"])
 
 _TEMPLATE_ROOT = Path(__file__).resolve().parents[2] / "template"
 _TESTCASE_TEMPLATE = _TEMPLATE_ROOT / "나.설계" / "GS-B-XX-XXXX 테스트케이스.xlsx"
@@ -87,7 +87,8 @@ def _csv_from_rows(rows: List[TestcaseRow]) -> str:
     return "\n".join(lines)
 
 
-@router.post("/generate", response_model=TestcaseGenerateResponse)
+@router.post("/api/testcases/generate", response_model=TestcaseGenerateResponse)
+@router.post("/testcases/generate", response_model=TestcaseGenerateResponse)
 async def generate_testcases(
     files: List[UploadFile] = File(...),
     project_overview: str = Form(""),
@@ -121,7 +122,8 @@ async def generate_testcases(
     return TestcaseGenerateResponse(rows=rows)
 
 
-@router.post("/export")
+@router.post("/api/testcases/export")
+@router.post("/testcases/export")
 async def export_testcases(payload: TestcaseExportRequest) -> StreamingResponse:
     if not payload.rows:
         raise HTTPException(status_code=422, detail="내보낼 테스트케이스가 없습니다.")
