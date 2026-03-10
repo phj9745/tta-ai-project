@@ -38,7 +38,7 @@ async function fetchWithFallback(path: '/generate' | '/export', init: RequestIni
   if (lastError) {
     throw lastError
   }
-  throw new Error(`API 경로를 찾을 수 없습니다. 시도한 경로: ${tried.join(', ')}`)
+  throw new Error(`API 경로를 찾을 수 없습니다. 시도한 경로: ${tried.join(', ')}. 서버 재시작 후 다시 시도해 주세요.`)
 }
 
 export function TestcaseQuickPage() {

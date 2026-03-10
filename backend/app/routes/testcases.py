@@ -123,6 +123,24 @@ async def generate_testcases(
     return TestcaseGenerateResponse(rows=rows)
 
 
+
+
+@router.get("/api/testcases/health")
+@router.get("/testcases/health")
+@router.get("/health")
+async def testcase_health() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "service": "testcases",
+        "paths": [
+            "/api/testcases/generate",
+            "/testcases/generate",
+            "/generate",
+            "/api/testcases/export",
+            "/testcases/export",
+            "/export",
+        ],
+    }
 @router.post("/api/testcases/export")
 @router.post("/testcases/export")
 @router.post("/export")
