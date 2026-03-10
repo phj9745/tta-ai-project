@@ -19,10 +19,13 @@ const API_CANDIDATES = ['/api/testcases', '/testcases', '']
 async function fetchWithFallback(path: '/generate' | '/export', init: RequestInit) {
   const base = getBackendUrl()
   let lastError: Error | null = null
+  const tried: string[] = []
 
   for (const prefix of API_CANDIDATES) {
+    const target = `${base}${prefix}${path}`
+    tried.push(target)
     try {
-      const response = await fetch(`${base}${prefix}${path}`, init)
+      const response = await fetch(target, init)
       if (response.status === 404) {
         continue
       }
@@ -35,7 +38,7 @@ async function fetchWithFallback(path: '/generate' | '/export', init: RequestIni
   if (lastError) {
     throw lastError
   }
-  throw new Error('API 경로를 찾을 수 없습니다.')
+  throw new Error(`API 경로를 찾을 수 없습니다. 시도한 경로: ${tried.join(', ')}`)
 }
 
 export function TestcaseQuickPage() {
