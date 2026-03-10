@@ -4,12 +4,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .container import Container
-from .routes import auth_router, drive_router, prompt_router
+from .routes import testcase_router
 
 
 def create_app() -> FastAPI:
-    """Create and configure a FastAPI application instance."""
-
     container = Container()
 
     app = FastAPI()
@@ -24,18 +22,13 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["Content-Disposition", "X-Defect-Table"]
+        expose_headers=["Content-Disposition"],
     )
 
-    app.include_router(auth_router)
-    app.include_router(drive_router)
-    app.include_router(prompt_router)
+    app.include_router(testcase_router)
 
     @app.get("/")
     def read_root() -> dict[str, str]:
-        return {
-            "project": "TTA-AI-Project",
-            "status": "running",
-        }
+        return {"project": "TTA-AI-Project", "mode": "testcase-only", "status": "running"}
 
     return app
