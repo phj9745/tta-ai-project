@@ -419,10 +419,10 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
             performanceInputs:
               id === 'performance-report'
                 ? nextFiles.reduce<Record<string, PerformanceInputState>>((acc, file) => {
-                    const key = getPerformanceFileKey(file)
-                    acc[key] = current.performanceInputs[key] ?? { memoryGb: '', deviceName: '' }
-                    return acc
-                  }, {})
+                  const key = getPerformanceFileKey(file)
+                  acc[key] = current.performanceInputs[key] ?? { memoryGb: '', deviceName: '' }
+                  return acc
+                }, {})
                 : current.performanceInputs,
           },
         }
@@ -903,15 +903,19 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
 
           let detail = '자료를 생성하는 중 오류가 발생했습니다.'
           try {
-            const payload = (await response.json()) as { detail?: unknown }
-            if (payload && typeof payload.detail === 'string') {
-              detail = payload.detail
+            const text = await response.text()
+            try {
+              const payload = JSON.parse(text) as { detail?: unknown }
+              if (payload && typeof payload.detail === 'string') {
+                detail = payload.detail
+              }
+            } catch {
+              if (text) {
+                detail = text
+              }
             }
           } catch {
-            const text = await response.text()
-            if (text) {
-              detail = text
-            }
+            // body unreadable – keep default detail
           }
 
           if (taskHandle.signal.aborted) {
@@ -1002,9 +1006,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           }
 
           const query = nextParams.toString()
-          const targetUrl = `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${
-            query ? `?${query}` : ''
-          }`
+          const targetUrl = `/projects/${encodeURIComponent(projectId)}/configuration-images/edit${query ? `?${query}` : ''
+            }`
 
           if (!taskHandle.signal.aborted) {
             taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '형상 이미지 추출 완료')
@@ -1073,9 +1076,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
           }
 
           const query = nextParams.toString()
-          const targetUrl = `/projects/${encodeURIComponent(projectId)}/feature-list/edit${
-            query ? `?${query}` : ''
-          }`
+          const targetUrl = `/projects/${encodeURIComponent(projectId)}/feature-list/edit${query ? `?${query}` : ''
+            }`
 
           if (!taskHandle.signal.aborted) {
             taskHandle.complete({ type: 'navigate', url: targetUrl, label: '열기' }, '기능리스트 생성 완료')
@@ -1219,9 +1221,9 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
       setPerformanceModalState((prev) =>
         prev
           ? {
-              ...prev,
-              error: '모든 파일의 OS 종류를 선택해 주세요.',
-            }
+            ...prev,
+            error: '모든 파일의 OS 종류를 선택해 주세요.',
+          }
           : prev,
       )
       return
@@ -1304,7 +1306,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
         aria-controls="project-management-sidebar"
         title={sidebarToggleLabel}
       >
-        <span className="project-management-sidebar-toggle__icon" aria-hidden="true"   style={
+        <span className="project-management-sidebar-toggle__icon" aria-hidden="true" style={
           !isSidebarOpen
             ? { position: "absolute", left: "17px" }
             : undefined
@@ -1328,7 +1330,7 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              
+
             >
               <path d="M10 8L14 12L10 16" />
             </svg>
@@ -1355,9 +1357,8 @@ export function ProjectManagementPage({ projectId }: ProjectManagementPageProps)
               return (
                 <li
                   key={item.id}
-                  className={`project-management-menu__item${
-                    isActive ? ' project-management-menu__item--active' : ''
-                  }`}
+                  className={`project-management-menu__item${isActive ? ' project-management-menu__item--active' : ''
+                    }`}
                 >
                   <button
                     type="button"
