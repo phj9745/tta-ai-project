@@ -89,6 +89,7 @@ def _csv_from_rows(rows: List[TestcaseRow]) -> str:
 
 @router.post("/api/testcases/generate", response_model=TestcaseGenerateResponse)
 @router.post("/testcases/generate", response_model=TestcaseGenerateResponse)
+@router.post("/generate", response_model=TestcaseGenerateResponse)
 async def generate_testcases(
     files: List[UploadFile] = File(...),
     project_overview: str = Form(""),
@@ -124,6 +125,7 @@ async def generate_testcases(
 
 @router.post("/api/testcases/export")
 @router.post("/testcases/export")
+@router.post("/export")
 async def export_testcases(payload: TestcaseExportRequest) -> StreamingResponse:
     if not payload.rows:
         raise HTTPException(status_code=422, detail="내보낼 테스트케이스가 없습니다.")

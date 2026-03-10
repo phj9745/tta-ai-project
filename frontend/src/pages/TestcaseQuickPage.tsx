@@ -14,7 +14,7 @@ type Row = {
   note: string
 }
 
-const API_CANDIDATES = ['/api/testcases', '/testcases']
+const API_CANDIDATES = ['/api/testcases', '/testcases', '']
 
 async function fetchWithFallback(path: '/generate' | '/export', init: RequestInit) {
   const base = getBackendUrl()
