@@ -63,6 +63,9 @@ export function TestcaseQuickPage() {
       })
 
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error('업로드 용량이 너무 큽니다. 파일 크기를 줄이거나 문서를 나눠서 업로드해 주세요.')
+        }
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload?.detail ?? '테스트케이스 생성에 실패했습니다.')
       }
