@@ -168,3 +168,22 @@ th {
   margin: 10px 0 0;
   font-weight: 600;
 }
+
+
+.health-card ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.warning-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #9a3412;
+}
+
+.diag {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

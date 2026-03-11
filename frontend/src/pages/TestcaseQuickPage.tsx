@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getBackendUrl } from '../config'
 
 type Row = {
@@ -14,9 +14,35 @@ type Row = {
   note: string
 }
 
+type GenerateDiagnostics = {
+  stages?: string[]
+  generatedCount?: number
+  idReassignedCount?: number
+  promptMenuId?: string
+}
+
+type GenerateResponse = {
+  rows: Row[]
+  warnings?: string[]
+  diagnostics?: GenerateDiagnostics
+}
+
+type HealthChecks = {
+  apiKeyConfigured?: boolean
+  testcasePromptConfigured?: boolean
+  promptError?: string | null
+}
+
+type HealthResponse = {
+  status?: string
+  service?: string
+  checks?: HealthChecks
+  removedFeatures?: string[]
+}
+
 const API_CANDIDATES = ['/api/testcases', '/testcases', '']
 
-async function fetchWithFallback(path: '/generate' | '/export', init: RequestInit) {
+async function fetchWithFallback(path: '/generate' | '/export' | '/health', init: RequestInit) {
   const base = getBackendUrl()
   let lastError: Error | null = null
   const tried: string[] = []
@@ -41,13 +67,28 @@ async function fetchWithFallback(path: '/generate' | '/export', init: RequestIni
   throw new Error(`API 경로를 찾을 수 없습니다. 시도한 경로: ${tried.join(', ')}. 서버 재시작 후 다시 시도해 주세요.`)
 }
 
+function mapGenerateError(status: number, detail: string): string {
+  if (status === 413) {
+    return '업로드 용량이 너무 큽니다. 파일 크기를 줄이거나 문서를 나눠서 업로드해 주세요.'
+  }
+  if (detail.includes('API 키')) {
+    return 'AI API 키 설정이 필요합니다. 관리자에게 문의해 주세요.'
+  }
+  if (detail.includes('메뉴 설정')) {
+    return '테스트케이스 생성 프롬프트 설정이 누락되었습니다. 관리자에게 문의해 주세요.'
+  }
+  if (detail.includes('CSV에 필요한 열')) {
+    return '생성 결과 형식이 올바르지 않습니다. 문서를 보강해 다시 시도해 주세요.'
+  }
+  return detail || '테스트케이스 생성에 실패했습니다.'
+}
 
 async function tryLegacyGenerate(base: string, files: File[], projectOverview: string): Promise<boolean> {
   const form = new FormData()
   form.append('menu_id', 'testcase-generation')
   files.forEach((file) => form.append('files', file))
 
-  const fileMetadata = files.map((file, index) =>
+  const fileMetadata = files.map((_, index) =>
     index === 0
       ? { role: 'required', id: 'user-manual', label: '사용자 매뉴얼' }
       : { role: 'additional', description: '추가 문서' },
@@ -86,17 +127,38 @@ export function TestcaseQuickPage() {
   const [files, setFiles] = useState<File[]>([])
   const [overview, setOverview] = useState('')
   const [rows, setRows] = useState<Row[]>([])
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [diagnostics, setDiagnostics] = useState<GenerateDiagnostics | null>(null)
+  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
 
   const canGenerate = useMemo(() => files.length > 0 && !loading, [files.length, loading])
 
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const response = await fetchWithFallback('/health', { method: 'GET' })
+        const payload = (await response.json()) as HealthResponse
+        if (alive) setHealth(payload)
+      } catch {
+        if (alive) setHealth(null)
+      }
+    })()
+
+    return () => {
+      alive = false
+    }
+  }, [])
+
   const handleGenerate = async () => {
     if (!canGenerate) return
     setLoading(true)
     setError(null)
     setNotice(null)
+    setWarnings([])
 
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
@@ -109,15 +171,15 @@ export function TestcaseQuickPage() {
       })
 
       if (!response.ok) {
-        if (response.status === 413) {
-          throw new Error('업로드 용량이 너무 큽니다. 파일 크기를 줄이거나 문서를 나눠서 업로드해 주세요.')
-        }
         const payload = await response.json().catch(() => ({}))
-        throw new Error(payload?.detail ?? '테스트케이스 생성에 실패했습니다.')
+        const detail = typeof payload?.detail === 'string' ? payload.detail : ''
+        throw new Error(mapGenerateError(response.status, detail))
       }
 
-      const payload = (await response.json()) as { rows: Row[] }
+      const payload = (await response.json()) as GenerateResponse
       setRows(payload.rows ?? [])
+      setWarnings(payload.warnings ?? [])
+      setDiagnostics(payload.diagnostics ?? null)
     } catch (e) {
       const message = e instanceof Error ? e.message : '오류가 발생했습니다.'
       if (message.includes('API 경로를 찾을 수 없습니다')) {
@@ -168,6 +230,20 @@ export function TestcaseQuickPage() {
         </p>
       </section>
 
+      <section className="card health-card">
+        <h2>시스템 진단</h2>
+        {health ? (
+          <ul>
+            <li>서비스 상태: <strong>{health.status ?? 'unknown'}</strong></li>
+            <li>AI API Key 설정: <strong>{health.checks?.apiKeyConfigured ? '정상' : '미설정'}</strong></li>
+            <li>TC 프롬프트 설정: <strong>{health.checks?.testcasePromptConfigured ? '정상' : '누락'}</strong></li>
+            {health.checks?.promptError ? <li>프롬프트 오류: {health.checks.promptError}</li> : null}
+          </ul>
+        ) : (
+          <p className="empty">진단 정보를 불러오지 못했습니다.</p>
+        )}
+      </section>
+
       <section className="card guide-card">
         <h2>어떤 문서를 올리면 되나요?</h2>
         <ul>
@@ -214,6 +290,13 @@ export function TestcaseQuickPage() {
 
         {notice ? <p className="notice">{notice}</p> : null}
         {error ? <p className="error">{error}</p> : null}
+        {warnings.length ? (
+          <ul className="warning-list">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       <section className="card result-card">
@@ -221,6 +304,11 @@ export function TestcaseQuickPage() {
           <h2>생성 결과</h2>
           <span>{rows.length}건</span>
         </div>
+        {diagnostics ? (
+          <p className="diag">
+            단계: {diagnostics.stages?.join(' → ') || '-'} / ID 자동보정: {diagnostics.idReassignedCount ?? 0}건
+          </p>
+        ) : null}
 
         {rows.length > 0 ? (
           <div className="table-wrap">

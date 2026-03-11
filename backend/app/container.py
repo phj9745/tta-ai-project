@@ -26,3 +26,8 @@ class Container:
     @property
     def ai_generation_service(self) -> AIGenerationService:
         return self._ai_generation_service
+
+
+    @property
+    def prompt_config_service(self) -> PromptConfigService:
+        return self._prompt_config_service
