@@ -322,6 +322,44 @@ _DEFAULT_PROMPTS: Dict[str, PromptConfig] = {
             max_output_tokens=1800,
         ),
     ),
+    "testcase-generation": PromptConfig(
+        label="테스트케이스 생성",
+        summary="업로드된 문서를 분석해 테스트케이스 CSV를 생성합니다.",
+        request_description="문서 기반 테스트케이스를 CSV(열은 파이프(|) 구분)로 작성합니다.",
+        system_prompt=(
+            "당신은 소프트웨어 QA 테스터입니다. 업로드된 문서를 바탕으로 "
+            "실행 가능한 테스트케이스 표를 작성합니다."
+        ),
+        user_prompt=(
+            "업로드 문서를 분석해 테스트케이스 CSV를 작성하세요.\n"
+            "열 순서는 반드시 다음과 같습니다:\n"
+            "대분류|중분류|소분류|테스트 케이스 ID|테스트 시나리오|입력(사전조건 포함)|기대 출력(사후조건 포함)|테스트 결과|상세 테스트 결과|비고"
+        ),
+        user_prompt_sections=[
+            PromptSection(
+                id="testcase-generation-guidelines",
+                label="작성 지침",
+                content=(
+                    "- 테스트 케이스 ID는 TC-XXX-YYY 형식으로 부여합니다.\n"
+                    "- 테스트 시나리오는 한 문장으로 간결하게 작성합니다.\n"
+                    "- 입력(사전조건 포함)은 번호 목록(1. ..., 2. ...) 형식으로 작성합니다.\n"
+                    "- 기대 출력(사후조건 포함)은 결과를 한 문장으로 명확히 작성합니다.\n"
+                    "- 테스트 결과는 기본값으로 '미실행'을 사용하고 상세 테스트 결과/비고는 비워 둡니다.\n"
+                    "- 응답은 CSV 본문만 반환하고 설명 문장은 추가하지 마세요."
+                ),
+            )
+        ],
+        scaffolding=PromptScaffolding(
+            attachments_heading="",
+            attachments_intro="",
+            closing_note="",
+            format_warning="CSV 이외의 다른 텍스트나 설명을 포함하지 마세요.",
+        ),
+        model_parameters=PromptModelParameters(
+            max_output_tokens=1800,
+        ),
+    ),
+
     "defect-report": PromptConfig(
         label="결함 리포트",
         summary="정제된 결함 목록과 증적 자료를 바탕으로 결함 리포트 표를 작성합니다.",
