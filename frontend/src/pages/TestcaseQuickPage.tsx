@@ -41,12 +41,54 @@ async function fetchWithFallback(path: '/generate' | '/export', init: RequestIni
   throw new Error(`API 경로를 찾을 수 없습니다. 시도한 경로: ${tried.join(', ')}. 서버 재시작 후 다시 시도해 주세요.`)
 }
 
+
+async function tryLegacyGenerate(base: string, files: File[], projectOverview: string): Promise<boolean> {
+  const form = new FormData()
+  form.append('menu_id', 'testcase-generation')
+  files.forEach((file) => form.append('files', file))
+
+  const fileMetadata = files.map((file, index) =>
+    index === 0
+      ? { role: 'required', id: 'user-manual', label: '사용자 매뉴얼' }
+      : { role: 'additional', description: '추가 문서' },
+  )
+  form.append('file_metadata', JSON.stringify(fileMetadata))
+
+  if (projectOverview.trim()) {
+    form.append('project_overview', projectOverview.trim())
+  }
+
+  const response = await fetch(`${base}/api/drive/projects/quick-testcase/generate`, {
+    method: 'POST',
+    body: form,
+  })
+
+  if (!response.ok) {
+    return false
+  }
+
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('spreadsheetml')) {
+    return false
+  }
+
+  const blob = await response.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'testcases.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
+  return true
+}
+
 export function TestcaseQuickPage() {
   const [files, setFiles] = useState<File[]>([])
   const [overview, setOverview] = useState('')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const canGenerate = useMemo(() => files.length > 0 && !loading, [files.length, loading])
 
@@ -54,6 +96,7 @@ export function TestcaseQuickPage() {
     if (!canGenerate) return
     setLoading(true)
     setError(null)
+    setNotice(null)
 
     const form = new FormData()
     files.forEach((file) => form.append('files', file))
@@ -76,7 +119,16 @@ export function TestcaseQuickPage() {
       const payload = (await response.json()) as { rows: Row[] }
       setRows(payload.rows ?? [])
     } catch (e) {
-      setError(e instanceof Error ? e.message : '오류가 발생했습니다.')
+      const message = e instanceof Error ? e.message : '오류가 발생했습니다.'
+      if (message.includes('API 경로를 찾을 수 없습니다')) {
+        const legacyOk = await tryLegacyGenerate(getBackendUrl(), files, overview)
+        if (legacyOk) {
+          setNotice('구버전 서버 경로로 테스트케이스를 생성해 다운로드했습니다. 서버 업데이트 후 표 미리보기도 사용할 수 있습니다.')
+          setRows([])
+          return
+        }
+      }
+      setError(message)
     } finally {
       setLoading(false)
     }
@@ -160,6 +212,7 @@ export function TestcaseQuickPage() {
           </button>
         </div>
 
+        {notice ? <p className="notice">{notice}</p> : null}
         {error ? <p className="error">{error}</p> : null}
       </section>
 

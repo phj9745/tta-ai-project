@@ -162,3 +162,9 @@ th {
   color: var(--muted);
   margin: 0;
 }
+
+.notice {
+  color: #0f766e;
+  margin: 10px 0 0;
+  font-weight: 600;
+}
